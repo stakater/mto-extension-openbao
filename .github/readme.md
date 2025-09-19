@@ -1,6 +1,7 @@
 # Workflow 
 
-This repository uses shared workflows [`operator_pull_request.yaml`](https://github.com/stakater/.github/blob/main/.github/workflows/operator_pull_request.yaml) and [`operator_push.yaml`](https://github.com/stakater/.github/blob/main/.github/workflows/operator_pull_request.yaml) available in [`stakater/.github`](https://github.com/stakater/.github). These workflows are shared between [IPShield](https://github.com/stakater/IPShield), [UptimeGuardian](https://github.com/stakater/UptimeGuardian), and [MTO Grafana Extension](#)
+This repository uses shared workflows [`operator_pull_request.yaml`](https://github.com/stakater/.github/blob/main/.github/workflows/operator_pull_request.yaml) and [`operator_push.yaml`](https://github.com/stakater/.github/blob/main/.github/workflows/operator_pull_request.yaml) available in [`stakater/.github`](https://github.com/stakater/.github). 
+These workflows are shared between [IPShield](https://github.com/stakater/IPShield), [UptimeGuardian](https://github.com/stakater/UptimeGuardian), [MTO OpenBao Extension](#) and [MTO Grafana Extension](#)
 
 ## Steps
 
@@ -19,4 +20,3 @@ Following steps are performed by both `pull_request` and `push` workflows. Tag g
 1. Push git tag
 1. Comment on PR
 1. Notify Slack
-
