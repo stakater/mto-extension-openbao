@@ -15,13 +15,10 @@ See also the repo-level [LICENSE](./LICENSE) for this project's own terms.
 
 **Upstream:** <https://github.com/redhat-cop/vault-config-operator>
 **License:** Apache License, Version 2.0.
-**Why we reuse:** The operator cherry-picks type files defining OpenBao
-primitives (Policy, KubernetesAuthEngineRole, PKI, cert/JWT auth, identity
-groups) from VCO rather than authoring them from scratch. See
+**Why we reuse:** The operator imports type files defining OpenBao
+primitives from VCO rather than authoring them from scratch. See
 [docs/adr/0002-vco-fork-vs-cherrypick.md](./docs/adr/0002-vco-fork-vs-cherrypick.md)
-for the decision rationale, and
-[docs/plans/PLAN-vco-cherrypick-roadmap.md](./docs/plans/PLAN-vco-cherrypick-roadmap.md)
-for the roll-in sequence.
+for the decision rationale.
 
 **Apache-2.0 §4(d) propagation:** not applicable. VCO does not publish a
 `NOTICE` file at its repository root, so no attribution text from upstream
@@ -33,10 +30,9 @@ VCO's copyright notices inside the copied files.
 
 | File in this repo | Upstream path | Source SHA | Modifications |
 |---|---|---|---|
-| [api/vco/v1alpha1/policy_types.go](./api/vco/v1alpha1/policy_types.go) | `api/v1alpha1/policy_types.go` | `96082119ec2e84595cc85b87808c3a6bd7aca53b` | `spec.authentication` removed; `spec.connection` removed; `spec.type` defaulted to `acl` and legacy `/sys/policy/<name>` path dropped; `PrepareInternalValues` accessor-templating deferred (rejects `${auth/}` placeholders until Story 6); `IsEquivalentToDesiredState` simplified to compare `{policy}`-shaped payloads only; fixed upstream copy-paste bug where `ConditionsAware` was asserted against `PKISecretEngineRole` instead of `Policy`; `GetKubeAuthConfiguration`/`GetVaultConnection` return `nil`. |
+| [api/vco/v1alpha1/policy_types.go](./api/vco/v1alpha1/policy_types.go) | `api/v1alpha1/policy_types.go` | `96082119ec2e84595cc85b87808c3a6bd7aca53b` | `spec.authentication`, `spec.connection`, `spec.type` removed; legacy `/sys/policy/<name>` path dropped (always emits `sys/policies/acl/<name>`); accessor placeholder substitution rejected at IsValid; `IsEquivalentToDesiredState` compares whitespace-trimmed bodies; `spec.name` Pattern anchored with `^…$`; fixed upstream copy-paste bug in `ConditionsAware` type assertion; `GetKubeAuthConfiguration`/`GetVaultConnection` removed (operator uses a single token from `OpenBaoExtension`). |
 
-Further rows are appended as each story of the cherry-pick roadmap lands
-its primitive(s).
+Further rows are appended as additional primitives are imported.
 
 ### License text (Apache-2.0)
 
