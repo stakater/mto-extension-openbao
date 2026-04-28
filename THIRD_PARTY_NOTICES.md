@@ -15,9 +15,11 @@ See also the repo-level [LICENSE](./LICENSE) for this project's own terms.
 
 **Upstream:** <https://github.com/redhat-cop/vault-config-operator>
 **License:** Apache License, Version 2.0.
-**Why we reuse:** The operator imports type files defining OpenBao
-primitives from VCO rather than authoring them from scratch. See
-[docs/adr/0002-vco-fork-vs-cherrypick.md](./docs/adr/0002-vco-fork-vs-cherrypick.md)
+**Why we reuse:** The operator wraps VCO's type definitions —
+re-implementing each primitive's CRD type in our own package, with the
+schema shape drawn from upstream — rather than authoring them from
+scratch. See
+[docs/adr/0002-vco-wrap-vs-fork.md](./docs/adr/0002-vco-wrap-vs-fork.md)
 for the decision rationale.
 
 **Apache-2.0 §4(d) propagation:** not applicable. VCO does not publish a
