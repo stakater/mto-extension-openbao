@@ -1,0 +1,42 @@
+# mto-openbao-bootstrap values.
+#
+# Cluster-level wiring for the per-tenant OpenBao pipeline. Installs the
+# t-op-v2 parent + child Templates, RBAC, and the token-reviewer Secret.
+# Renders once per cluster — the parent watches Tenant CRs and fans out
+# to one child TemplateInstance per Tenant.
+
+# Namespace where the operator + bootstrap CRs (Templates, TI, RBAC,
+# token-reviewer Secret) live. Must match the mto-extension-openbao
+# install namespace.
+operatorNamespace: mto-extension-openbao-system
+
+# t-op-v2 install identity. The ClusterRoles in this chart bind to the
+# t-op-v2 controller's ServiceAccount; defaults match the upstream
+# template-operator-v2 helm release. Override if your t-op-v2 release
+# name or namespace differs.
+templateOperator:
+  serviceAccountName: template-operator-template-operator-v2
+  namespace: stakater-template-operator
+
+# The mto-openbao-tenant chart that t-op-v2 pulls from OCI per Tenant CR
+# at render time. Bump `version` to roll the per-tenant scaffolding shape
+# without touching the operator or the bootstrap install.
+mtoOpenbaoTenant:
+  registry: oci://ghcr.io/stakater/charts
+  name: mto-openbao-tenant
+  version: 0.4.0
+  releaseName: mto-openbao
+
+# Parent Template defaults — passed through to every child TI. Override
+# per cluster to flip env labels, swap bao endpoints, or toggle SSO.
+parent:
+  env: dev
+  baoServer: http://openbao.openbao.svc.cluster.local:8200
+  kubernetesHost: https://kubernetes.default.svc
+  tenantLabelKey: stakater.com/tenant
+  sharedTenantName: shared
+  eso: enabled
+  externalSecretRefreshInterval: "1h"
+  sso:
+    enabled: false
+    issuerUrl: ""

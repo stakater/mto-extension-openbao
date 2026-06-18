@@ -1,0 +1,102 @@
+{{/*
+Section 3 — per-tenant PKI secret engine.
+  - One OpenBaoSecretEngine of kind=pki at the configured mountPath.
+  - One OpenBaoPKISecretEngineConfig that generates a root CA. CommonName
+    interpolated with {tenant}.
+  - N OpenBaoPKISecretEngineRole entries from pki.roles[*].
+
+DISASTER-RECOVERY NOTE: pkiType=root keeps the CA private key entirely
+inside bao. There is no chart-level backup. See README → "PKI disaster
+recovery" for the production recommendation (sign the tenant CA with an
+external root you control out-of-band).
+
+Gated by `pki.enabled`. SAs opt into cert issuance via
+`bao.stakater.com/pki-roles: <csv>` — see 04-sa-own-tenant.yaml.
+*/}}
+{{- if .Values.pki.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $mount := .Values.pki.mountPath }}
+{{- $labels := include "openbao.labels" . }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoSecretEngine
+metadata:
+  name: {{ $tenant }}-pki
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  pki: {}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPKISecretEngineConfig
+metadata:
+  name: {{ $tenant }}-pki-root
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  pkiType: root
+  commonName: {{ include "openbao.subTenant" (dict "tenant" $tenant "s" .Values.pki.rootCA.commonName) | quote }}
+  {{- if .Values.pki.rootCA.ttl }}
+  ttl: {{ .Values.pki.rootCA.ttl | quote }}
+  {{- end }}
+  {{- if .Values.pki.rootCA.keyType }}
+  keyType: {{ .Values.pki.rootCA.keyType }}
+  {{- end }}
+  {{- if .Values.pki.rootCA.keyBits }}
+  keyBits: {{ .Values.pki.rootCA.keyBits }}
+  {{- end }}
+{{- range $r := .Values.pki.roles }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPKISecretEngineRole
+metadata:
+  name: {{ include "openbao.pkiRoleName" (dict "tenant" $tenant "roleName" $r.name) }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $r.name }}
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  allowedDomains:
+    {{- range $d := $r.allowedDomains }}
+    - {{ include "openbao.subTenant" (dict "tenant" $tenant "s" $d) | quote }}
+    {{- end }}
+  {{- if $r.allowSubdomains }}
+  allowSubdomains: {{ $r.allowSubdomains }}
+  {{- end }}
+  {{- if $r.allowBareDomains }}
+  allowBareDomains: {{ $r.allowBareDomains }}
+  {{- end }}
+  {{- if $r.allowGlobDomains }}
+  allowGlobDomains: {{ $r.allowGlobDomains }}
+  {{- end }}
+  {{- if $r.enforceHostnames }}
+  enforceHostnames: {{ $r.enforceHostnames }}
+  {{- end }}
+  {{- if hasKey $r "serverFlag" }}
+  serverFlag: {{ $r.serverFlag }}
+  {{- end }}
+  {{- if hasKey $r "clientFlag" }}
+  clientFlag: {{ $r.clientFlag }}
+  {{- end }}
+  {{- if $r.ttl }}
+  ttl: {{ $r.ttl | quote }}
+  {{- end }}
+  {{- if $r.maxTtl }}
+  maxTtl: {{ $r.maxTtl | quote }}
+  {{- end }}
+  {{- if $r.keyType }}
+  keyType: {{ $r.keyType }}
+  {{- end }}
+  {{- if $r.keyBits }}
+  keyBits: {{ $r.keyBits }}
+  {{- end }}
+{{- end }}
+{{- end }}

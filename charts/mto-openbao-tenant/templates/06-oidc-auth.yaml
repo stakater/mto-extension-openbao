@@ -1,0 +1,60 @@
+{{/*
+Section 6 — per-tenant OIDC scaffolding for human SSO.
+
+  - 6a. OpenBaoAuthMethod at path "oidc" on the tenant's bao namespace.
+  - 6b. OpenBaoJWTOIDCAuthEngineConfig pointing at the IdP. When
+        sso.dex.perTenantClient=false (default) all tenants share one dex
+        Client (sso.dex.clientId + clientSecretRef); per-tenant
+        differentiation happens via the groups claim → role mapping in
+        §7. When perTenantClient=true the chart expects a per-tenant
+        Secret named "<tenant>-{clientSecretRef.name}" and a client_id
+        prefixed with "<tenant>-" — IdP-side provisioning lives outside
+        this chart.
+
+Gated by sso.enabled.
+*/}}
+{{- if .Values.sso.enabled }}
+{{- if not .Values.sso.dex.issuerUrl }}
+{{- fail "sso.enabled=true requires sso.dex.issuerUrl to be set" }}
+{{- end }}
+{{- $name := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $labels := include "openbao.labels" . }}
+{{- $clientId := .Values.sso.dex.clientId }}
+{{- $secretName := .Values.sso.dex.clientSecretRef.name }}
+{{- if .Values.sso.dex.perTenantClient }}
+{{- $clientId = printf "%s-%s" $name $clientId }}
+{{- $secretName = printf "%s-%s" $name $secretName }}
+{{- end }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoAuthMethod
+metadata:
+  name: {{ $name }}-oidc
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: oidc
+  type: oidc
+  openbaoNamespace: {{ $name }}/
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoJWTOIDCAuthEngineConfig
+metadata:
+  name: {{ $name }}-oidc-config
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: oidc
+  openbaoNamespace: {{ $name }}/
+  oidcDiscoveryUrl: {{ .Values.sso.dex.issuerUrl | quote }}
+  {{- if .Values.sso.dex.caBundlePem }}
+  oidcDiscoveryCaPem: |
+{{ .Values.sso.dex.caBundlePem | indent 4 }}
+  {{- end }}
+  oidcClientId: {{ $clientId | quote }}
+  oidcClientSecretRef:
+    name: {{ $secretName }}
+    key: {{ .Values.sso.dex.clientSecretRef.key }}
+{{- end }}

@@ -1,0 +1,59 @@
+{{/*
+Section 2 — per-tenant transit secret engine. One mount + N
+OpenBaoTransitKey CRs (one per `transit.keys` entry). Gated by
+`transit.enabled`; when false, this section is skipped and no transit
+paths are granted in §4 / §7.
+
+Each key inherits `transit.defaultAutoRotatePeriod` unless it sets its
+own `autoRotatePeriod`. Default = 90 days satisfies common compliance
+floors (PCI, HIPAA) without requiring per-key tuning.
+
+Workload SAs opt into encrypt/decrypt on a specific subset via
+`bao.stakater.com/transit-keys: <csv>` — see 04-sa-own-tenant.yaml.
+*/}}
+{{- if .Values.transit.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $mount := .Values.transit.mountPath }}
+{{- $defaultRotate := .Values.transit.defaultAutoRotatePeriod }}
+{{- $labels := include "openbao.labels" . }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoSecretEngine
+metadata:
+  name: {{ $tenant }}-transit
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  transit: {}
+{{- range $k := .Values.transit.keys }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  name: {{ include "openbao.transitKeyName" (dict "tenant" $tenant "keyName" $k.name) }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $k.name }}
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  {{- if $k.type }}
+  type: {{ $k.type }}
+  {{- end }}
+  {{- /* per-key override > chart default; empty defaultRotate => skip */ -}}
+  {{- $rotate := $k.autoRotatePeriod | default $defaultRotate }}
+  {{- if $rotate }}
+  autoRotatePeriod: {{ $rotate | quote }}
+  {{- end }}
+  {{- if $k.exportable }}
+  exportable: {{ $k.exportable }}
+  {{- end }}
+  {{- if $k.derived }}
+  derived: {{ $k.derived }}
+  {{- end }}
+{{- end }}
+{{- end }}

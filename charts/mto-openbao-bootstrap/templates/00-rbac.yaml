@@ -1,0 +1,82 @@
+# RBAC granted to the template-operator-v2 ServiceAccount so it can:
+#   - LIST/WATCH Tenant CRs (parent objectFieldRef source)
+#   - LIST/WATCH Namespaces (child namespaceSelector resolution)
+#   - CRUD TemplateInstance (parent renders child TIs)
+#   - CRUD OpenBao* CRs (child renders the per-tenant scaffolding)
+#   - read ServiceAccounts + Deployments (workload discovery via the
+#     child Template's namespaceSelector-scoped objectFieldRefs)
+#   - CRUD ConfigMaps (per-SA bao-env ConfigMap emitted by the tenant chart)
+#   - CRUD SecretStores + ExternalSecrets (ESO integration)
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mto-openbao-tenant-reader
+rules:
+  - apiGroups: ["tenantoperator.stakater.com"]
+    resources: ["tenants"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mto-openbao-tenant-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mto-openbao-tenant-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.templateOperator.serviceAccountName }}
+    namespace: {{ .Values.templateOperator.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mto-openbao-manager
+rules:
+  - apiGroups: ["security.mto.stakater.com"]
+    resources:
+      - openbaonamespaces
+      - openbaosecretengines
+      - openbaopolicies
+      - openbaoauthmethods
+      - openbaokubernetesauthengineconfigs
+      - openbaokubernetesauthroles
+      - openbaojwtoidcauthengineconfigs
+      - openbaojwtoidcauthengineroles
+      - openbaotransitkeys
+      - openbaopkisecretengineconfigs
+      - openbaopkisecretengineroles
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["secretstores", "externalsecrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["templates.v2.stakater.com"]
+    resources: ["templateinstances"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mto-openbao-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mto-openbao-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.templateOperator.serviceAccountName }}
+    namespace: {{ .Values.templateOperator.namespace }}

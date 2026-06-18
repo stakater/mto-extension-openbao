@@ -1,0 +1,64 @@
+{{/*
+Section 9 — monitoring (off by default).
+
+Emits one PrometheusRule per child TI render with three alerts:
+
+  1. OpenBaoRenderedCRNotReady — any OpenBao* CR labeled by this child
+     stays Ready=False for 10m. Catches operator-side reconcile failures.
+  2. OpenBaoExternalSecretSyncFailed — any ExternalSecret in workload
+     namespaces fires SecretSyncedError for 5m. Catches bao auth or
+     missing-secret problems.
+  3. OpenBaoPKICertExpiringSoon — placeholder; surfaces if the operator
+     ever publishes a cert expiry metric. Today this rule is inactive
+     (no series matches); kept here as documentation of the intent.
+
+Requires prometheus-operator's PrometheusRule CRD installed in the
+cluster. Gated by monitoring.enabled.
+*/}}
+{{- if .Values.monitoring.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $labels := include "openbao.labels" . }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: mto-openbao-{{ $tenant }}
+  namespace: {{ .Values.monitoring.prometheusNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  groups:
+    - name: mto-openbao-{{ $tenant }}.reconcile
+      rules:
+        - alert: OpenBaoRenderedCRNotReady
+          expr: |
+            sum by (kind, name, namespace) (
+              kube_customresource_status_conditions{
+                customresource_group="security.mto.stakater.com",
+                condition="Ready",
+                status="false",
+                label_stakater_com_tenant="{{ $tenant }}"
+              }
+            ) > 0
+          for: 10m
+          labels:
+            severity: warning
+            tenant: {{ $tenant }}
+          annotations:
+            summary: "OpenBao CR {{`{{ $labels.kind }}/{{ $labels.name }}`}} not Ready for tenant {{ $tenant }}"
+            description: "Operator reconcile is failing for this CR; check controller logs in mto-extension-openbao-system."
+        - alert: OpenBaoExternalSecretSyncFailed
+          expr: |
+            externalsecret_status_condition{
+              status="False",
+              type="Ready",
+              label_stakater_com_tenant="{{ $tenant }}"
+            } > 0
+          for: 5m
+          labels:
+            severity: warning
+            tenant: {{ $tenant }}
+          annotations:
+            summary: "ExternalSecret {{`{{ $labels.namespace }}/{{ $labels.name }}`}} not syncing"
+            description: "Bao auth failure or missing source path. Check the ExternalSecret events + bao audit log."
+{{- end }}

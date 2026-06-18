@@ -1,0 +1,14 @@
+apiVersion: v2
+name: mto-openbao-bootstrap
+description: |
+  Cluster-level bootstrap for the per-tenant OpenBao scaffolding pipeline.
+  Installs the t-op-v2 parent Template (one TemplateInstance per Tenant CR),
+  the child Template that pulls the mto-openbao-tenant chart from OCI, the
+  bao-token-reviewer Secret + auth-delegator binding, and the t-op-v2 RBAC
+  needed to manage TemplateInstances + OpenBao* CRs + workload Deployments
+  and ServiceAccounts.
+
+  Requires: template-operator-v2 and mto-extension-openbao installed.
+type: application
+version: 0.1.0
+appVersion: "0.4.0"

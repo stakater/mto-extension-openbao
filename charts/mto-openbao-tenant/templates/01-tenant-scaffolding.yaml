@@ -1,0 +1,60 @@
+{{/*
+Section 1 — per-Tenant scaffolding. One copy per child TI: the bao
+namespace, the KV-v2 mount, the kubernetes auth mount, and its engine
+config. Transit (§2), PKI (§3) and OIDC (§6) sit alongside as opt-in
+engines. The `shared/` scaffolding lives in the parent gotemplate, not
+here.
+*/}}
+{{- $name := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $labels := include "openbao.labels" . }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoNamespace
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $name }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoSecretEngine
+metadata:
+  name: {{ $name }}-kv
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: kv
+  openbaoNamespace: {{ $name }}/
+  kvV2: {}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoAuthMethod
+metadata:
+  name: {{ $name }}-kubernetes
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: kubernetes
+  type: kubernetes
+  openbaoNamespace: {{ $name }}/
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoKubernetesAuthEngineConfig
+metadata:
+  name: {{ $name }}-kubernetes-config
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: kubernetes
+  openbaoNamespace: {{ $name }}/
+  kubernetesHost: {{ .Values.kubernetesHost }}
+  tokenReviewerJwtRef:
+    name: {{ .Values.tokenReviewerSecretName }}
+  kubernetesCaCertRef:
+    name: {{ .Values.tokenReviewerSecretName }}
+    key: ca.crt

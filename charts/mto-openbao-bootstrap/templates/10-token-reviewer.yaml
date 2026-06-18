@@ -1,0 +1,34 @@
+# ServiceAccount whose JWT bao presents to the apiserver when calling
+# TokenReview on inbound login requests. Requires system:auth-delegator.
+# A long-lived token is materialized via a kubernetes.io/service-account-token
+# Secret — the same Secret also gets ca.crt populated automatically, so a
+# single Secret backs both spec.tokenReviewerJwtRef and
+# spec.kubernetesCaCertRef on every per-tenant OpenBaoKubernetesAuthEngineConfig.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bao-token-reviewer
+  namespace: {{ .Values.operatorNamespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bao-token-reviewer-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: bao-token-reviewer
+    namespace: {{ .Values.operatorNamespace }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bao-token-reviewer
+  namespace: {{ .Values.operatorNamespace }}
+  annotations:
+    kubernetes.io/service-account.name: bao-token-reviewer
+type: kubernetes.io/service-account-token

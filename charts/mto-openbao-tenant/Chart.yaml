@@ -1,0 +1,12 @@
+apiVersion: v2
+name: mto-openbao
+description: |
+  Productization candidate: per-tenant OpenBao scaffolding (KV, transit,
+  PKI, kubernetes auth, optional OIDC SSO), per-SA Policy + Role, per-SA
+  intra-tenant and cross-tenant sharing, per-Deployment ExternalSecrets.
+  Scoped to a single tenant; rendered N times by the parent gotemplate
+  Template (one TemplateInstance per Tenant CR). Replaces the manual
+  per-tenant bao setup workflows.
+type: application
+version: 0.4.0
+appVersion: "0.4.0"
