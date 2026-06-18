@@ -48,7 +48,7 @@ spec:
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: TemplateInstance
 metadata:
-  name: mto-openbao-tenant-{{ $name }}
+  name: openbao-config-mto-{{ $name }}
   namespace: {{ $opNs }}
 spec:
   templateRef:

@@ -11,7 +11,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mto-openbao-tenant-reader
+  name: openbao-config-mto-tenant-reader
 rules:
   - apiGroups: ["tenantoperator.stakater.com"]
     resources: ["tenants"]
@@ -23,11 +23,11 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mto-openbao-tenant-reader
+  name: openbao-config-mto-tenant-reader
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mto-openbao-tenant-reader
+  name: openbao-config-mto-tenant-reader
 subjects:
   - kind: ServiceAccount
     name: {{ .Values.templateOperator.serviceAccountName }}
@@ -36,7 +36,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: mto-openbao-manager
+  name: openbao-config-mto-manager
 rules:
   - apiGroups: ["security.mto.stakater.com"]
     resources:
@@ -71,11 +71,11 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: mto-openbao-manager
+  name: openbao-config-mto-manager
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: mto-openbao-manager
+  name: openbao-config-mto-manager
 subjects:
   - kind: ServiceAccount
     name: {{ .Values.templateOperator.serviceAccountName }}

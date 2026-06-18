@@ -1,4 +1,4 @@
-# mto-openbao chart values.
+# openbao-config-mto chart values.
 #
 # Most values fall through from sensible defaults; the parent gotemplate
 # Template stamps the per-child values (tenant, serviceAccounts, deployments).

@@ -1,12 +1,16 @@
 apiVersion: v2
-name: mto-openbao
+name: openbao-config-mto
 description: |
-  Productization candidate: per-tenant OpenBao scaffolding (KV, transit,
-  PKI, kubernetes auth, optional OIDC SSO), per-SA Policy + Role, per-SA
-  intra-tenant and cross-tenant sharing, per-Deployment ExternalSecrets.
-  Scoped to a single tenant; rendered N times by the parent gotemplate
-  Template (one TemplateInstance per Tenant CR). Replaces the manual
-  per-tenant bao setup workflows.
+  OpenBao config for one MTO Tenant: KV / transit / PKI mounts, kubernetes
+  auth config, optional OIDC SSO, per-SA Policy + Role, per-SA intra-tenant
+  and cross-tenant sharing, per-Deployment ExternalSecrets.
+
+  Rendered once per Tenant CR by the openbao-config-mto-bootstrap parent
+  Template. Pulled from OCI by template-operator-v2 — not installed
+  standalone.
+
+  Requires: the OpenBao config operator installed (provides the OpenBao*
+  CRDs this chart emits).
 type: application
 version: 0.4.0
 appVersion: "0.4.0"

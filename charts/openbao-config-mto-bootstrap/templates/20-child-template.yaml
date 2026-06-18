@@ -1,7 +1,7 @@
-# Child Template — the parent emits one TemplateInstance of this per Tenant
-# CR. Each TI pulls the mto-openbao-tenant chart from OCI and renders it
-# with parameters resolved per tenant (tenant name, SA list, deployment
-# list, env, etc.).
+# Child Template — the parent emits one TemplateInstance of this per MTO
+# Tenant CR. Each TI pulls the openbao-config-mto chart from OCI and
+# renders it with parameters resolved per tenant (tenant name, SA list,
+# deployment list, env, etc.).
 #
 # baoCABundle is NOT a pass-through parameter — it's a multi-line PEM that
 # must be set as a chart-level value at chart-package or chart-pull time
@@ -11,7 +11,7 @@
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: Template
 metadata:
-  name: mto-openbao-tenant
+  name: openbao-config-mto
   namespace: {{ .Values.operatorNamespace }}
 spec:
   targetNamespaces:
@@ -70,10 +70,10 @@ spec:
   helm:
     chart:
       repository:
-        url: {{ .Values.mtoOpenbaoTenant.registry | quote }}
-        name: {{ .Values.mtoOpenbaoTenant.name | quote }}
-        version: {{ .Values.mtoOpenbaoTenant.version | quote }}
-    releaseName: {{ .Values.mtoOpenbaoTenant.releaseName | quote }}
+        url: {{ .Values.openbaoConfigMto.registry | quote }}
+        name: {{ .Values.openbaoConfigMto.name | quote }}
+        version: {{ .Values.openbaoConfigMto.version | quote }}
+    releaseName: {{ .Values.openbaoConfigMto.releaseName | quote }}
     version: v4
     valuesTemplate: |
       tenant: {{ `{{ .parameters.tenant }}` }}

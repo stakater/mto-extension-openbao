@@ -1,7 +1,7 @@
-# Parent Template (gotemplate). Watches Tenant CRs cluster-wide via the
-# parent TI's objectFieldRef and renders:
+# Parent Template (gotemplate). Watches MTO Tenant CRs cluster-wide via
+# the parent TI's objectFieldRef and renders:
 #   - the shared bao-namespace scaffolding (singleton per bao backend)
-#   - one TemplateInstance of the mto-openbao-tenant child Template per
+#   - one TemplateInstance of the openbao-config-mto child Template per
 #     Tenant CR
 #
 # Parameter defaults come from the bootstrap chart's values. The gotemplate
@@ -11,7 +11,7 @@
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: Template
 metadata:
-  name: mto-openbao-parent
+  name: openbao-config-mto-parent
   namespace: {{ .Values.operatorNamespace }}
 spec:
   targetNamespaces:
@@ -30,7 +30,7 @@ spec:
     - name: kubernetesHost
       value: {{ .Values.parent.kubernetesHost | quote }}
     - name: childTemplateName
-      value: mto-openbao-tenant
+      value: openbao-config-mto
     - name: tenantLabelKey
       value: {{ .Values.parent.tenantLabelKey | quote }}
     - name: sharedTenantName
@@ -47,7 +47,7 @@ spec:
   # child TI it emits, so fromAll over TemplateInstance gives one-shot
   # per-tenant health from the parent TI's status — no per-child
   # iteration needed:
-  #   kubectl -n <opNs> get ti mto-openbao-parent -o jsonpath='{.status.outputs}'
+  #   kubectl -n <opNs> get ti openbao-config-mto-parent -o jsonpath='{.status.outputs}'
   outputs:
     - name: tenants
       fromAll:

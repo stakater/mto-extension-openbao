@@ -22,13 +22,13 @@ cluster. Gated by monitoring.enabled.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: mto-openbao-{{ $tenant }}
+  name: openbao-config-mto-{{ $tenant }}
   namespace: {{ .Values.monitoring.prometheusNamespace }}
   labels:
     {{- $labels | nindent 4 }}
 spec:
   groups:
-    - name: mto-openbao-{{ $tenant }}.reconcile
+    - name: openbao-config-mto-{{ $tenant }}.reconcile
       rules:
         - alert: OpenBaoRenderedCRNotReady
           expr: |
