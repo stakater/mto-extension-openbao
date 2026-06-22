@@ -21,7 +21,7 @@ Per-SA opt-ins:
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $labels := include "openbao.labels" . }}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $rawTier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}

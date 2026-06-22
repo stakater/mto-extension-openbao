@@ -11,7 +11,7 @@ matters only when running two operator installs against the same bao backend.
 {{- $env := .Values.env }}
 {{- $shared := .Values.sharedTenant.name }}
 {{- $labels := include "openbao.labels" . }}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}

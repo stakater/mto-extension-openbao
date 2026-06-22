@@ -24,7 +24,7 @@ Gated by transit.enabled (shares meaningless without the engine).
 {{- $seenPair := dict }}
 {{- /* Pass 1: dedupe the (writer-tenant, peer) set across all SAs and
        emit one OpenBaoTransitKey per pair. */ -}}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/expose-transit-to-tenant" "" $sa }}
 {{- if $exposeRaw }}
 {{- range $peer := splitList "," $exposeRaw }}
@@ -56,7 +56,7 @@ spec:
 {{- end }}
 {{- end }}
 {{- /* Pass 2: per-SA Policy + Role for the writer side. */ -}}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}

@@ -19,7 +19,7 @@ enforce NPs — these manifests will apply but be no-ops.
 {{- $labels := include "openbao.labels" . }}
 {{- $namespaces := dict }}
 {{- /* Collect every unique workload ns we render into. */ -}}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $ns := dig "metadata" "namespace" "" $sa }}
 {{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
 {{- end }}

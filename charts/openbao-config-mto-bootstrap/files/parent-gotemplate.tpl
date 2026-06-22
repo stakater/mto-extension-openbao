@@ -61,8 +61,10 @@ spec:
       value: {{ $env }}
     - name: ssoEnabled
       value: {{ $ssoEnabled | quote }}
+{{- if $ssoIssuerUrl }}
     - name: ssoIssuerUrl
       value: {{ $ssoIssuerUrl | quote }}
+{{- end }}
     - name: eso
       value: {{ $eso }}
     - name: externalSecretRefreshInterval
