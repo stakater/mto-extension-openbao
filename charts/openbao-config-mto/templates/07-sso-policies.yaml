@@ -116,6 +116,10 @@ spec:
   roleType: oidc
   userClaim: email
   groupsClaim: groups
+  oidcScopes:
+    - email
+    - profile
+    - groups
   boundAudiences:
     - {{ $.Values.sso.audience | quote }}
   boundClaims:
@@ -164,6 +168,10 @@ spec:
   roleType: oidc
   userClaim: email
   groupsClaim: groups
+  oidcScopes:
+    - email
+    - profile
+    - groups
   boundAudiences:
     - {{ $.Values.sso.audience | quote }}
   # No boundClaims — any valid OIDC token can use this role.
