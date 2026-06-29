@@ -13,45 +13,73 @@ namespaceSelector matchLabels: { <tenantLabelKey>: <tenant> }.
 Per-SA opt-ins:
   bao.stakater.com/tier                  required: viewer | editor | admin | audit-read (or default via .Values.defaultCapability)
   bao.stakater.com/subscribe-to-ns       intra-tenant: CSV of writer namespaces
-  bao.stakater.com/expose-to-tenant      cross-tenant share-out: CSV of peer tenants
-  bao.stakater.com/import-from-tenant    cross-tenant share-in: CSV of peer tenants
-  bao.stakater.com/transit-keys          transit: CSV of tenant-wide key names (validated against .Values.transit.keys)
-  bao.stakater.com/pki-roles             pki: CSV of tenant-wide role names (validated against .Values.pki.roles)
+  bao.stakater.com/kv-export-tenant      cross-tenant share-out: CSV of peer tenants
+  bao.stakater.com/kv-import-tenant    cross-tenant share-in: CSV of peer tenants
+  bao.stakater.com/transit               transit: "true" to grant encrypt/decrypt on the SA's own-namespace key + the tenant shared key
+  bao.stakater.com/pki                   pki: "true" to grant direct bao PKI access against the tenant's single role
+                                          (apps using cert-manager Issuer injection don't need this — cert-manager
+                                          authenticates via its own SA)
+  bao.stakater.com/pki-allow-tenant      cross-tenant PKI: CSV of peer tenants to accept inbound (implies trust);
+                                          consumed by 11-pki-cross-tenant-trust.yaml (needs pki.crossTenant.enabled)
+  bao.stakater.com/pki-trust-tenant      cross-tenant PKI: CSV of peer tenants to trust outbound only (trust without
+                                          accepting inbound); consumed by 11-pki-cross-tenant-trust.yaml
 */}}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $labels := include "openbao.labels" . }}
+{{- /* Set of every k8s namespace this tenant owns, derived from the SA +
+       Deployment lists the child TI resolves via its namespaceSelector.
+       Used to reject `subscribe-to-ns` targets outside the tenant. */ -}}
+{{- $tenantNamespaces := dict }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $ns := dig "metadata" "namespace" "" $sa }}
+{{- if $ns }}{{ $_ := set $tenantNamespaces $ns true }}{{ end }}
+{{- end }}
+{{- range $d := (ternary .Values.deployments (list) (kindIs "slice" .Values.deployments)) }}
+{{- $ns := dig "metadata" "namespace" "" $d }}
+{{- if $ns }}{{ $_ := set $tenantNamespaces $ns true }}{{ end }}
+{{- end }}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $rawTier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}
 {{- $subscribeRaw := dig "metadata" "annotations" "bao.stakater.com/subscribe-to-ns" "" $sa }}
-{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/expose-to-tenant" "" $sa }}
-{{- $importRaw := dig "metadata" "annotations" "bao.stakater.com/import-from-tenant" "" $sa }}
-{{- $transitRaw := dig "metadata" "annotations" "bao.stakater.com/transit-keys" "" $sa }}
-{{- $transitExposeRaw := dig "metadata" "annotations" "bao.stakater.com/expose-transit-to-tenant" "" $sa }}
-{{- $transitImportRaw := dig "metadata" "annotations" "bao.stakater.com/import-transit-from-tenant" "" $sa }}
-{{- $pkiRolesRaw := dig "metadata" "annotations" "bao.stakater.com/pki-roles" "" $sa }}
+{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/kv-export-tenant" "" $sa }}
+{{- $importRaw := dig "metadata" "annotations" "bao.stakater.com/kv-import-tenant" "" $sa }}
+{{- $transitOptIn := dig "metadata" "annotations" "bao.stakater.com/transit" "" $sa }}
+{{- $transitExposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
+{{- $transitImportRaw := dig "metadata" "annotations" "bao.stakater.com/transit-import-tenant" "" $sa }}
+{{- $pkiOptIn := dig "metadata" "annotations" "bao.stakater.com/pki" "" $sa }}
 {{- $transitMount := $.Values.transit.mountPath }}
-{{- $pkiMount := $.Values.pki.mountPath }}
-{{- /* Validate transit + pki CSV annotations against the chart catalog
-       BEFORE we start rendering. Typo'd entries become helm-render errors
-       with a clear message; honor strictAnnotationValidation flags. */ -}}
-{{- include "openbao.validateCsvAgainstCatalog" (dict
-    "csv" $transitRaw "catalog" $.Values.transit.keys
-    "annotation" "bao.stakater.com/transit-keys"
-    "saName" $saName "saNs" $saNs "strict" $.Values.transit.strictAnnotationValidation) }}
-{{- include "openbao.validateCsvAgainstCatalog" (dict
-    "csv" $pkiRolesRaw "catalog" $.Values.pki.roles
-    "annotation" "bao.stakater.com/pki-roles"
-    "saName" $saName "saNs" $saNs "strict" $.Values.pki.strictAnnotationValidation) }}
+{{- $pkiMount := include "openbao.pkiMount" $ }}
 {{- /* Fall back to defaultCapability when SA omits the tier annotation. */ -}}
 {{- $tier := $rawTier }}
 {{- if not $tier }}{{ $tier = $.Values.defaultCapability }}{{ end }}
+{{- /* A tier outside tierCaps (typo, or super-admin which is SSO-only) makes the
+       caps lookup nil and the SA is silently skipped — a workload denied access
+       with no signal. Fail loudly instead, matching subscribe-to-ns. "none" opts
+       the SA out and is always allowed. */ -}}
+{{- if not (has $tier (append (keys $.Values.tierCaps) "none")) }}
+{{- fail (printf "bao.stakater.com/tier %q on ServiceAccount %s/%s is not a known tier (valid: %s, or \"none\" to opt out)" $tier $saNs $saName (keys $.Values.tierCaps | sortAlpha | join ", ")) }}
+{{- end }}
 {{- $caps := index $.Values.tierCaps $tier }}
 {{- $transitCaps := index $.Values.transit.tierCaps $tier }}
+{{- /* Intra-tenant transit: an SA opting in (editor/admin tier) gets its
+       own-namespace key <saNs>-<env> and the tenant shared key. */ -}}
+{{- $transitOn := and $.Values.transit.enabled (eq (lower (toString $transitOptIn)) "true") $transitCaps (ne $transitCaps "[]") }}
+{{- $ownKey := include "openbao.transitNsKeyName" (dict "ns" $saNs "env" $env) }}
+{{- $sharedKey := include "openbao.transitSharedKeyName" (dict "tenant" $tenant "env" $env) }}
 {{- if and $tier (ne $tier "none") $saName $saNs $caps }}
 {{- $roleName := include "openbao.roleName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "tier" $tier) }}
+{{- /* Intra-tenant sharing can only target a namespace the tenant owns. A
+       subscribe-to-ns to an unknown namespace grants read on a `_shared/`
+       sub-prefix nothing writes to — a silent dead grant. Fail the render. */ -}}
+{{- range $subNs := splitList "," $subscribeRaw }}
+{{- $subNs = trim $subNs }}
+{{- if and $subNs (not (hasKey $tenantNamespaces $subNs)) }}
+{{- fail (printf "bao.stakater.com/subscribe-to-ns on ServiceAccount %s/%s references namespace %q, which is not a namespace of tenant %q (tenant owns: %s)" $saNs $saName $subNs $tenant (keys $tenantNamespaces | sortAlpha | join ", ")) }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPolicy
@@ -98,12 +126,10 @@ spec:
     path "kv/undelete/{{ $env }}/_shared/from-{{ $saNs }}/*" { capabilities = ["update"] }
     path "kv/destroy/{{ $env }}/_shared/from-{{ $saNs }}/*"  { capabilities = ["update"] }
     {{- end }}
-    {{- if and $.Values.transit.enabled $transitRaw $transitCaps (ne $transitCaps "[]") }}
-    # 3. Transit — per-key encrypt/decrypt grants. Bao uses POST on the
-    # operation endpoints (encrypt/decrypt/rewrap/etc), so capability="update".
-    {{- range $key := splitList "," $transitRaw }}
-    {{- $key = trim $key }}
-    {{- if $key }}
+    {{- if $transitOn }}
+    # 3. Transit — encrypt/decrypt/rewrap on the SA's own-namespace key and
+    # the tenant shared key. Bao uses POST on these endpoints (update).
+    {{- range $key := (list $ownKey $sharedKey) }}
     path "{{ $transitMount }}/encrypt/{{ $key }}"  { capabilities = ["update"] }
     path "{{ $transitMount }}/decrypt/{{ $key }}"  { capabilities = ["update"] }
     path "{{ $transitMount }}/rewrap/{{ $key }}"   { capabilities = ["update"] }
@@ -117,19 +143,16 @@ spec:
     {{- end }}
     {{- end }}
     {{- end }}
-    {{- end }}
-    {{- if and $.Values.pki.enabled $pkiRolesRaw }}
-    # 4. PKI — per-role issuance grants. issue/<role> takes a CSR or
-    # subject metadata via POST; sign/<role> takes a CSR. Both bao
-    # capability="update".
-    {{- range $role := splitList "," $pkiRolesRaw }}
-    {{- $role = trim $role }}
-    {{- if $role }}
-    path "{{ $pkiMount }}/issue/{{ $role }}" { capabilities = ["update"] }
-    path "{{ $pkiMount }}/sign/{{ $role }}"  { capabilities = ["update"] }
+    {{- if and $.Values.pki.enabled (eq (lower (toString $pkiOptIn)) "true") }}
+    # 4. PKI — issue + sign grants against EVERY tenant role (the workload
+    # picks which role to use). Apps using cert-manager Issuer injection
+    # don't reach here; this block is for workloads that talk to bao directly.
+    {{- range $r := $.Values.pki.roles }}
+    {{- $rn := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) }}
+    path "{{ $pkiMount }}/issue/{{ $rn }}" { capabilities = ["update"] }
+    path "{{ $pkiMount }}/sign/{{ $rn }}"  { capabilities = ["update"] }
     {{- if eq $tier "admin" }}
-    path "{{ $pkiMount }}/roles/{{ $role }}" { capabilities = ["read", "list"] }
-    {{- end }}
+    path "{{ $pkiMount }}/roles/{{ $rn }}" { capabilities = ["read", "list"] }
     {{- end }}
     {{- end }}
     # CA reads — every PKI-enabled SA gets read access to the CA bundle
@@ -196,7 +219,7 @@ data:
   {{- if $exposeRaw }}
   {{- range $peer := splitList "," $exposeRaw }}
   {{- $peer = trim $peer }}
-  {{- if $peer }}
+  {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
   {{- $peerKey := upper (replace "-" "_" $peer) }}
   VAULT_OUT_{{ $peerKey }}_NAMESPACE: {{ $.Values.sharedTenant.name }}/
   VAULT_OUT_{{ $peerKey }}_ROLE: {{ include "openbao.shareOutName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
@@ -207,7 +230,7 @@ data:
   {{- if $importRaw }}
   {{- range $peer := splitList "," $importRaw }}
   {{- $peer = trim $peer }}
-  {{- if $peer }}
+  {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
   {{- $peerKey := upper (replace "-" "_" $peer) }}
   VAULT_IN_{{ $peerKey }}_NAMESPACE: {{ $.Values.sharedTenant.name }}/
   VAULT_IN_{{ $peerKey }}_ROLE: {{ include "openbao.shareInName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
@@ -215,21 +238,19 @@ data:
   {{- end }}
   {{- end }}
   {{- end }}
-  {{- if and $.Values.transit.enabled $transitRaw }}
+  {{- if $transitOn }}
   VAULT_TRANSIT_MOUNT: {{ $transitMount }}
-  {{- range $key := splitList "," $transitRaw }}
-  {{- $key = trim $key }}
-  {{- if $key }}
-  {{- $keyEnv := upper (replace "-" "_" $key) }}
-  VAULT_TRANSIT_KEY_{{ $keyEnv }}_ENCRYPT: {{ $transitMount }}/encrypt/{{ $key }}
-  VAULT_TRANSIT_KEY_{{ $keyEnv }}_DECRYPT: {{ $transitMount }}/decrypt/{{ $key }}
-  {{- end }}
-  {{- end }}
+  VAULT_TRANSIT_OWN_KEY: {{ $ownKey }}
+  VAULT_TRANSIT_OWN_ENCRYPT: {{ $transitMount }}/encrypt/{{ $ownKey }}
+  VAULT_TRANSIT_OWN_DECRYPT: {{ $transitMount }}/decrypt/{{ $ownKey }}
+  VAULT_TRANSIT_SHARED_KEY: {{ $sharedKey }}
+  VAULT_TRANSIT_SHARED_ENCRYPT: {{ $transitMount }}/encrypt/{{ $sharedKey }}
+  VAULT_TRANSIT_SHARED_DECRYPT: {{ $transitMount }}/decrypt/{{ $sharedKey }}
   {{- end }}
   {{- if and $.Values.transit.enabled $transitExposeRaw }}
   {{- range $peer := splitList "," $transitExposeRaw }}
   {{- $peer = trim $peer }}
-  {{- if $peer }}
+  {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
   {{- $peerKey := upper (replace "-" "_" $peer) }}
   {{- $keyName := include "openbao.transitShareKeyName" (dict "writer" $tenant "reader" $peer "env" $env) }}
   VAULT_TRANSIT_OUT_{{ $peerKey }}_NAMESPACE: {{ $.Values.sharedTenant.name }}/
@@ -242,7 +263,7 @@ data:
   {{- if and $.Values.transit.enabled $transitImportRaw }}
   {{- range $peer := splitList "," $transitImportRaw }}
   {{- $peer = trim $peer }}
-  {{- if $peer }}
+  {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
   {{- $peerKey := upper (replace "-" "_" $peer) }}
   {{- $keyName := include "openbao.transitShareKeyName" (dict "writer" $peer "reader" $tenant "env" $env) }}
   VAULT_TRANSIT_IN_{{ $peerKey }}_NAMESPACE: {{ $.Values.sharedTenant.name }}/
@@ -251,17 +272,20 @@ data:
   {{- end }}
   {{- end }}
   {{- end }}
-  {{- if and $.Values.pki.enabled $pkiRolesRaw }}
+  {{- if and $.Values.pki.enabled (eq (lower (toString $pkiOptIn)) "true") }}
+  {{- /* An SA opted into PKI but pki.roles is empty — `first` would deref nil
+         and the render would die with an opaque error. Fail clearly instead. */ -}}
+  {{- if not $.Values.pki.roles }}
+  {{- fail (printf "ServiceAccount %s/%s opts into bao.stakater.com/pki but pki.roles is empty — define at least one role under pki.roles" $saNs $saName) }}
+  {{- end }}
+  {{- /* Convenience paths for the PRIMARY (first) role; the SA is granted
+         issue/sign on every role, reachable at <mount>/issue/<role>. */ -}}
+  {{- $primaryRole := include "openbao.pkiDefaultRoleName" (dict "tpl" (first $.Values.pki.roles).nameTemplate "tenant" $tenant) }}
   VAULT_PKI_MOUNT: {{ $pkiMount }}
   VAULT_PKI_CA_PATH: {{ $pkiMount }}/ca/pem
-  {{- range $role := splitList "," $pkiRolesRaw }}
-  {{- $role = trim $role }}
-  {{- if $role }}
-  {{- $roleEnv := upper (replace "-" "_" $role) }}
-  VAULT_PKI_ROLE_{{ $roleEnv }}_ISSUE: {{ $pkiMount }}/issue/{{ $role }}
-  VAULT_PKI_ROLE_{{ $roleEnv }}_SIGN:  {{ $pkiMount }}/sign/{{ $role }}
-  {{- end }}
-  {{- end }}
+  VAULT_PKI_ROLE: {{ $primaryRole }}
+  VAULT_PKI_ISSUE_PATH: {{ $pkiMount }}/issue/{{ $primaryRole }}
+  VAULT_PKI_SIGN_PATH:  {{ $pkiMount }}/sign/{{ $primaryRole }}
   {{- end }}
 {{- if $.Values.baoCABundle }}
 ---

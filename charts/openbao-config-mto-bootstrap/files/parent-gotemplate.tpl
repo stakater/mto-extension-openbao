@@ -9,6 +9,12 @@
 {{- $ssoIssuerUrl := .parameters.ssoIssuerUrl }}
 {{- $eso := .parameters.eso }}
 {{- $esoRefresh := .parameters.externalSecretRefreshInterval }}
+{{- /* Comma-separated roster of all real tenant names. Passed to each child so
+       its chart can skip cross-tenant shares whose peer is not a real tenant
+       (no dangling Policy/Role; self-heals when the peer appears). */ -}}
+{{- $tenantNames := list }}
+{{- range $t := .parameters.tenants }}{{- $tenantNames = append $tenantNames $t.metadata.name }}{{- end }}
+{{- $knownTenants := join "," $tenantNames }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoNamespace
@@ -71,6 +77,8 @@ spec:
       value: {{ $esoRefresh | quote }}
     - name: sharedTenantName
       value: {{ $shared }}
+    - name: knownTenants
+      value: {{ $knownTenants | quote }}
     - name: serviceAccounts
       valueFrom:
         objectFieldRef:

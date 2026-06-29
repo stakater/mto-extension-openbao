@@ -40,6 +40,21 @@ spec:
       value: {{ .Values.parent.sharedTenantName | quote }}
     - name: tenantLabelKey
       value: {{ .Values.parent.tenantLabelKey | quote }}
+    # Roster of all real tenant names (CSV). Stamped per-child by the parent
+    # gotemplate; the chart skips cross-tenant shares whose peer isn't listed.
+    - name: knownTenants
+      value: ""
+    # Platform-PKI hierarchy coordinates. When platformPki.enabled, the tenant
+    # chart renders its CA as a type=intermediate cross-ns-signed by this
+    # platform CA; otherwise it keeps its self-signed root.
+    - name: pkiHierarchyEnabled
+      value: {{ .Values.platformPki.enabled | quote }}
+    - name: platformPkiMount
+      value: {{ .Values.platformPki.mountPath | quote }}
+    - name: platformPkiNamespace
+      value: {{ .Values.platformPki.openbaoNamespace | quote }}
+    - name: crossTenantPkiEnabled
+      value: {{ .Values.crossTenantPki.enabled | quote }}
     - name: serviceAccounts
     - name: deployments
   # Per-tenant status outputs surfaced on the child TI:
@@ -73,6 +88,11 @@ spec:
         url: {{ .Values.openbaoConfigMto.registry | quote }}
         name: {{ .Values.openbaoConfigMto.name | quote }}
         version: {{ .Values.openbaoConfigMto.version | quote }}
+        {{- if .Values.openbaoConfigMto.authSecretName }}
+        auth:
+          secretRef:
+            name: {{ .Values.openbaoConfigMto.authSecretName | quote }}
+        {{- end }}
     releaseName: {{ .Values.openbaoConfigMto.releaseName | quote }}
     version: v4
     valuesTemplate: |
@@ -85,6 +105,14 @@ spec:
       operatorNamespace: {{ .Values.operatorNamespace }}
       tokenReviewerSecretName: bao-token-reviewer
       tenantLabelKey: {{ `{{ .parameters.tenantLabelKey }}` }}
+      knownTenants: {{ `{{ .parameters.knownTenants | quote }}` }}
+      pki:
+        hierarchy:
+          enabled: {{ `{{ .parameters.pkiHierarchyEnabled }}` }}
+          platformMount: {{ `{{ .parameters.platformPkiMount }}` }}
+          platformNamespace: {{ `{{ .parameters.platformPkiNamespace }}` }}
+        crossTenant:
+          enabled: {{ `{{ .parameters.crossTenantPkiEnabled }}` }}
       sharedTenant:
         name: {{ `{{ .parameters.sharedTenantName }}` }}
       sso:

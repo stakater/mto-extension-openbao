@@ -1,5 +1,5 @@
 {{/*
-Section 4a (share-out) — per `bao.stakater.com/expose-to-tenant: <peer-1>,<peer-2>`
+Section 4a (share-out) — per `bao.stakater.com/kv-export-tenant: <peer-1>,<peer-2>`
 annotation entry, emit a Policy + Role pair in <sharedTenant>/ that grants the SA
 write access to kv/data/<env>/from-<own-tenant>/to-<peer>/*.
 */}}
@@ -11,11 +11,11 @@ write access to kv/data/<env>/from-<own-tenant>/to-<peer>/*.
 {{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}
-{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/expose-to-tenant" "" $sa }}
+{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/kv-export-tenant" "" $sa }}
 {{- if and $tier $saName $saNs $exposeRaw }}
 {{- range $peer := splitList "," $exposeRaw }}
 {{- $peer = trim $peer }}
-{{- if $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
 {{- $shareOutName := include "openbao.shareOutName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1

@@ -1,6 +1,6 @@
 {{/*
 Section 4c (cross-tenant transit share-out) — per
-`bao.stakater.com/expose-transit-to-tenant: <peer-1>,<peer-2>` annotation
+`bao.stakater.com/transit-export-tenant: <peer-1>,<peer-2>` annotation
 on a writer SA, emit:
 
   1. One OpenBaoTransitKey per UNIQUE (writer-tenant, peer) pair, in
@@ -25,11 +25,11 @@ Gated by transit.enabled (shares meaningless without the engine).
 {{- /* Pass 1: dedupe the (writer-tenant, peer) set across all SAs and
        emit one OpenBaoTransitKey per pair. */ -}}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
-{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/expose-transit-to-tenant" "" $sa }}
+{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
 {{- if $exposeRaw }}
 {{- range $peer := splitList "," $exposeRaw }}
 {{- $peer = trim $peer }}
-{{- if $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
 {{- $pairKey := printf "%s->%s" $tenant $peer }}
 {{- if not (hasKey $seenPair $pairKey) }}
 {{- $_ := set $seenPair $pairKey true }}
@@ -60,11 +60,11 @@ spec:
 {{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}
-{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/expose-transit-to-tenant" "" $sa }}
+{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
 {{- if and $tier $saName $saNs $exposeRaw }}
 {{- range $peer := splitList "," $exposeRaw }}
 {{- $peer = trim $peer }}
-{{- if $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
 {{- $keyName := include "openbao.transitShareKeyName" (dict "writer" $tenant "reader" $peer "env" $env) }}
 {{- $shareOutName := include "openbao.transitShareOutName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
 ---

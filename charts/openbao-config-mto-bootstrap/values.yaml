@@ -24,8 +24,63 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.4.0
+  version: 0.8.0
   releaseName: openbao-config-mto
+  # Optional: name of a Secret (in the operator ns) holding OCI registry
+  # credentials. Required when pulling the chart from a private registry.
+  # Supported Secret shapes (per t-op-v2): {username,password} | {token} |
+  # {.dockerconfigjson}. Empty = anonymous pull.
+  authSecretName: ""
+
+# Platform PKI — an optional cluster-wide CA that signs every tenant's
+# intermediate CA, giving a root → platform CA → per-tenant intermediate →
+# leaf hierarchy with one common trust anchor. Rendered once per cluster.
+#
+# Enabled by default: tenants get a common trust anchor out of the box. With
+# this on, tenant charts render their CA as a type=intermediate cross-namespace-
+# signed by this platform CA (the bootstrap passes the platform mount + namespace
+# down to each tenant). Set enabled=false to fall back to per-tenant self-signed
+# roots (no common anchor).
+#
+# UPGRADE NOTE: turning this on for an EXISTING cluster is a trust-chain cutover
+# — tenants move from a self-signed root to an intermediate at a fresh mount, so
+# already-issued leaves must be re-issued (cert-manager re-issues on CA change).
+# Fresh installs have no cutover. Default mode=root needs no offline ceremony.
+#
+# Operator bao-token policy (the crux operational prerequisite): the single
+# operator token must be granted, in the platform namespace (openbaoNamespace
+# below), `update` on `<mountPath>/root/sign-intermediate`. It already has
+# `intermediate/{generate/internal,set-signed}` + `cert/ca` in each tenant
+# namespace (existing per-tenant grant). A dev root token covers all of this.
+platformPki:
+  enabled: true
+  # OpenBao namespace the platform CA lives in. A dedicated child keeps it
+  # isolated from tenants; "" puts it in the root namespace.
+  openbaoNamespace: platform/
+  mountPath: pki-platform
+  # root         = online self-signed platform root (default; no ceremony).
+  # intermediate = platform CA is itself an intermediate signed by an
+  #   offline root; the operator exports a CSR and waits for the signed
+  #   cert in externalSignSecret (production-grade — root stays offline).
+  mode: root
+  commonName: "Platform CA"
+  ttl: "175200h"   # 20y
+  # Name constraints applied to the platform CA (bounds every tenant
+  # intermediate it signs). Empty = unconstrained at the platform tier.
+  permittedDnsDomains:
+    - "svc.cluster.local"
+  # Required when mode=intermediate: the Secret (in operatorNamespace) the
+  # offline signer writes the signed platform cert into (key tls.crt).
+  externalSignSecret: ""
+
+# Cross-tenant PKI trust (opt-in, least-privilege, fails-closed). When enabled,
+# each tenant publishes its CA to a `<tenant>-ca` ConfigMap and gets a
+# trust-manager Bundle sourcing only the peers its SAs opted into (via
+# bao.stakater.com/pki-allow-tenant / pki-trust-tenant annotations). Default
+# off — it needs cert-manager trust-manager installed with its trust namespace
+# = operatorNamespace. See the tenant chart's pki.crossTenant.
+crossTenantPki:
+  enabled: false
 
 # Parent Template defaults — passed through to every child TI. Override
 # per cluster to flip env labels, swap bao endpoints, or toggle SSO.

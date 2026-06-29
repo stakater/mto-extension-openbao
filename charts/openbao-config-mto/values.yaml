@@ -95,28 +95,33 @@ ssoToken:
 # Tenant identity for this chart instance. Required at render time.
 tenant: ""
 
+# Comma-separated roster of all real tenant names, stamped by the parent
+# gotemplate. Cross-tenant share annotations (expose/kv-import-tenant,
+# expose/import-transit-to/from-tenant, deployment import.<name>) targeting a
+# peer NOT in this roster are skipped — no Policy/Role is rendered for a tenant
+# that does not exist, and the share self-heals when the peer later appears.
+# Empty means "no roster supplied" → filtering disabled (chart renders every
+# share, as when used standalone without the parent).
+knownTenants: ""
+
 # Lists resolved by the child TI's namespaceSelector. Empty by default.
 serviceAccounts: []
 deployments: []
 
 # ─── Transit ─────────────────────────────────────────────────────────
+# Doc-aligned model: per-tenant transit mount with
+#   - one shared key  <tenant>-shared-<env>  created at startup
+#   - one key per workload namespace  <nsFull>-<env>  created on demand when
+#     an SA in that namespace opts in via bao.stakater.com/transit: "true"
+# An opted-in SA (editor/admin tier) gets encrypt/decrypt/rewrap on its own
+# namespace key and the tenant shared key.
 transit:
   enabled: true
   mountPath: transit
-  # Default auto-rotation period applied to keys that don't set their own
-  # autoRotatePeriod. "0" / empty disables. Compliance regimes (PCI, HIPAA)
-  # generally require keys to rotate at least annually; default = 90 days.
+  # Auto-rotation period applied to every emitted key. "0"/empty disables.
+  # Compliance regimes (PCI, HIPAA) generally require at least annual
+  # rotation; default = 90 days.
   defaultAutoRotatePeriod: "2160h"
-  # Tenant-wide keys emitted by this chart. SAs opt into encrypt/decrypt
-  # via `bao.stakater.com/transit-keys: <csv>` — values reference key
-  # names declared here (annotation typos surface as render errors when
-  # transit.strictAnnotationValidation=true; default true).
-  strictAnnotationValidation: true
-  keys:
-    - name: app-data
-    - name: pii
-    - name: tokens
-      autoRotatePeriod: "720h"   # monthly — overrides defaultAutoRotatePeriod
   tierCaps:
     audit-read: '[]'             # transit isn't meaningful read-only
     viewer:     '[]'             # transit needs writes; viewer = no transit
@@ -124,15 +129,30 @@ transit:
     admin:      '["create", "read", "update", "list", "delete"]'
 
 # ─── PKI ─────────────────────────────────────────────────────────────
+# Doc-aligned model: one PKI role per tenant. The role's allowedDomains
+# spans every workload namespace of the tenant (computed at render time
+# from the SAs/Deployments t-op-v2 passes in).
 pki:
   enabled: true
   mountPath: pki
-  # Annotation validation — same shape as transit.strictAnnotationValidation.
-  strictAnnotationValidation: true
-  # Root CA config. PRODUCTION: prefer pkiType=intermediate signed by an
-  # external root you control out-of-band (currently the operator's
-  # OpenBaoPKISecretEngineConfig only supports pkiType=root — track
-  # operator support for intermediate before going to prod).
+  # PKI hierarchy (enabled by default). The tenant CA is a type=intermediate
+  # signed cross-namespace by the cluster platform CA (see the bootstrap
+  # chart's platformPki) — in the bootstrap flow this value is driven by
+  # platformPki.enabled, which also passes platformMount/platformNamespace
+  # down per tenant. The intermediate is rendered at a FRESH mount
+  # (hierarchy.mountPath), never reusing the type=root mountPath, because a
+  # mount that already holds a root keeps the root as its default issuer.
+  # Set enabled=false (or platformPki.enabled=false in the bootstrap) to fall
+  # back to a self-signed type=root at pki.mountPath.
+  hierarchy:
+    enabled: true
+    platformMount: pki-platform
+    platformNamespace: platform/
+    mountPath: pki-int
+
+  # Root CA config (used for the self-signed type=root CA, and for the key
+  # parameters of the intermediate in hierarchy mode). The CA's private key
+  # stays inside bao either way.
   rootCA:
     commonName: "{tenant} Internal CA"
     # 10y RSA-3072 default — NIST recommends ≥3072 for roots living past
@@ -141,29 +161,96 @@ pki:
     ttl: "87600h"
     keyType: rsa
     keyBits: 3072
-  # Role catalog emitted once per tenant. SAs opt in via
-  # `bao.stakater.com/pki-roles: <csv>`. allowedDomains supports
-  # `{tenant}` substitution.
+
+  # Role catalog — the chart emits one OpenBaoPKISecretEngineRole per entry,
+  # so you can define differentiated roles (e.g. a short-TTL client-only role
+  # and a long-TTL server-only role) instead of a single both-flags role. Each
+  # role's allowedDomains is the union, across the tenant's workload namespaces,
+  # of its allowedDomainsTemplate entries. nameTemplate supports {tenant} and
+  # must render UNIQUE per entry (it becomes the bao role name + the cert-manager
+  # Issuer name). allowedDomainsTemplate supports {tenant} and {namespace}.
+  #
+  # SAs with bao.stakater.com/pki: "true" are granted issue/sign on EVERY role
+  # (the workload picks which to use); cert-manager emits one Issuer per role
+  # per workload namespace, named after the role.
   roles:
-    - name: internal-https
-      allowedDomains:
-        - "{tenant}.svc.cluster.local"
-        - "*.{tenant}.svc.cluster.local"
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate:
+        - "{namespace}.svc.cluster.local"
       allowSubdomains: true
       enforceHostnames: true
-      maxTtl: "720h"
+      # 7-day cert TTL / 30-day max — one TTL covers HTTPS server and mTLS
+      # workload use cases. Apps needing shorter rotation can override per
+      # Certificate via cert-manager (`spec.duration`).
       ttl: "168h"
-      serverFlag: true     # FIX: serverFlag must be true on an https role
-      clientFlag: false
-    - name: workload-mtls
-      allowedDomains:
-        - "{tenant}.svc.cluster.local"
-        - "*.{tenant}.svc.cluster.local"
-      allowSubdomains: true
-      maxTtl: "168h"
-      ttl: "24h"
+      maxTtl: "720h"
+      # Both flags true so the role can issue server-only, client-only, or
+      # dual-purpose certs. The actual usage is constrained per Certificate.
       serverFlag: true
       clientFlag: true
+    # Example of a second, differentiated role (commented out by default):
+    # - nameTemplate: "{tenant}-client"
+    #   allowedDomainsTemplate:
+    #     - "{namespace}.svc.cluster.local"
+    #   allowSubdomains: true
+    #   enforceHostnames: true
+    #   ttl: "24h"
+    #   maxTtl: "168h"
+    #   serverFlag: false      # client-only
+    #   clientFlag: true
+
+  # cert-manager Issuer injection. When enabled, the chart emits ONE
+  # cert-manager.io/v1 Issuer per pki.roles[] entry, per workload ns —
+  # each Issuer is named after its bao role (the value app teams put in
+  # `issuerRef.name`), so apps pick which role issues their cert. Demand-
+  # driven: only workload namespaces where at least one SA opts in via
+  # `bao.stakater.com/pki: "true"` get Issuers.
+  #
+  # Requires the cert-manager CRDs installed in the cluster. The chart
+  # does NOT install cert-manager itself.
+  certManager:
+    enabled: false
+    # Issuer (namespaced) is safer — each tenant's Issuer can only be
+    # used within its own ns. ClusterIssuer would weaken tenant isolation
+    # and is not currently supported.
+    issuerKind: Issuer
+    # Templated bao auth role name (used by cert-manager to log into bao
+    # via kubernetes auth). {tenant} is substituted; {ns} is substituted
+    # to the workload namespace name when the chart emits one role per ns
+    # for least-privilege scoping.
+    authRoleNameTemplate: "ten-{tenant}-pki-{ns}"
+    # cert-manager's controller identity. Per cert-manager's kubernetes
+    # auth flow, the controller pod's SA must be allowed to create a
+    # serviceaccount token for the per-workload-ns `bao-cert-manager` SA.
+    # The chart emits a Role + RoleBinding in each workload ns granting
+    # that capability to this SA. Defaults match the upstream
+    # jetstack/cert-manager helm release.
+    controllerNamespace: cert-manager
+    controllerServiceAccount: cert-manager
+
+  # Cross-tenant trust (opt-in, least-privilege, fails-closed). When enabled:
+  #   - the tenant's CA cert is published to a ConfigMap `<tenant>-ca` (key
+  #     ca.crt) in operatorNamespace, for trust distribution;
+  #   - a cert-manager trust-manager Bundle `<tenant>-trust` is rendered whose
+  #     sources are this tenant's own CA PLUS the CA of each peer an SA opted
+  #     into, synced (by tenant label) into this tenant's namespaces only.
+  # A consuming tenant trusts ONLY the peers it opted into — never the platform
+  # CA — so an un-opted peer fails closed at the TLS handshake. No opt-in ⇒
+  # own-CA-only bundle (unchanged isolation).
+  #
+  # Per-SA opt-in annotations (read across all the tenant's SAs):
+  #   bao.stakater.com/pki-allow-tenant: <peer,...>  accept peer inbound
+  #     (implies trust — adds the peer CA to the bundle AND the inbound
+  #     allow-list).
+  #   bao.stakater.com/pki-trust-tenant: <peer,...>  trust-only (outbound):
+  #     add the peer CA so this tenant can validate the peer's server cert,
+  #     WITHOUT accepting the peer inbound. (Never derive allow from trust.)
+  #
+  # REQUIRES cert-manager trust-manager installed AND configured with its
+  # trust namespace = operatorNamespace (that's where the <tenant>-ca source
+  # ConfigMaps live). The chart does NOT install trust-manager.
+  crossTenant:
+    enabled: false
 
 # ─── Human SSO ───────────────────────────────────────────────────────
 sso:

@@ -1,5 +1,5 @@
 {{/*
-Section 4b (share-in) — per `bao.stakater.com/import-from-tenant: <peer-1>,<peer-2>`
+Section 4b (share-in) — per `bao.stakater.com/kv-import-tenant: <peer-1>,<peer-2>`
 annotation entry, emit a Policy + Role pair in <sharedTenant>/ granting the SA
 read access to kv/data/<env>/from-<peer>/to-<own-tenant>/*, plus an ESO
 SecretStore wired to that role (when eso=enabled).
@@ -15,11 +15,11 @@ matters only when running two operator installs against the same bao backend.
 {{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
 {{- $saName := dig "metadata" "name" "" $sa }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}
-{{- $importRaw := dig "metadata" "annotations" "bao.stakater.com/import-from-tenant" "" $sa }}
+{{- $importRaw := dig "metadata" "annotations" "bao.stakater.com/kv-import-tenant" "" $sa }}
 {{- if and $tier $saName $saNs $importRaw }}
 {{- range $peer := splitList "," $importRaw }}
 {{- $peer = trim $peer }}
-{{- if $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
 {{- $shareInName := include "openbao.shareInName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
