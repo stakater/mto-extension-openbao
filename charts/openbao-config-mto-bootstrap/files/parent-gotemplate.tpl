@@ -50,6 +50,16 @@ spec:
   kubernetesCaCertRef: { name: {{ $tokenReviewerSecret }}, key: ca.crt }
 {{- range $t := .parameters.tenants }}
 {{- $name := $t.metadata.name }}
+{{- /* Skip tenants that declare no namespaces. The child TI resolves
+       serviceAccounts/deployments via a namespaceSelector
+       (<tenantLabel>=<name>); with zero matching namespaces t-op-v2 fails
+       parameter validation (NamespaceSelectorMatchedZero) and the child TI
+       goes Failed. Emitting no child TI for an empty tenant keeps the parent
+       green; it self-heals — the parent re-renders and emits the child once
+       the tenant declares its first namespace. */ -}}
+{{- $tns := default dict $t.spec.namespaces }}
+{{- $hasNs := or (gt (len (default list $tns.withTenantPrefix)) 0) (gt (len (default list $tns.withoutTenantPrefix)) 0) }}
+{{- if $hasNs }}
 ---
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: TemplateInstance
@@ -97,4 +107,5 @@ spec:
           namespaceSelector:
             matchLabels:
               {{ $tenantLabel }}: {{ $name }}
+{{- end }}
 {{- end }}
