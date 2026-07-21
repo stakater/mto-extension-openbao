@@ -1,0 +1,177 @@
+{{/*
+Section 3 — per-tenant PKI secret engine (doc-aligned single-role model).
+
+Emits:
+  - OpenBaoSecretEngine of kind=pki at the effective tenant mount.
+  - OpenBaoPKISecretEngineConfig for the tenant CA. By default a self-signed
+    type=root; in hierarchy mode (pki.hierarchy.enabled) a type=intermediate
+    cross-namespace-signed by the cluster platform CA (see the bootstrap
+    chart's platformPki).
+  - ONE OpenBaoPKISecretEngineRole per pki.roles[] entry (the role catalog).
+    Each role's name is rendered from its nameTemplate (must be unique), and
+    its allowedDomains is the union, across every tenant workload namespace, of
+    that role's allowedDomainsTemplate entries.
+
+DISASTER-RECOVERY NOTE: type=root keeps the CA private key entirely inside bao
+with no chart-level backup. For a production hierarchy set platformPki in the
+bootstrap chart (ideally mode=intermediate, offline-rooted) and
+pki.hierarchy.enabled here: the tenant CA becomes an intermediate signed by the
+platform CA, so the trust anchor is the offline root. See README → "PKI".
+
+The effective mount comes from `openbao.pkiMount` (hierarchy → a FRESH mount;
+otherwise pki.mountPath) — the role, SA policies (04) and cert-manager Issuer
+(10) resolve it the same way so all four stay in lockstep.
+
+Workloads opt into direct bao PKI access via `bao.stakater.com/pki: "true"` on
+the SA — see 04-sa-own-tenant.yaml. Apps using cert-manager Issuer injection
+(pki.certManager.enabled=true) don't need that annotation; cert-manager talks
+to bao directly via its own dedicated SA.
+*/}}
+{{- if .Values.pki.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $hier := .Values.pki.hierarchy }}
+{{- $mount := include "openbao.pkiMount" . }}
+{{- $labels := include "openbao.labels" . }}
+{{- if $hier.enabled }}
+{{- if not $hier.platformNamespace }}
+{{- fail "pki.hierarchy.enabled requires pki.hierarchy.platformNamespace — cross-namespace signing cannot target a platform CA in the bao root namespace" }}
+{{- end }}
+{{- if not $hier.platformMount }}
+{{- fail "pki.hierarchy.enabled requires pki.hierarchy.platformMount" }}
+{{- end }}
+{{- end }}
+
+{{- /* Unique workload namespaces across the tenant. */ -}}
+{{- $namespaces := dict }}
+{{- range $sa := .Values.serviceAccounts }}
+{{- $ns := dig "metadata" "namespace" "" $sa }}
+{{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
+{{- end }}
+{{- range $d := .Values.deployments }}
+{{- $ns := dig "metadata" "namespace" "" $d }}
+{{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
+{{- end }}
+{{- /* Union of every role's allowedDomains across all namespaces — the
+       intermediate CA's name constraints must cover every role it can issue. */ -}}
+{{- $allDomains := list }}
+{{- range $r := .Values.pki.roles }}
+{{- range $ns, $_ := $namespaces }}
+{{- range $tpl := $r.allowedDomainsTemplate }}
+{{- $allDomains = append $allDomains (include "openbao.pkiAllowedDomain" (dict "tpl" $tpl "tenant" $tenant "namespace" $ns)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $allDomains = $allDomains | uniq }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoSecretEngine
+metadata:
+  name: {{ $tenant }}-pki
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  pki: {}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPKISecretEngineConfig
+metadata:
+  # Name kept as <tenant>-pki-root across both modes so the bootstrap's
+  # caSerialNumber output keeps tracking it; in hierarchy mode the bao type
+  # is intermediate (the name is just the k8s object name).
+  name: {{ $tenant }}-pki-root
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  {{- if .Values.pki.crossTenant.enabled }}
+  # Publish this tenant's CA cert to a ConfigMap so trust-manager Bundles can
+  # source it for cross-tenant trust (see 11-pki-cross-tenant-trust.yaml).
+  publishCABundleConfigMap: {{ $tenant }}-ca
+  {{- end }}
+  {{- if $hier.enabled }}
+  type: intermediate
+  internalSign:
+    name: {{ $hier.platformMount }}
+    openbaoNamespace: {{ $hier.platformNamespace }}
+  {{- with $allDomains }}
+  permittedDnsDomains:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- else }}
+  type: root
+  {{- end }}
+  commonName: {{ include "openbao.subTenant" (dict "tenant" $tenant "s" .Values.pki.rootCA.commonName) | quote }}
+  {{- if .Values.pki.rootCA.ttl }}
+  TTL: {{ .Values.pki.rootCA.ttl | quote }}
+  {{- end }}
+  {{- if .Values.pki.rootCA.keyType }}
+  keyType: {{ .Values.pki.rootCA.keyType }}
+  {{- end }}
+  {{- if .Values.pki.rootCA.keyBits }}
+  keyBits: {{ .Values.pki.rootCA.keyBits }}
+  {{- end }}
+{{- /* Role catalog — one OpenBaoPKISecretEngineRole per pki.roles entry, each
+       with its own allowedDomains (union of its template across namespaces). */ -}}
+{{- range $r := .Values.pki.roles }}
+{{- $roleName := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) }}
+{{- $rdomains := list }}
+{{- range $ns, $_ := $namespaces }}
+{{- range $tpl := $r.allowedDomainsTemplate }}
+{{- $rdomains = append $rdomains (include "openbao.pkiAllowedDomain" (dict "tpl" $tpl "tenant" $tenant "namespace" $ns)) }}
+{{- end }}
+{{- end }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPKISecretEngineRole
+metadata:
+  name: {{ printf "pki-%s" $roleName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $roleName }}
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  allowedDomains:
+    {{- range $rdomains }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- if $r.allowSubdomains }}
+  allowSubdomains: {{ $r.allowSubdomains }}
+  {{- end }}
+  {{- if $r.allowBareDomains }}
+  allowBareDomains: {{ $r.allowBareDomains }}
+  {{- end }}
+  {{- if $r.allowGlobDomains }}
+  allowGlobDomains: {{ $r.allowGlobDomains }}
+  {{- end }}
+  {{- if $r.enforceHostnames }}
+  enforceHostnames: {{ $r.enforceHostnames }}
+  {{- end }}
+  {{- if hasKey $r "serverFlag" }}
+  serverFlag: {{ $r.serverFlag }}
+  {{- end }}
+  {{- if hasKey $r "clientFlag" }}
+  clientFlag: {{ $r.clientFlag }}
+  {{- end }}
+  {{- if $r.ttl }}
+  ttl: {{ $r.ttl | quote }}
+  {{- end }}
+  {{- if $r.maxTtl }}
+  maxTtl: {{ $r.maxTtl | quote }}
+  {{- end }}
+  {{- if $r.keyType }}
+  keyType: {{ $r.keyType }}
+  {{- end }}
+  {{- if $r.keyBits }}
+  keyBits: {{ $r.keyBits }}
+  {{- end }}
+{{- end }}
+{{- end }}

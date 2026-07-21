@@ -1,0 +1,118 @@
+{{/*
+Section 4c (cross-tenant transit share-out) — per
+`bao.stakater.com/transit-export-tenant: <peer-1>,<peer-2>` annotation
+on a writer SA, emit:
+
+  1. One OpenBaoTransitKey per UNIQUE (writer-tenant, peer) pair, in
+     <sharedTenant>/ bao ns. Symmetric aes256-gcm96 with rotation per
+     transit.defaultAutoRotatePeriod. Multiple writer SAs in the same
+     tenant pointing at the same peer share the same key (the chart
+     dedupes via a $seenPair accumulator).
+  2. Per-SA Policy + Role granting encrypt/decrypt/rewrap on that key
+     (writer-side). Bound to the writer SA via k8s auth in <sharedTenant>/.
+
+Reader side lives in 04-sa-transit-share-in.yaml.
+
+Gated by transit.enabled (shares meaningless without the engine).
+*/}}
+{{- if .Values.transit.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $env := .Values.env }}
+{{- $shared := .Values.sharedTenant.name }}
+{{- $rotate := .Values.transit.defaultAutoRotatePeriod }}
+{{- $labels := include "openbao.labels" . }}
+{{- $seenPair := dict }}
+{{- /* Pass 1: dedupe the (writer-tenant, peer) set across all SAs and
+       emit one OpenBaoTransitKey per pair. */ -}}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
+{{- if $exposeRaw }}
+{{- range $peer := splitList "," $exposeRaw }}
+{{- $peer = trim $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
+{{- $pairKey := printf "%s->%s" $tenant $peer }}
+{{- if not (hasKey $seenPair $pairKey) }}
+{{- $_ := set $seenPair $pairKey true }}
+{{- $keyCR := include "openbao.transitShareKeyCRName" (dict "writer" $tenant "reader" $peer) }}
+{{- $keyName := include "openbao.transitShareKeyName" (dict "writer" $tenant "reader" $peer "env" $env) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  name: {{ $keyCR }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $keyName }}
+  path: transit
+  openbaoNamespace: {{ $shared }}/
+  {{- if $rotate }}
+  autoRotatePeriod: {{ $rotate | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* Pass 2: per-SA Policy + Role for the writer side. */ -}}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
+{{- $saName := dig "metadata" "name" "" $sa }}
+{{- $saNs := dig "metadata" "namespace" "" $sa }}
+{{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
+{{- if and $tier $saName $saNs $exposeRaw }}
+{{- range $peer := splitList "," $exposeRaw }}
+{{- $peer = trim $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
+{{- $keyName := include "openbao.transitShareKeyName" (dict "writer" $tenant "reader" $peer "env" $env) }}
+{{- $shareOutName := include "openbao.transitShareOutName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPolicy
+metadata:
+  name: {{ $shareOutName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $shareOutName }}
+  openbaoNamespace: {{ $shared }}/
+  policy: |
+    # Writer-side grants on cross-tenant transit key.
+    path "transit/encrypt/{{ $keyName }}" { capabilities = ["update"] }
+    path "transit/decrypt/{{ $keyName }}" { capabilities = ["update"] }
+    path "transit/rewrap/{{ $keyName }}"  { capabilities = ["update"] }
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoKubernetesAuthRole
+metadata:
+  name: {{ $shareOutName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $shareOutName }}
+  path: kubernetes
+  openbaoNamespace: {{ $shared }}/
+  targetServiceAccounts:
+    - {{ $saName }}
+  targetNamespaces:
+    targetNamespaces:
+      - {{ $saNs }}
+  policies:
+    - {{ $shareOutName }}
+  {{- if $.Values.token.ttl }}
+  tokenTTL: {{ $.Values.token.ttl }}
+  {{- end }}
+  {{- if $.Values.token.maxTTL }}
+  tokenMaxTTL: {{ $.Values.token.maxTTL }}
+  {{- end }}
+  {{- if $.Values.token.period }}
+  tokenPeriod: {{ $.Values.token.period }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,191 @@
+{{/*
+Section 7 — per (tenant, tier) SSO role + policy. For each tier in
+.Values.sso.tiers:
+  - OpenBaoPolicy sso-<tenant>-<tier> in bao namespace <tenant>/, granting
+    that tier's KV / transit / PKI access across the tenant.
+  - OpenBaoJWTOIDCAuthEngineRole sso-<tenant>-<tier> on the per-tenant
+    oidc mount, bound to groups claim "<tenant>-<tier>s" (or whatever
+    sso.tenantGroupTemplate renders to).
+
+Tier ladder (most → least privilege):
+
+  super-admin  every admin grant PLUS CA destroy/regen on pki/root + pki/config.
+               Reserved for platform-team-level break-glass; tenant CA
+               regen invalidates every cert ever issued.
+  admin        KV CRUD + delete/destroy; transit full ops; PKI issue +
+               role CRUD. Does NOT include CA destroy.
+  editor       KV CRU + transit encrypt/decrypt/rewrap; PKI issue.
+  viewer       KV read/list + transit + PKI read; no writes.
+  audit-read   KV metadata list only; no data reads. Designed for
+               compliance probes that need to enumerate without exposure.
+*/}}
+{{- if .Values.sso.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $env := .Values.env }}
+{{- $labels := include "openbao.labels" . }}
+{{- range $tier := $.Values.sso.tiers }}
+{{- $caps := index $.Values.tierCaps $tier }}
+{{- /* super-admin reuses admin tier caps for KV; the extra PKI scope is
+       added below. tierCaps is allowed to omit super-admin to avoid
+       duplicating the admin caps verbatim. */ -}}
+{{- if and (not $caps) (eq $tier "super-admin") }}{{ $caps = index $.Values.tierCaps "admin" }}{{ end }}
+{{- if not $caps }}{{ fail (printf "sso.tiers includes %q but tierCaps has no entry for it" $tier) }}{{ end }}
+{{- $roleName := include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $tier) }}
+{{- $group := include "openbao.ssoGroup" (dict "tenant" $tenant "tier" $tier
+                                                 "mapping" $.Values.sso.tenantRoleMapping
+                                                 "defaultTemplate" $.Values.sso.tenantGroupTemplate) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPolicy
+metadata:
+  name: {{ $roleName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $roleName }}
+  openbaoNamespace: {{ $tenant }}/
+  policy: |
+    # SSO tier {{ $tier }} for tenant {{ $tenant }}.
+    # KV — audit-read gets metadata list only; everyone else gets data.
+    {{- if eq $tier "audit-read" }}
+    path "kv/metadata/{{ $env }}/*" { capabilities = ["list"] }
+    {{- else }}
+    path "kv/data/{{ $env }}/*"     { capabilities = {{ $caps }} }
+    path "kv/metadata/{{ $env }}/*" { capabilities = {{ $caps }} }
+    {{- end }}
+    {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
+    path "kv/delete/{{ $env }}/*"   { capabilities = ["update"] }
+    path "kv/undelete/{{ $env }}/*" { capabilities = ["update"] }
+    path "kv/destroy/{{ $env }}/*"  { capabilities = ["update"] }
+    {{- end }}
+    {{- if $.Values.transit.enabled }}
+    # Transit — humans get tier-appropriate access to every tenant key.
+    {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
+    path "{{ $.Values.transit.mountPath }}/*"            { capabilities = ["create", "read", "update", "list", "delete"] }
+    {{- else if eq $tier "editor" }}
+    path "{{ $.Values.transit.mountPath }}/encrypt/+"    { capabilities = ["update"] }
+    path "{{ $.Values.transit.mountPath }}/decrypt/+"    { capabilities = ["update"] }
+    path "{{ $.Values.transit.mountPath }}/rewrap/+"     { capabilities = ["update"] }
+    path "{{ $.Values.transit.mountPath }}/keys"         { capabilities = ["list"] }
+    path "{{ $.Values.transit.mountPath }}/keys/+"       { capabilities = ["read"] }
+    {{- else if eq $tier "viewer" }}
+    path "{{ $.Values.transit.mountPath }}/keys"         { capabilities = ["list"] }
+    path "{{ $.Values.transit.mountPath }}/keys/+"       { capabilities = ["read"] }
+    {{- else if eq $tier "audit-read" }}
+    path "{{ $.Values.transit.mountPath }}/keys"         { capabilities = ["list"] }
+    {{- end }}
+    {{- end }}
+    {{- if $.Values.pki.enabled }}
+    # PKI — every SSO tier can read the CA bundle; editors + admins can
+    # issue against any role; admins can manage roles; only super-admin
+    # can touch pki/root and pki/config (these regenerate the tenant CA
+    # and invalidate every previously issued cert).
+    path "{{ $.Values.pki.mountPath }}/ca/pem"           { capabilities = ["read"] }
+    path "{{ $.Values.pki.mountPath }}/ca_chain"         { capabilities = ["read"] }
+    path "{{ $.Values.pki.mountPath }}/cert/ca"          { capabilities = ["read"] }
+    path "{{ $.Values.pki.mountPath }}/certs"            { capabilities = ["list"] }
+    path "{{ $.Values.pki.mountPath }}/cert/+"           { capabilities = ["read"] }
+    {{- if or (eq $tier "editor") (eq $tier "admin") (eq $tier "super-admin") }}
+    path "{{ $.Values.pki.mountPath }}/issue/+"          { capabilities = ["update"] }
+    path "{{ $.Values.pki.mountPath }}/sign/+"           { capabilities = ["update"] }
+    {{- end }}
+    {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
+    path "{{ $.Values.pki.mountPath }}/roles"            { capabilities = ["list"] }
+    path "{{ $.Values.pki.mountPath }}/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
+    {{- end }}
+    {{- /* root + config restricted to super-admin only. Tenant admins
+           cannot blow away the CA. */ -}}
+    {{- if eq $tier "super-admin" }}
+    path "{{ $.Values.pki.mountPath }}/root/*"           { capabilities = ["create", "read", "update", "delete"] }
+    path "{{ $.Values.pki.mountPath }}/config/*"         { capabilities = ["create", "read", "update", "delete"] }
+    {{- end }}
+    {{- end }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoJWTOIDCAuthEngineRole
+metadata:
+  name: {{ $roleName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $roleName }}
+  path: oidc
+  openbaoNamespace: {{ $tenant }}/
+  roleType: oidc
+  userClaim: email
+  groupsClaim: groups
+  oidcScopes:
+    - email
+    - profile
+    - groups
+  boundAudiences:
+    - {{ $.Values.sso.audience | quote }}
+  boundClaims:
+    groups:
+      - {{ $group | quote }}
+  tokenPolicies:
+    - {{ $roleName }}
+  allowedRedirectUris:
+    {{- range $uri := $.Values.sso.allowedRedirectUris }}
+    - {{ $uri | quote }}
+    {{- end }}
+  {{- /* SSO tokens use tighter TTLs than workload tokens — group changes
+         in the IdP aren't enforced on already-issued bao tokens until
+         expiry. Shorter ttl = less stale-grant exposure. */ -}}
+  {{- if $.Values.ssoToken.ttl }}
+  tokenTtl: {{ $.Values.ssoToken.ttl }}
+  {{- end }}
+  {{- if $.Values.ssoToken.maxTTL }}
+  tokenMaxTtl: {{ $.Values.ssoToken.maxTTL }}
+  {{- end }}
+{{- end }}
+
+{{- /* Fallback role — emitted when sso.tenantRoleMapping.fallback names
+        an actual tier. The role binds NO groups, so any user with a valid
+        OIDC token can `bao login -method=oidc role=sso-<tenant>-fallback`
+        and inherit the named tier's policies. */ -}}
+{{- $fallback := (dig "tenantRoleMapping" "fallback" "deny" $.Values.sso) }}
+{{- if and $fallback (ne $fallback "deny") }}
+{{- if not (has $fallback $.Values.sso.tiers) }}
+{{- fail (printf "sso.tenantRoleMapping.fallback=%q must appear in sso.tiers %v (or be \"deny\")" $fallback $.Values.sso.tiers) }}
+{{- end }}
+{{- $fallbackRoleName := printf "sso-%s-fallback" $tenant }}
+{{- $fallbackPolicyName := include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $fallback) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoJWTOIDCAuthEngineRole
+metadata:
+  name: {{ $fallbackRoleName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $fallbackRoleName }}
+  path: oidc
+  openbaoNamespace: {{ $tenant }}/
+  roleType: oidc
+  userClaim: email
+  groupsClaim: groups
+  oidcScopes:
+    - email
+    - profile
+    - groups
+  boundAudiences:
+    - {{ $.Values.sso.audience | quote }}
+  # No boundClaims — any valid OIDC token can use this role.
+  tokenPolicies:
+    - {{ $fallbackPolicyName }}
+  allowedRedirectUris:
+    {{- range $uri := $.Values.sso.allowedRedirectUris }}
+    - {{ $uri | quote }}
+    {{- end }}
+  {{- if $.Values.ssoToken.ttl }}
+  tokenTtl: {{ $.Values.ssoToken.ttl }}
+  {{- end }}
+  {{- if $.Values.ssoToken.maxTTL }}
+  tokenMaxTtl: {{ $.Values.ssoToken.maxTTL }}
+  {{- end }}
+{{- end }}
+{{- end }}

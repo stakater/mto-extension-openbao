@@ -1,0 +1,70 @@
+{{/*
+Platform PKI — the cluster-wide CA that signs every tenant intermediate.
+Rendered once per cluster (this bootstrap chart installs once). Gated by
+.Values.platformPki.enabled; when off, nothing is emitted and tenants keep
+their self-signed roots.
+
+mode=root         → an online self-signed platform root (dev / simple).
+mode=intermediate → the platform CA is itself an intermediate signed by an
+                    offline root: the operator exports a CSR and waits
+                    (Ready=False, reason=AwaitingExternalSignature) until the
+                    signed cert lands in platformPki.externalSignSecret.
+
+DR note: keep the platform CA's private key recoverable. In mode=intermediate
+the trust anchor is the offline root, so a lost platform CA is re-signable
+from it without invalidating tenant chains that already chain to the root.
+*/}}
+{{- if .Values.platformPki.enabled }}
+{{- $p := .Values.platformPki }}
+{{- $ns := trimSuffix "/" $p.openbaoNamespace }}
+{{- if $ns }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoNamespace
+metadata:
+  name: {{ $ns }}
+  namespace: {{ .Values.operatorNamespace }}
+spec:
+  name: {{ $ns }}
+{{- end }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoSecretEngine
+metadata:
+  name: platform-pki
+  namespace: {{ .Values.operatorNamespace }}
+spec:
+  path: {{ $p.mountPath }}
+  {{- if $ns }}
+  openbaoNamespace: {{ $ns }}/
+  {{- end }}
+  pki: {}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPKISecretEngineConfig
+metadata:
+  name: platform-pki
+  namespace: {{ .Values.operatorNamespace }}
+spec:
+  path: {{ $p.mountPath }}
+  {{- if $ns }}
+  openbaoNamespace: {{ $ns }}/
+  {{- end }}
+  {{- if eq $p.mode "intermediate" }}
+  type: intermediate
+  externalSignSecret:
+    name: {{ required "platformPki.externalSignSecret is required when platformPki.mode=intermediate" $p.externalSignSecret }}
+  {{- else }}
+  type: root
+  {{- end }}
+  commonName: {{ $p.commonName | quote }}
+  {{- if $p.ttl }}
+  TTL: {{ $p.ttl | quote }}
+  {{- end }}
+  {{- with $p.permittedDnsDomains }}
+  permittedDnsDomains:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+{{- end }}

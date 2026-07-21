@@ -1,0 +1,63 @@
+# Parent Template (gotemplate). Watches MTO Tenant CRs cluster-wide via
+# the parent TI's objectFieldRef and renders:
+#   - the shared bao-namespace scaffolding (singleton per bao backend)
+#   - one TemplateInstance of the openbao-config-mto child Template per
+#     Tenant CR
+#
+# Parameter defaults come from the bootstrap chart's values. The gotemplate
+# body lives in files/parent-gotemplate.tpl (sourced via .Files.Get to keep
+# the t-op-v2 action delimiters out of helm's template engine).
+---
+apiVersion: templates.v2.stakater.com/v2alpha1
+kind: Template
+metadata:
+  name: openbao-config-mto-parent
+  namespace: {{ .Values.operatorNamespace }}
+spec:
+  targetNamespaces:
+    explicit:
+      allow:
+        literal:
+          - {{ .Values.operatorNamespace }}
+  parameters:
+    - name: tenants
+    - name: env
+      value: {{ .Values.parent.env | quote }}
+    - name: operatorNamespace
+      value: {{ .Values.operatorNamespace | quote }}
+    - name: tokenReviewerSecretName
+      value: bao-token-reviewer
+    - name: kubernetesHost
+      value: {{ .Values.parent.kubernetesHost | quote }}
+    - name: childTemplateName
+      value: openbao-config-mto
+    - name: tenantLabelKey
+      value: {{ .Values.parent.tenantLabelKey | quote }}
+    - name: sharedTenantName
+      value: {{ .Values.parent.sharedTenantName | quote }}
+    - name: ssoEnabled
+      value: {{ .Values.parent.sso.enabled | quote }}
+    - name: ssoIssuerUrl
+      value: {{ .Values.parent.sso.issuerUrl | quote }}
+    - name: eso
+      value: {{ .Values.parent.eso | quote }}
+    - name: externalSecretRefreshInterval
+      value: {{ .Values.parent.externalSecretRefreshInterval | quote }}
+  # Cluster-wide aggregator. The parent's rendered output includes every
+  # child TI it emits, so fromAll over TemplateInstance gives one-shot
+  # per-tenant health from the parent TI's status — no per-child
+  # iteration needed:
+  #   kubectl -n <opNs> get ti openbao-config-mto-parent -o jsonpath='{.status.outputs}'
+  outputs:
+    - name: tenants
+      fromAll:
+        apiVersion: templates.v2.stakater.com/v2alpha1
+        kind: TemplateInstance
+        namespace: {{ .Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: tiApplied,           jsonPath: "{.status.conditions[?(@.type=='Applied')].status}" }
+        - { name: tiReady,             jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: tiMatchedNamespaces, jsonPath: "{.status.matchedNamespaces}" }
+  gotemplate: |
+{{ .Files.Get "files/parent-gotemplate.tpl" | indent 4 }}

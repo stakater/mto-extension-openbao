@@ -1,0 +1,160 @@
+{{/*
+Section 10 — cert-manager Issuer injection (off by default, doc-aligned
+naming).
+
+When pki.certManager.enabled=true, the chart emits, per workload
+namespace where at least one SA carries `bao.stakater.com/pki: "true"`:
+
+  1. ServiceAccount `bao-cert-manager` in the workload ns. cert-manager
+     uses this SA to authenticate against bao via kubernetes auth.
+  2. OpenBaoPolicy granting `pki/issue/<role>` + `pki/sign/<role>` for
+     EVERY role in pki.roles[].
+  3. OpenBaoKubernetesAuthRole binding the SA to the policy. Name
+     rendered from pki.certManager.authRoleNameTemplate.
+  4. One cert-manager.io/v1 Issuer per pki.roles[] entry, each named after
+     the bao role (issuerRef.name) and wired to that role's sign path.
+
+App teams then create Certificate CRs referencing the Issuer:
+
+  apiVersion: cert-manager.io/v1
+  kind: Certificate
+  metadata: { name: api-tls, namespace: <workload-ns> }
+  spec:
+    secretName: api-tls
+    issuerRef: { name: <rendered-Issuer-name>, kind: Issuer }
+    commonName: api.<workload-ns>.svc.cluster.local
+
+cert-manager handles renewal automatically. Requires cert-manager CRDs
+in the cluster — the chart doesn't install cert-manager itself.
+*/}}
+{{- if and .Values.pki.enabled .Values.pki.certManager.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $labels := include "openbao.labels" . }}
+{{- $pkiMount := include "openbao.pkiMount" . }}
+
+{{- /* Collect every unique workload ns whose SAs opted into PKI. */ -}}
+{{- $namespaces := dict }}
+{{- range $sa := .Values.serviceAccounts }}
+{{- $saNs := dig "metadata" "namespace" "" $sa }}
+{{- $pkiOptIn := dig "metadata" "annotations" "bao.stakater.com/pki" "" $sa }}
+{{- if and $saNs (eq (lower (toString $pkiOptIn)) "true") }}{{ $_ := set $namespaces $saNs true }}{{ end }}
+{{- end }}
+
+{{- range $ns, $_ := $namespaces }}
+{{- $authRoleName := include "openbao.certManagerAuthRoleName" (dict "tpl" $.Values.pki.certManager.authRoleNameTemplate "tenant" $tenant "ns" $ns) }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bao-cert-manager
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+---
+# RBAC enabling cert-manager's controller to mint a serviceaccount-token
+# for the bao-cert-manager SA above. cert-manager uses that token to
+# authenticate against bao's kubernetes-auth method. Without this Role
+# + RoleBinding the Issuer enters VaultError "cannot create
+# serviceaccounts/token". See
+# https://cert-manager.io/docs/configuration/vault/#authenticating-with-a-service-account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bao-cert-manager-token-create
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["bao-cert-manager"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bao-cert-manager-token-create
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.pki.certManager.controllerServiceAccount }}
+    namespace: {{ $.Values.pki.certManager.controllerNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bao-cert-manager-token-create
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPolicy
+metadata:
+  name: {{ $authRoleName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $authRoleName }}
+  openbaoNamespace: {{ $tenant }}/
+  policy: |
+    # cert-manager Issuer auth — sign + issue against EVERY tenant PKI role
+    # for workloads in {{ $ns }}.
+    {{- range $r := $.Values.pki.roles }}
+    {{- $rn := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) }}
+    path "{{ $pkiMount }}/issue/{{ $rn }}" { capabilities = ["update"] }
+    path "{{ $pkiMount }}/sign/{{ $rn }}"  { capabilities = ["update"] }
+    {{- end }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoKubernetesAuthRole
+metadata:
+  name: {{ $authRoleName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $authRoleName }}
+  path: kubernetes
+  openbaoNamespace: {{ $tenant }}/
+  targetServiceAccounts:
+    - bao-cert-manager
+  targetNamespaces:
+    targetNamespaces:
+      - {{ $ns }}
+  policies:
+    - {{ $authRoleName }}
+  {{- if $.Values.token.ttl }}
+  tokenTTL: {{ $.Values.token.ttl }}
+  {{- end }}
+  {{- if $.Values.token.maxTTL }}
+  tokenMaxTTL: {{ $.Values.token.maxTTL }}
+  {{- end }}
+{{- /* One Issuer per tenant PKI role, named after the bao role — app teams
+       reference it as issuerRef.name to pick which role issues their cert. */ -}}
+{{- range $r := $.Values.pki.roles }}
+{{- $rn := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $rn }}
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  vault:
+    server: {{ $.Values.baoServer | quote }}
+    namespace: {{ $tenant }}/
+    path: {{ $pkiMount }}/sign/{{ $rn }}
+    {{- if $.Values.baoCABundle }}
+    caBundle: {{ $.Values.baoCABundle | b64enc | quote }}
+    {{- end }}
+    auth:
+      kubernetes:
+        mountPath: /v1/auth/kubernetes
+        role: {{ $authRoleName }}
+        serviceAccountRef:
+          name: bao-cert-manager
+{{- end }}
+{{- end }}
+{{- end }}

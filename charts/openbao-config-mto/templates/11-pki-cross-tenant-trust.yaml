@@ -1,0 +1,90 @@
+{{/*
+Section 11 — cross-tenant PKI trust (opt-in, least-privilege, fails-closed).
+
+When pki.crossTenant.enabled, this tenant's CA is published to a ConfigMap
+`<tenant>-ca` (by 03 via spec.publishCABundleConfigMap → the operator) and this
+template renders a cert-manager trust-manager Bundle `<tenant>-trust` whose
+sources are:
+  - this tenant's OWN CA (so its namespaces trust their own certs), plus
+  - the CA of each PEER an SA opted into.
+The Bundle target is synced (by tenant label) into THIS tenant's namespaces
+only. A consumer trusts ONLY opted-in peers — never the platform CA — so an
+un-opted peer fails closed at the handshake.
+
+Opt-in (per-SA, aggregated across the tenant):
+  bao.stakater.com/pki-allow-tenant: <peer,...>  accept peer inbound (⇒ trust)
+  bao.stakater.com/pki-trust-tenant: <peer,...>  trust-only (outbound)
+trust = trust-tenant ∪ allow-tenant; allow = allow-tenant. Never derive allow
+from trust. No opt-in ⇒ own-CA-only Bundle (isolated, unchanged).
+
+REQUIRES trust-manager installed with its trust namespace = operatorNamespace
+(where the <tenant>-ca source ConfigMaps live). The Bundle CRD ships with
+trust-manager. Bundles are cluster-scoped + chart-authored — tenants cannot
+self-grant trust.
+*/}}
+{{- if and .Values.pki.enabled .Values.pki.crossTenant.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $labels := include "openbao.labels" . }}
+{{- $known := .Values.knownTenants }}
+
+{{- /* Aggregate opted-in peers across every SA. */ -}}
+{{- $trustPeers := dict }}
+{{- $allowPeers := dict }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- range $p := splitList "," (dig "metadata" "annotations" "bao.stakater.com/pki-trust-tenant" "" $sa) }}
+{{- $p = trim $p }}{{- if $p }}{{ $_ := set $trustPeers $p true }}{{ end }}
+{{- end }}
+{{- range $p := splitList "," (dig "metadata" "annotations" "bao.stakater.com/pki-allow-tenant" "" $sa) }}
+{{- $p = trim $p }}{{- if $p }}{{ $_ := set $trustPeers $p true }}{{ $_ := set $allowPeers $p true }}{{ end }}
+{{- end }}
+{{- end }}
+---
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  # Cluster-scoped; chart-authored so tenants cannot self-grant trust.
+  name: {{ $tenant }}-trust
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  sources:
+    # This tenant's own CA — its namespaces validate their own certs.
+    - configMap:
+        name: {{ $tenant }}-ca
+        key: ca.crt
+    {{- range $peer, $_ := $trustPeers }}
+    {{- /* Skip peers absent from the known-tenants roster (no dangling source
+           for a tenant that does not exist; self-heals when it appears). */ -}}
+    {{- if eq $peer $tenant }}{{- else if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $known) }}
+    - configMap:
+        name: {{ $peer }}-ca
+        key: ca.crt
+    {{- end }}
+    {{- end }}
+  target:
+    configMap:
+      key: trust-bundle.pem
+    # Synced ONLY into this tenant's namespaces (never cluster-wide).
+    namespaceSelector:
+      matchLabels:
+        {{ .Values.tenantLabelKey }}: {{ $tenant }}
+{{- /* Inbound authorization allow-list (authz, distinct from trust): the peer
+       tenants this tenant accepts as inbound clients. The app / mesh refines
+       this to specific peer SANs; trust already fails closed for non-peers. */ -}}
+{{- if $allowPeers }}
+{{- $allowList := list }}
+{{- range $peer, $_ := $allowPeers }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $known) }}{{ $allowList = append $allowList $peer }}{{ end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $tenant }}-pki-allowed-tenants
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+data:
+  allowed-tenants: {{ $allowList | sortAlpha | join "," | quote }}
+{{- end }}
+{{- end }}

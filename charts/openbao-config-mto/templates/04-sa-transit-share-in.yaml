@@ -1,0 +1,81 @@
+{{/*
+Section 4d (cross-tenant transit share-in) — per
+`bao.stakater.com/transit-import-tenant: <peer-1>,<peer-2>`
+annotation on a reader SA, emit:
+
+  - OpenBaoPolicy in <sharedTenant>/ granting decrypt + rewrap on
+    `transit/decrypt/from-<peer>-to-<own-tenant>-<env>` and
+    `transit/rewrap/from-<peer>-to-<own-tenant>-<env>`.
+  - OpenBaoKubernetesAuthRole same name in <sharedTenant>/, bound to
+    the reader SA.
+
+No SecretStore — transit is an operation endpoint, not a value at rest.
+Workloads use the auto-generated ConfigMap (VAULT_TRANSIT_IN_<PEER>_*)
+to reach the path with the SA's projected token.
+
+Gated by transit.enabled.
+*/}}
+{{- if .Values.transit.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $env := .Values.env }}
+{{- $shared := .Values.sharedTenant.name }}
+{{- $labels := include "openbao.labels" . }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
+{{- $saName := dig "metadata" "name" "" $sa }}
+{{- $saNs := dig "metadata" "namespace" "" $sa }}
+{{- $importRaw := dig "metadata" "annotations" "bao.stakater.com/transit-import-tenant" "" $sa }}
+{{- if and $tier $saName $saNs $importRaw }}
+{{- range $peer := splitList "," $importRaw }}
+{{- $peer = trim $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
+{{- $keyName := include "openbao.transitShareKeyName" (dict "writer" $peer "reader" $tenant "env" $env) }}
+{{- $shareInName := include "openbao.transitShareInName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPolicy
+metadata:
+  name: {{ $shareInName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $shareInName }}
+  openbaoNamespace: {{ $shared }}/
+  policy: |
+    # Reader-side grants on cross-tenant transit key.
+    path "transit/decrypt/{{ $keyName }}" { capabilities = ["update"] }
+    path "transit/rewrap/{{ $keyName }}"  { capabilities = ["update"] }
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoKubernetesAuthRole
+metadata:
+  name: {{ $shareInName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $shareInName }}
+  path: kubernetes
+  openbaoNamespace: {{ $shared }}/
+  targetServiceAccounts:
+    - {{ $saName }}
+  targetNamespaces:
+    targetNamespaces:
+      - {{ $saNs }}
+  policies:
+    - {{ $shareInName }}
+  {{- if $.Values.token.ttl }}
+  tokenTTL: {{ $.Values.token.ttl }}
+  {{- end }}
+  {{- if $.Values.token.maxTTL }}
+  tokenMaxTTL: {{ $.Values.token.maxTTL }}
+  {{- end }}
+  {{- if $.Values.token.period }}
+  tokenPeriod: {{ $.Values.token.period }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

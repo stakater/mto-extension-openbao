@@ -1,0 +1,15 @@
+apiVersion: v2
+name: openbao-config-mto-bootstrap
+description: |
+  Cluster-level bootstrap for the OpenBao config / MTO integration.
+  Installs the t-op-v2 parent Template (one TemplateInstance per MTO
+  Tenant CR), the child Template that pulls the openbao-config-mto chart
+  from OCI, the bao-token-reviewer Secret + auth-delegator binding, and
+  the t-op-v2 RBAC needed to manage TemplateInstances + OpenBao* CRs +
+  workload Deployments and ServiceAccounts.
+
+  Requires: multi-tenant-operator (Tenant CRD), template-operator-v2,
+  and the OpenBao config operator installed.
+type: application
+version: 0.3.1
+appVersion: "0.4.0"

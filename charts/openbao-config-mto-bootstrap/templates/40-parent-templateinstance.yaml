@@ -1,0 +1,22 @@
+# Parent bootstrap TemplateInstance — the only TI in git. Pulls every
+# Tenant CR cluster-wide and feeds the LIST to the parent gotemplate. The
+# parent emits one child TI per tenant; those child TIs (and everything
+# they render) are operator-managed via InstanceUIDLabel + finalizer
+# cleanup, not in git.
+---
+apiVersion: templates.v2.stakater.com/v2alpha1
+kind: TemplateInstance
+metadata:
+  name: openbao-config-mto-parent
+  namespace: {{ .Values.operatorNamespace }}
+spec:
+  templateRef:
+    name: openbao-config-mto-parent
+    namespace: {{ .Values.operatorNamespace }}
+  parameters:
+    - name: tenants
+      valueFrom:
+        objectFieldRef:
+          apiVersion: tenantoperator.stakater.com/v1beta3
+          kind: Tenant
+          jsonPath: .items

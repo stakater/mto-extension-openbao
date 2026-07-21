@@ -1,0 +1,332 @@
+# openbao-config-mto chart values.
+#
+# Most values fall through from sensible defaults; the parent gotemplate
+# Template stamps the per-child values (tenant, serviceAccounts, deployments).
+# The remaining knobs cluster around five concerns:
+#   - identity:        tenant, tenantLabelKey, sharedTenant.*
+#   - addressing:      baoServer, baoCABundle, kubernetesHost, operatorNamespace
+#   - engines:         kv tier caps, transit.*, pki.*
+#   - workload tokens: token.*, defaultCapability
+#   - human SSO:       sso.* (incl. ssoToken.* for tighter human-session TTLs)
+#
+# Production deployment guidance lives in README.md → "Going to prod".
+
+# Environment slice for KV paths (kv/data/<env>/...).
+env: dev
+
+# Bao server URL used in ESO SecretStores + ConfigMap VAULT_ADDR.
+# PRODUCTION: switch to https://. If bao serves with a private-PKI cert,
+# also set baoCABundle (PEM, multi-line) and wire the workload-side mount.
+baoServer: http://openbao.openbao.svc.cluster.local:8200
+
+# Optional PEM CA bundle for the bao server cert. When set, the chart emits
+# a Secret in every workload namespace named bao-ca-bundle and adds
+# VAULT_CACERT to the per-SA ConfigMap pointing at the mount path. Empty
+# means trust system roots.
+baoCABundle: ""
+
+# K8s apiserver URL used in OpenBaoKubernetesAuthEngineConfig.kubernetesHost.
+kubernetesHost: https://kubernetes.default.svc
+
+# ESO toggle: "enabled" or "disabled". When disabled, SecretStore +
+# ExternalSecret CRs are not emitted; workloads talk to bao directly.
+eso: enabled
+
+# ExternalSecret refreshInterval. PRODUCTION default is 1h: bao auth/login
+# is not free and a hot loop at 30s × N workloads will saturate bao before
+# the chart does.
+externalSecretRefreshInterval: "1h"
+
+# Operator namespace where the bao-scoped CRs live. Must match the operator
+# install. Used as `metadata.namespace` for every OpenBao* CR.
+operatorNamespace: mto-extension-openbao-system
+
+# Token-reviewer Secret name (used by every per-tenant
+# OpenBaoKubernetesAuthEngineConfig).
+tokenReviewerSecretName: bao-token-reviewer
+
+# Cluster-wide ns label key MTO applies to tenant namespaces. The parent
+# uses this key in its namespaceSelector to scope SA/Deployment watches
+# per child TI. Default: stakater.com/tenant. Override only if your MTO
+# install uses a different convention.
+tenantLabelKey: stakater.com/tenant
+
+# Shared bao namespace — where cross-tenant share paths land. Parent emits
+# the scaffolding for this ns once per cluster (singleton). Rename if you
+# run two operator installs against the same bao backend; the default is
+# fine for the common case.
+sharedTenant:
+  name: shared
+
+# ─── Tier capabilities (KV) ──────────────────────────────────────────
+# audit-read   list-only on metadata, no data reads — for compliance probes
+# viewer       read + list on KV
+# editor       create/read/update/list
+# admin        editor + delete (data) + later destroy (versions)
+# super-admin  reserved for tier-aware sso policies — workload SAs never
+#              receive super-admin; see sso.tiers
+tierCaps:
+  audit-read: '["list"]'
+  viewer:     '["read", "list"]'
+  editor:     '["create", "read", "update", "list"]'
+  admin:      '["create", "read", "update", "delete", "list"]'
+
+# Tier to apply when a workload's ServiceAccount has no
+# `bao.stakater.com/tier` annotation.
+#   viewer | editor | admin | audit-read — SA gets that tier's policy.
+#   none — SA is skipped (no role rendered); workloads must opt in.
+defaultCapability: none
+
+# Workload token defaults stamped onto every OpenBaoKubernetesAuthRole.
+token:
+  ttl: "1h"
+  maxTTL: "4h"
+  period: ""
+
+# SSO token TTLs — usually shorter than workload tokens because group
+# membership in the IdP isn't enforced live on already-issued bao tokens.
+# Default 15m / 1h gives operators ~15 minutes of stale-group-grant
+# exposure after a user is removed from an IdP group. Tune lower for
+# higher-privilege admin tiers if your IdP can't push token revocation.
+ssoToken:
+  ttl: "15m"
+  maxTTL: "1h"
+
+# Tenant identity for this chart instance. Required at render time.
+tenant: ""
+
+# Comma-separated roster of all real tenant names, stamped by the parent
+# gotemplate. Cross-tenant share annotations (expose/kv-import-tenant,
+# expose/import-transit-to/from-tenant, deployment import.<name>) targeting a
+# peer NOT in this roster are skipped — no Policy/Role is rendered for a tenant
+# that does not exist, and the share self-heals when the peer later appears.
+# Empty means "no roster supplied" → filtering disabled (chart renders every
+# share, as when used standalone without the parent).
+knownTenants: ""
+
+# Lists resolved by the child TI's namespaceSelector. Empty by default.
+serviceAccounts: []
+deployments: []
+
+# ─── Transit ─────────────────────────────────────────────────────────
+# Doc-aligned model: per-tenant transit mount with
+#   - one shared key  <tenant>-shared-<env>  created at startup
+#   - one key per workload namespace  <nsFull>-<env>  created on demand when
+#     an SA in that namespace opts in via bao.stakater.com/transit: "true"
+# An opted-in SA (editor/admin tier) gets encrypt/decrypt/rewrap on its own
+# namespace key and the tenant shared key.
+transit:
+  enabled: true
+  mountPath: transit
+  # Auto-rotation period applied to every emitted key. "0"/empty disables.
+  # Compliance regimes (PCI, HIPAA) generally require at least annual
+  # rotation; default = 90 days.
+  defaultAutoRotatePeriod: "2160h"
+  tierCaps:
+    audit-read: '[]'             # transit isn't meaningful read-only
+    viewer:     '[]'             # transit needs writes; viewer = no transit
+    editor:     '["update"]'     # encrypt/decrypt/rewrap
+    admin:      '["create", "read", "update", "list", "delete"]'
+
+# ─── PKI ─────────────────────────────────────────────────────────────
+# Doc-aligned model: one PKI role per tenant. The role's allowedDomains
+# spans every workload namespace of the tenant (computed at render time
+# from the SAs/Deployments t-op-v2 passes in).
+pki:
+  enabled: true
+  mountPath: pki
+  # PKI hierarchy (enabled by default). The tenant CA is a type=intermediate
+  # signed cross-namespace by the cluster platform CA (see the bootstrap
+  # chart's platformPki) — in the bootstrap flow this value is driven by
+  # platformPki.enabled, which also passes platformMount/platformNamespace
+  # down per tenant. The intermediate is rendered at a FRESH mount
+  # (hierarchy.mountPath), never reusing the type=root mountPath, because a
+  # mount that already holds a root keeps the root as its default issuer.
+  # Set enabled=false (or platformPki.enabled=false in the bootstrap) to fall
+  # back to a self-signed type=root at pki.mountPath.
+  hierarchy:
+    enabled: true
+    platformMount: pki-platform
+    platformNamespace: platform/
+    mountPath: pki-int
+
+  # Root CA config (used for the self-signed type=root CA, and for the key
+  # parameters of the intermediate in hierarchy mode). The CA's private key
+  # stays inside bao either way.
+  rootCA:
+    commonName: "{tenant} Internal CA"
+    # 10y RSA-3072 default — NIST recommends ≥3072 for roots living past
+    # 2030. EC P-256 is a faster modern alternative; switch keyType=ec
+    # keyBits=256 if your downstream cert consumers support it.
+    ttl: "87600h"
+    keyType: rsa
+    keyBits: 3072
+
+  # Role catalog — the chart emits one OpenBaoPKISecretEngineRole per entry,
+  # so you can define differentiated roles (e.g. a short-TTL client-only role
+  # and a long-TTL server-only role) instead of a single both-flags role. Each
+  # role's allowedDomains is the union, across the tenant's workload namespaces,
+  # of its allowedDomainsTemplate entries. nameTemplate supports {tenant} and
+  # must render UNIQUE per entry (it becomes the bao role name + the cert-manager
+  # Issuer name). allowedDomainsTemplate supports {tenant} and {namespace}.
+  #
+  # SAs with bao.stakater.com/pki: "true" are granted issue/sign on EVERY role
+  # (the workload picks which to use); cert-manager emits one Issuer per role
+  # per workload namespace, named after the role.
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate:
+        - "{namespace}.svc.cluster.local"
+      allowSubdomains: true
+      enforceHostnames: true
+      # 7-day cert TTL / 30-day max — one TTL covers HTTPS server and mTLS
+      # workload use cases. Apps needing shorter rotation can override per
+      # Certificate via cert-manager (`spec.duration`).
+      ttl: "168h"
+      maxTtl: "720h"
+      # Both flags true so the role can issue server-only, client-only, or
+      # dual-purpose certs. The actual usage is constrained per Certificate.
+      serverFlag: true
+      clientFlag: true
+    # Example of a second, differentiated role (commented out by default):
+    # - nameTemplate: "{tenant}-client"
+    #   allowedDomainsTemplate:
+    #     - "{namespace}.svc.cluster.local"
+    #   allowSubdomains: true
+    #   enforceHostnames: true
+    #   ttl: "24h"
+    #   maxTtl: "168h"
+    #   serverFlag: false      # client-only
+    #   clientFlag: true
+
+  # cert-manager Issuer injection. When enabled, the chart emits ONE
+  # cert-manager.io/v1 Issuer per pki.roles[] entry, per workload ns —
+  # each Issuer is named after its bao role (the value app teams put in
+  # `issuerRef.name`), so apps pick which role issues their cert. Demand-
+  # driven: only workload namespaces where at least one SA opts in via
+  # `bao.stakater.com/pki: "true"` get Issuers.
+  #
+  # Requires the cert-manager CRDs installed in the cluster. The chart
+  # does NOT install cert-manager itself.
+  certManager:
+    enabled: false
+    # Issuer (namespaced) is safer — each tenant's Issuer can only be
+    # used within its own ns. ClusterIssuer would weaken tenant isolation
+    # and is not currently supported.
+    issuerKind: Issuer
+    # Templated bao auth role name (used by cert-manager to log into bao
+    # via kubernetes auth). {tenant} is substituted; {ns} is substituted
+    # to the workload namespace name when the chart emits one role per ns
+    # for least-privilege scoping.
+    authRoleNameTemplate: "ten-{tenant}-pki-{ns}"
+    # cert-manager's controller identity. Per cert-manager's kubernetes
+    # auth flow, the controller pod's SA must be allowed to create a
+    # serviceaccount token for the per-workload-ns `bao-cert-manager` SA.
+    # The chart emits a Role + RoleBinding in each workload ns granting
+    # that capability to this SA. Defaults match the upstream
+    # jetstack/cert-manager helm release.
+    controllerNamespace: cert-manager
+    controllerServiceAccount: cert-manager
+
+  # Cross-tenant trust (opt-in, least-privilege, fails-closed). When enabled:
+  #   - the tenant's CA cert is published to a ConfigMap `<tenant>-ca` (key
+  #     ca.crt) in operatorNamespace, for trust distribution;
+  #   - a cert-manager trust-manager Bundle `<tenant>-trust` is rendered whose
+  #     sources are this tenant's own CA PLUS the CA of each peer an SA opted
+  #     into, synced (by tenant label) into this tenant's namespaces only.
+  # A consuming tenant trusts ONLY the peers it opted into — never the platform
+  # CA — so an un-opted peer fails closed at the TLS handshake. No opt-in ⇒
+  # own-CA-only bundle (unchanged isolation).
+  #
+  # Per-SA opt-in annotations (read across all the tenant's SAs):
+  #   bao.stakater.com/pki-allow-tenant: <peer,...>  accept peer inbound
+  #     (implies trust — adds the peer CA to the bundle AND the inbound
+  #     allow-list).
+  #   bao.stakater.com/pki-trust-tenant: <peer,...>  trust-only (outbound):
+  #     add the peer CA so this tenant can validate the peer's server cert,
+  #     WITHOUT accepting the peer inbound. (Never derive allow from trust.)
+  #
+  # REQUIRES cert-manager trust-manager installed AND configured with its
+  # trust namespace = operatorNamespace (that's where the <tenant>-ca source
+  # ConfigMaps live). The chart does NOT install trust-manager.
+  crossTenant:
+    enabled: false
+
+# ─── Human SSO ───────────────────────────────────────────────────────
+sso:
+  enabled: false
+
+  dex:
+    issuerUrl: ""
+    clientId: openbao
+    clientSecretRef:
+      name: bao-oidc-client-secret
+      key: client-secret
+    caBundlePem: ""
+    # When true, each tenant gets its own per-tenant dex Client (id
+    # interpolated via `{tenant}-` prefix) rather than the shared `openbao`
+    # client. Per-tenant clients isolate client_secret blast radius but
+    # require IdP-side provisioning per tenant. Default false (shared).
+    perTenantClient: false
+
+  # Default IdP-group pattern when no per-tier override is set.
+  # Placeholders: {tenant} (tenant name), {tier} (super-admin|admin|editor|
+  # viewer|audit-read). Use a literal (no placeholder) to bind every
+  # tenant's tier to the same IdP group — useful for cluster-wide admin.
+  tenantGroupTemplate: "{tenant}-{tier}s"
+
+  # Per-tier role mapping. Empty entry → use tenantGroupTemplate. Override
+  # a single tier's group pattern (e.g. all-tenant cluster-admins). Mirrors
+  # the mto-extension-grafana shape (TenantRoleMapping.{Admin,Owner,...}.Pattern).
+  #
+  # Fallback role: when set to a tier name (admin | editor | viewer |
+  # audit-read), the chart emits an additional OIDC role
+  # `sso-<tenant>-fallback` with NO group binding and the fallback tier's
+  # policies attached. Any user with a valid OIDC token can log into the
+  # tenant via that role and inherit the fallback tier. Default `deny`
+  # means no fallback role is emitted (the user must match a group).
+  tenantRoleMapping:
+    super-admin: {}                # uses tenantGroupTemplate
+    admin:       {}                # uses tenantGroupTemplate
+    editor:      {}
+    viewer:      {}
+    audit-read:  {}
+    fallback: deny                 # deny | viewer | editor | admin | audit-read
+
+  audience: openbao
+  allowedRedirectUris:
+    - "http://localhost:8250/oidc/callback"
+
+  # Tiers to emit SSO roles for. Note: `super-admin` is reserved for the
+  # destructive CA-management path; v9 emits the role iff this includes
+  # it. Tenant admins get admin (KV+transit+PKI ops) without root/config
+  # destruction; only super-admin can re-generate the tenant root CA.
+  tiers:
+    - super-admin
+    - admin
+    - editor
+    - viewer
+    - audit-read
+
+# ─── NetworkPolicy (workload ns) ─────────────────────────────────────
+# When enabled, the chart emits a default-deny + bao-egress NetworkPolicy
+# in every workload namespace. Requires the cluster CNI to honor
+# NetworkPolicies (Calico, Cilium, OpenShift OVN-Kubernetes do; default
+# kindnet does not).
+networkPolicy:
+  enabled: false
+  # Egress destination for bao. Match baoServer host. Workloads can also
+  # reach the cluster apiserver (for the SA token round-trip).
+  baoSelector:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: openbao
+
+# ─── Monitoring (ServiceMonitor + PrometheusRule) ────────────────────
+# Off by default — requires prometheus-operator CRDs. When enabled, ships
+# alerts on rendered-CR Ready=False and ExternalSecret SecretSyncedError.
+monitoring:
+  enabled: false
+  # Namespace where the prometheus-operator selects ServiceMonitors. Often
+  # "monitoring" or "openshift-monitoring".
+  prometheusNamespace: monitoring

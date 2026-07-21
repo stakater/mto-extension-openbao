@@ -1,0 +1,74 @@
+{{/*
+Section 2 — per-tenant transit secret engine (doc-aligned model).
+
+Emits:
+  - OpenBaoSecretEngine of kind=transit at the configured mountPath.
+  - ONE shared OpenBaoTransitKey <tenant>-shared-<env>, created up front.
+  - One per-namespace OpenBaoTransitKey <nsFull>-<env> for each workload
+    namespace that has at least one SA opting in via
+    bao.stakater.com/transit: "true" (created on demand).
+
+Gated by transit.enabled. Every key inherits
+transit.defaultAutoRotatePeriod. Workload grants (own-namespace key +
+shared key) are issued in 04-sa-own-tenant.yaml.
+*/}}
+{{- if .Values.transit.enabled }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $env := .Values.env }}
+{{- $mount := .Values.transit.mountPath }}
+{{- $rotate := .Values.transit.defaultAutoRotatePeriod }}
+{{- $labels := include "openbao.labels" . }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoSecretEngine
+metadata:
+  name: {{ $tenant }}-transit
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  transit: {}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  name: {{ include "openbao.transitSharedKeyCRName" (dict "tenant" $tenant "env" $env) }}
+  namespace: {{ .Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ include "openbao.transitSharedKeyName" (dict "tenant" $tenant "env" $env) }}
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  {{- if $rotate }}
+  autoRotatePeriod: {{ $rotate | quote }}
+  {{- end }}
+{{- /* Per-namespace keys: one per workload namespace that has an opted-in
+       SA. Deduped so multiple opted-in SAs in one namespace share a key. */ -}}
+{{- $optedNs := dict }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- if eq (lower (toString (dig "metadata" "annotations" "bao.stakater.com/transit" "" $sa))) "true" }}
+{{- $ns := dig "metadata" "namespace" "" $sa }}
+{{- if $ns }}{{ $_ := set $optedNs $ns true }}{{ end }}
+{{- end }}
+{{- end }}
+{{- range $ns, $_ := $optedNs }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  name: {{ include "openbao.transitNsKeyCRName" (dict "tenant" $tenant "ns" $ns "env" $env) }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ include "openbao.transitNsKeyName" (dict "ns" $ns "env" $env) }}
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  {{- if $rotate }}
+  autoRotatePeriod: {{ $rotate | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

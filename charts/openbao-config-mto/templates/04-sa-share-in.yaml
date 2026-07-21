@@ -1,0 +1,95 @@
+{{/*
+Section 4b (share-in) — per `bao.stakater.com/kv-import-tenant: <peer-1>,<peer-2>`
+annotation entry, emit a Policy + Role pair in <sharedTenant>/ granting the SA
+read access to kv/data/<env>/from-<peer>/to-<own-tenant>/*, plus an ESO
+SecretStore wired to that role (when eso=enabled).
+
+Bao namespace lives at .Values.sharedTenant.name (default "shared"). Renaming
+matters only when running two operator installs against the same bao backend.
+*/}}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $env := .Values.env }}
+{{- $shared := .Values.sharedTenant.name }}
+{{- $labels := include "openbao.labels" . }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
+{{- $saName := dig "metadata" "name" "" $sa }}
+{{- $saNs := dig "metadata" "namespace" "" $sa }}
+{{- $importRaw := dig "metadata" "annotations" "bao.stakater.com/kv-import-tenant" "" $sa }}
+{{- if and $tier $saName $saNs $importRaw }}
+{{- range $peer := splitList "," $importRaw }}
+{{- $peer = trim $peer }}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
+{{- $shareInName := include "openbao.shareInName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPolicy
+metadata:
+  name: {{ $shareInName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $shareInName }}
+  openbaoNamespace: {{ $shared }}/
+  policy: |
+    path "kv/data/{{ $env }}/from-{{ $peer }}/to-{{ $tenant }}/*"     { capabilities = ["read", "list"] }
+    path "kv/metadata/{{ $env }}/from-{{ $peer }}/to-{{ $tenant }}/*" { capabilities = ["read", "list"] }
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoKubernetesAuthRole
+metadata:
+  name: {{ $shareInName }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ $shareInName }}
+  path: kubernetes
+  openbaoNamespace: {{ $shared }}/
+  targetServiceAccounts:
+    - {{ $saName }}
+  targetNamespaces:
+    targetNamespaces:
+      - {{ $saNs }}
+  policies:
+    - {{ $shareInName }}
+  {{- if $.Values.token.ttl }}
+  tokenTTL: {{ $.Values.token.ttl }}
+  {{- end }}
+  {{- if $.Values.token.maxTTL }}
+  tokenMaxTTL: {{ $.Values.token.maxTTL }}
+  {{- end }}
+  {{- if $.Values.token.period }}
+  tokenPeriod: {{ $.Values.token.period }}
+  {{- end }}
+{{- if eq $.Values.eso "enabled" }}
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: {{ $saName }}-share-{{ $peer }}-bao
+  namespace: {{ $saNs }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  provider:
+    vault:
+      server: {{ $.Values.baoServer }}
+      {{- if $.Values.baoCABundle }}
+      caBundle: {{ $.Values.baoCABundle | b64enc | quote }}
+      {{- end }}
+      path: kv
+      version: v2
+      namespace: {{ $shared }}
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: {{ $shareInName }}
+          serviceAccountRef:
+            name: {{ $saName }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
