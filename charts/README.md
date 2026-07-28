@@ -33,6 +33,7 @@ Each application then opts in to what it needs by adding a few annotations to it
 - [Feature: PKI (certificates)](#feature-pki-certificates)
 - [Feature: Human SSO (OIDC login)](#feature-human-sso-oidc-login)
 - [Which auth methods the charts set up](#which-auth-methods-the-charts-set-up)
+- [Drift protection](#drift-protection)
 - [Configuration](#configuration)
 - [Going to production](#going-to-production)
 
@@ -761,9 +762,54 @@ The operator itself can manage JWT and cert login too, but the charts don't gene
 
 ---
 
+## Drift protection
+
+The bootstrap chart turns on template-operator-v2's drift protection (`sync.mode: revert`, the chart's default — template-operator-v2's own default is `off`) for everything the Templates render: the per-tenant OpenBao resources, the `bao-config-<sa>` ConfigMaps, the ESO stores, and so on.
+
+**Minimum version: template-operator-v2 ≥ 0.0.5** — the chart's child TemplateInstances need `namespaceSelector`, which released CRDs carry only from 0.0.5. `spec.sync` itself exists since 0.0.3; on a pre-0.0.3 install the API server silently prunes the block (the chart installs cleanly and drift protection is simply absent). `strict` needs ≥ 0.0.6 (webhook certificate fixes); see the `strict` notes below.
+
+**What it does.**
+
+- If someone edits a rendered resource out of band — say, changes a value in a `bao-config-<sa>` ConfigMap — template-operator-v2 notices and puts it back within seconds. Each revert leaves a `Drift detected` line in the template-operator-v2 logs.
+- If a rendered resource is missing entirely, it is recreated immediately — the deletion event itself triggers the re-apply.
+- Every per-tenant render reports a `Synced` condition — `True` means the drift watches are active, not that no drift has ever occurred. It is aggregated per tenant on the parent (with `sync.mode: off` the condition doesn't exist, so `tiSynced` reads empty):
+
+  ```bash
+  kubectl -n mto-extension-openbao-system get ti openbao-config-mto-parent \
+    -o jsonpath='{.status.outputs}'   # tiSynced per tenant
+  ```
+
+**What it does not do.**
+
+- **A direct delete does not come back on its own.** Rendered resources carry a template-operator-v2 finalizer in every mode (`off` included), so `kubectl delete` leaves the object stuck in `Terminating` instead of removing it — its data keeps being served, but it is not recreated fresh. To force a clean recreate, remove the finalizer; the delete then completes and the resource is recreated immediately:
+
+  ```bash
+  kubectl -n team-a-api patch cm bao-config-web --type=merge \
+    -p '{"metadata":{"finalizers":null}}'
+  ```
+
+- **Deleting a per-tenant `TemplateInstance` is not blocked.** That removes the tenant's whole rendered config — `revert` has no admission webhook; only `strict` blocks deletes.
+- The bootstrap chart's own resources (the Templates, the parent `TemplateInstance`, RBAC, the platform PKI) are managed by helm/GitOps, not by sync.
+
+**Turning it off.** Set `sync.mode: off` in the bootstrap values. The Templates are then rendered without a `spec.sync` block.
+
+**Upgrading from 0.3.x.** A plain `helm upgrade` turns drift protection on — `revert` is the chart's default. If anyone has been hand-editing rendered resources and relying on those edits sticking, they stop sticking at that moment. Set `sync.mode: off` in your values alongside the upgrade to keep the old behavior.
+
+**About `strict`.** `strict` adds an admission webhook that blocks updates and deletes of rendered resources by anyone other than template-operator-v2 itself (the webhook exempts exactly one identity — template-operator-v2's own ServiceAccount, configured at operator startup; there is no user-facing allowlist). Before enabling it, know that:
+
+- The webhook registers for UPDATE and DELETE with `failurePolicy: Fail` — creates are unaffected, but while the webhook is unreachable, updates and deletes are blocked. How far that reaches depends on how template-operator-v2 was installed: its kustomize manifests scope interception to rendered resources with a CEL `matchConditions` guard, while its Helm chart has shipped the webhook unscoped (every UPDATE/DELETE in the cluster).
+- You must set `sync.ignoreFields: ["metadata.finalizers"]` so the OpenBao operator can add its finalizers to the rendered CRs.
+- Your install's webhook Service and certificate names must align (template-operator-v2 ≥ 0.0.6; check its release notes).
+
+Test on a non-production cluster first.
+
+**RBAC note.** The bootstrap chart grants template-operator-v2's ServiceAccount cluster-wide access to every kind the per-tenant chart can render — including Secrets, and `create` on `serviceaccounts/token` limited to ServiceAccounts named `bao-cert-manager` (Kubernetes escalation rules require a covering grant to create the per-tenant cert-manager token Role; the limit keeps template-operator-v2 from minting tokens for any other ServiceAccount). Installs that already run template-operator-v2 with its cluster-admin binding gain nothing new from these grants.
+
+---
+
 ## Configuration
 
-- Cluster-wide defaults: [`openbao-config-mto-bootstrap/values.yaml`](openbao-config-mto-bootstrap/values.yaml) (under `parent.*` and `platformPki.*`).
+- Cluster-wide defaults: [`openbao-config-mto-bootstrap/values.yaml`](openbao-config-mto-bootstrap/values.yaml) (under `parent.*`, `platformPki.*`, and `sync.*` — see [Drift protection](#drift-protection)).
 - Per-tenant engine settings: [`openbao-config-mto/values.yaml`](openbao-config-mto/values.yaml) (KV tiers, `transit.*`, `pki.*`, `sso.*`).
 
 Both files have comments on every setting.

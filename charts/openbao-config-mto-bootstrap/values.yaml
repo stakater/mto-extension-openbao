@@ -95,3 +95,17 @@ parent:
   sso:
     enabled: false
     issuerUrl: ""
+
+# Drift protection for everything the Templates render (t-op-v2 Template
+# spec.sync), applied to both the parent and child Templates. Requires
+# template-operator-v2 >= 0.0.5 (child TemplateInstances need
+# namespaceSelector). Full semantics — delete behavior, upgrade notes,
+# strict prerequisites — in the charts README → "Drift protection".
+#   off    — apply once per re-render; out-of-band edits persist.
+#   revert — watch every rendered resource and re-apply on drift.
+#   strict — revert + admission webhook blocking third-party UPDATE/DELETE.
+sync:
+  mode: revert
+  # Field paths exempt from drift enforcement (dot notation, [*] array
+  # wildcard). strict needs at least metadata.finalizers.
+  ignoreFields: []

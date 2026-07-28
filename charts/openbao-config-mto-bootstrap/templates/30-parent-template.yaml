@@ -19,6 +19,9 @@ spec:
       allow:
         literal:
           - {{ .Values.operatorNamespace }}
+  {{- with include "openbao-config-mto-bootstrap.templateSync" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
   parameters:
     - name: tenants
     - name: env
@@ -58,6 +61,7 @@ spec:
       fields:
         - { name: tiApplied,           jsonPath: "{.status.conditions[?(@.type=='Applied')].status}" }
         - { name: tiReady,             jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: tiSynced,            jsonPath: "{.status.conditions[?(@.type=='Synced')].status}" }
         - { name: tiMatchedNamespaces, jsonPath: "{.status.matchedNamespaces}" }
   gotemplate: |
 {{ .Files.Get "files/parent-gotemplate.tpl" | indent 4 }}
