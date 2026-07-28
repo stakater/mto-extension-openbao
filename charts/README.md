@@ -766,7 +766,16 @@ The operator itself can manage JWT and cert login too, but the charts don't gene
 
 The bootstrap chart turns on template-operator-v2's drift protection (`sync.mode: revert`, the chart's default — template-operator-v2's own default is `off`) for everything the Templates render: the per-tenant OpenBao resources, the `bao-config-<sa>` ConfigMaps, the ESO stores, and so on.
 
-**Minimum version: template-operator-v2 ≥ 0.0.5** — the chart's child TemplateInstances need `namespaceSelector`, which released CRDs carry only from 0.0.5. `spec.sync` itself exists since 0.0.3; on a pre-0.0.3 install the API server silently prunes the block (the chart installs cleanly and drift protection is simply absent). `strict` needs ≥ 0.0.6 (webhook certificate fixes); see the `strict` notes below.
+**Minimum version: template-operator-v2 ≥ 0.0.5** — the chart's child TemplateInstances need `namespaceSelector`, which released CRDs carry only from 0.0.5. `spec.sync` itself exists since 0.0.3; on a pre-0.0.3 install the API server silently prunes the block (the chart installs cleanly and drift protection is simply absent). `strict` was verified working on 0.0.5; see the `strict` notes below.
+
+**The enforcement webhook fails closed, in every mode.** template-operator-v2 installs a cluster-wide `sync-enforcement` ValidatingWebhookConfiguration with `failurePolicy: Fail`, and its CEL `matchConditions` select on the `templates.v2.stakater.com/instance` label — not on `sync.mode`. The mode check lives inside the handler, which never runs when the operator pod is unreachable. So while template-operator-v2 is down, every update and delete of a rendered resource is refused whatever mode you set:
+
+```text
+Error from server (InternalError): failed calling webhook
+"sync-enforcement.templates.v2.stakater.com": no endpoints available
+```
+
+The flip side is that rendered resources cannot drift during an outage either — edits, key additions, deletes, and removing the ownership label are all refused — so no window exists in which drift accumulates unwatched. Verified with `sync.mode: revert` and template-operator-v2 scaled to zero. This is not a cost `strict` introduces; `revert` and `off` already pay it.
 
 **What it does.**
 
@@ -797,13 +806,27 @@ The bootstrap chart turns on template-operator-v2's drift protection (`sync.mode
 
 **About `strict`.** `strict` adds an admission webhook that blocks updates and deletes of rendered resources by anyone other than template-operator-v2 itself (the webhook exempts exactly one identity — template-operator-v2's own ServiceAccount, configured at operator startup; there is no user-facing allowlist). Before enabling it, know that:
 
-- The webhook registers for UPDATE and DELETE with `failurePolicy: Fail` — creates are unaffected, but while the webhook is unreachable, updates and deletes are blocked. How far that reaches depends on how template-operator-v2 was installed: its kustomize manifests scope interception to rendered resources with a CEL `matchConditions` guard, while its Helm chart has shipped the webhook unscoped (every UPDATE/DELETE in the cluster).
-- You must set `sync.ignoreFields: ["metadata.finalizers"]` so the OpenBao operator can add its finalizers to the rendered CRs.
-- Your install's webhook Service and certificate names must align (template-operator-v2 ≥ 0.0.6; check its release notes).
+- The webhook registers for UPDATE and DELETE on `*` with `failurePolicy: Fail`, narrowed by a CEL `matchConditions` guard to objects carrying the `templates.v2.stakater.com/instance` label. Creates are unaffected, and unlabelled objects are not intercepted. (This webhook is installed regardless of the mode you choose — see the fails-closed note above.) Confirm the guard is present on your install before enabling: `kubectl get validatingwebhookconfiguration <name> -o jsonpath='{.webhooks[0].matchConditions}'` — an empty result means interception is cluster-wide.
+- The guard also evaluates `oldObject`, so removing the ownership label to escape enforcement is itself blocked.
+- Subresources are not intercepted (`*` does not match `*/status`), so controllers that only write status — including the OpenBao operator — are unaffected.
+- You must set `sync.ignoreFields: ["metadata.finalizers"]` so the OpenBao operator can add its finalizers to the rendered CRs. Without it, every newly rendered CR sticks at `Ready=False` with the operator's finalizer patch denied. **Note the cost:** that entry exempts the whole finalizers array from enforcement, so anyone with `patch` on a rendered resource can replace it — dropping template-operator-v2's own finalizer and adding one no controller will ever clear, which makes the object permanently undeletable. template-operator-v2 restores its finalizer only on the next real re-apply.
+- **Deleting a namespace that holds rendered resources can wedge it.** DELETE is refused unless the owning TemplateInstance is itself being deleted, so the namespace controller's cleanup of a rendered ConfigMap or CR is denied and the namespace can sit in `Terminating`. Delete the per-tenant TemplateInstance first. `revert` is unaffected — it has no admission enforcement at all.
 
 Test on a non-production cluster first.
 
-**RBAC note.** The bootstrap chart grants template-operator-v2's ServiceAccount cluster-wide access to every kind the per-tenant chart can render — including Secrets, and `create` on `serviceaccounts/token` limited to ServiceAccounts named `bao-cert-manager` (Kubernetes escalation rules require a covering grant to create the per-tenant cert-manager token Role; the limit keeps template-operator-v2 from minting tokens for any other ServiceAccount). Installs that already run template-operator-v2 with its cluster-admin binding gain nothing new from these grants.
+**RBAC note.** The bootstrap chart grants template-operator-v2's ServiceAccount cluster-wide access to every kind the per-tenant chart can render, and `create` on `serviceaccounts/token` limited to ServiceAccounts named `bao-cert-manager` (Kubernetes escalation rules require a covering grant to create the per-tenant cert-manager token Role; the limit keeps template-operator-v2 from minting tokens for any other ServiceAccount). Two grants are deliberately absent or conditional:
+
+- **Secrets: `delete` only.** The chart renders no Secret — `bao-ca-bundle` is a ConfigMap, because a CA bundle is a public certificate. No `create`, `update`, or `patch` is granted; cluster-wide Secret write is the largest grant this chart could hand out. The lone `delete` exists so the legacy-Secret upgrade below can converge. (template-operator-v2's own `secret-reader` ClusterRole grants `get`/`list`/`watch` on Secrets independently of this chart.)
+- **ESO access only when `parent.eso: enabled`.** The `secretstores`/`externalsecrets` rule is gated on the same switch that decides whether those resources are rendered.
+
+Installs that already run template-operator-v2 with its cluster-admin binding gain nothing new from these grants.
+
+**Upgrading from a release that rendered `bao-ca-bundle` as a Secret.** Only affects installs that set `baoCABundle` — it is empty by default. The new ConfigMap is created normally, but the old Secret is left behind: template-operator-v2 issues the delete, then cannot strip its own finalizer without Secret `update`, so the object sits in `Terminating` and the operator retries in the background. Nothing surfaces on the TemplateInstance — all conditions stay `True`, so this is log-only. Clear it once per workload namespace:
+
+```bash
+kubectl -n <workload-ns> patch secret bao-ca-bundle --type=merge \
+  -p '{"metadata":{"finalizers":null}}'
+```
 
 ---
 

@@ -34,7 +34,7 @@ in the cluster — the chart doesn't install cert-manager itself.
 
 {{- /* Collect every unique workload ns whose SAs opted into PKI. */ -}}
 {{- $namespaces := dict }}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $saNs := dig "metadata" "namespace" "" $sa }}
 {{- $pkiOptIn := dig "metadata" "annotations" "bao.stakater.com/pki" "" $sa }}
 {{- if and $saNs (eq (lower (toString $pkiOptIn)) "true") }}{{ $_ := set $namespaces $saNs true }}{{ end }}
