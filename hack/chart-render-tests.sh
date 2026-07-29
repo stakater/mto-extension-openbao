@@ -51,7 +51,7 @@
 #
 # Regenerating the golden after an INTENTIONAL chart change:
 #   helm template openbao-config-mto charts/openbao-config-mto \
-#     -n mto-extension-openbao-system -f hack/render-fixtures/values-full.yaml \
+#     -n openbao-config-operator-system -f hack/render-fixtures/values-full.yaml \
 #     | yq ea -P '[.] | sort_by(.apiVersion + "|" + .kind + "|" + (.metadata.namespace // "") + "|" + .metadata.name) | .[] | sort_keys(..) | splitDoc' \
 #     > hack/render-fixtures/golden-all.yaml
 set -euo pipefail
@@ -63,7 +63,7 @@ FIXTURES="$REPO_ROOT/hack/render-fixtures"
 HELM="${HELM:-$(command -v "$REPO_ROOT/bin/helm" || command -v helm)}"
 YQ="${YQ:-$(command -v "$REPO_ROOT/bin/yq" || command -v yq)}"
 RELEASE=openbao-config-mto
-NS=mto-extension-openbao-system
+NS=openbao-config-operator-system
 SLICES="core eso certManager trust"
 
 WORK="$(mktemp -d)"
@@ -172,7 +172,7 @@ printf '{{ tpl ($.Files.Get "files/parent-gotemplate.tpl") (dict "parameters" .V
 cat > "$WORK/shim/values.yaml" <<'EOF'
 parameters:
   env: dev
-  operatorNamespace: mto-extension-openbao-system
+  operatorNamespace: openbao-config-operator-system
   tokenReviewerSecretName: bao-token-reviewer
   kubernetesHost: https://kubernetes.default.svc
   childTemplateName: openbao-config-mto

@@ -49,7 +49,7 @@ externalSecretRefreshInterval: "1h"
 
 # Operator namespace where the bao-scoped CRs live. Must match the operator
 # install. Used as `metadata.namespace` for every OpenBao* CR.
-operatorNamespace: mto-extension-openbao-system
+operatorNamespace: openbao-config-operator-system
 
 # Token-reviewer Secret name (used by every per-tenant
 # OpenBaoKubernetesAuthEngineConfig).
