@@ -23,6 +23,7 @@ regenerate it — a regen would invalidate every cert the CA ever issued.
 {{- if .Values.sso.enabled }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
+{{- $pkiMount := include "openbao.pkiMount" . }}
 {{- $labels := include "openbao.labels" . }}
 {{- range $tier := $.Values.sso.tiers }}
 {{- $caps := index $.Values.tierCaps $tier }}
@@ -78,18 +79,18 @@ spec:
     # issue against any role; admins can manage roles. No tier gets the
     # CA root/config paths: regenerating the CA invalidates every
     # previously issued cert, so it goes through the CR, not a login.
-    path "{{ $.Values.pki.mountPath }}/ca/pem"           { capabilities = ["read"] }
-    path "{{ $.Values.pki.mountPath }}/ca_chain"         { capabilities = ["read"] }
-    path "{{ $.Values.pki.mountPath }}/cert/ca"          { capabilities = ["read"] }
-    path "{{ $.Values.pki.mountPath }}/certs"            { capabilities = ["list"] }
-    path "{{ $.Values.pki.mountPath }}/cert/+"           { capabilities = ["read"] }
+    path "{{ $pkiMount }}/ca/pem"           { capabilities = ["read"] }
+    path "{{ $pkiMount }}/ca_chain"         { capabilities = ["read"] }
+    path "{{ $pkiMount }}/cert/ca"          { capabilities = ["read"] }
+    path "{{ $pkiMount }}/certs"            { capabilities = ["list"] }
+    path "{{ $pkiMount }}/cert/+"           { capabilities = ["read"] }
     {{- if or (eq $tier "editor") (eq $tier "admin") }}
-    path "{{ $.Values.pki.mountPath }}/issue/+"          { capabilities = ["update"] }
-    path "{{ $.Values.pki.mountPath }}/sign/+"           { capabilities = ["update"] }
+    path "{{ $pkiMount }}/issue/+"          { capabilities = ["update"] }
+    path "{{ $pkiMount }}/sign/+"           { capabilities = ["update"] }
     {{- end }}
     {{- if eq $tier "admin" }}
-    path "{{ $.Values.pki.mountPath }}/roles"            { capabilities = ["list"] }
-    path "{{ $.Values.pki.mountPath }}/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
+    path "{{ $pkiMount }}/roles"            { capabilities = ["list"] }
+    path "{{ $pkiMount }}/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
     {{- end }}
     {{- end }}
 ---

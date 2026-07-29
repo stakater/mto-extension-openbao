@@ -684,6 +684,8 @@ trust-manager writes a ConfigMap named `team-a-trust` (key `trust-bundle.pem`) i
 
 **Why `includeAllKeys`.** Each `<tenant>-ca` ConfigMap holds the active CA under `ca.crt`, and — once a CA has been replaced — the CA it replaced under `ca-previous.crt`. Taking every key means both are trusted while workloads re-issue their certificates. Without that overlap, replacing a CA would break every certificate still issued by the old one, because verifiers would stop trusting it the moment the new CA was published. Only one previous CA is kept; a second replacement drops the one before it.
 
+**The operator owns `<tenant>-ca` completely.** Because the Bundle takes every key, any certificate written into that ConfigMap would become a trust anchor for every workload in the tenant. So the operator prunes on each reconcile: only `ca.crt` and `ca-previous.crt` survive, and an extra key is treated as drift and removed. Don't store anything else in these ConfigMaps — it will be deleted. If you need to distribute an additional CA, add it as its own source on the Bundle rather than as a key here.
+
 **How a workload uses it.** Mount that ConfigMap and point your TLS stack at `trust-bundle.pem` as its CA trust store:
 
 ```yaml
@@ -713,6 +715,18 @@ spec:
 **Limiting to one app is the app's (or mesh's) job — not the chart's.** The chart works at **tenant** granularity: `pki-allow-tenant: team-b` accepts *any* team-b workload, and `team-a-pki-allowed-tenants` lists accepted peer **tenants**, not apps. It does not matter which ServiceAccount you put the annotation on — the chart aggregates them across the whole tenant. To allow only one app — say team-b may call `payments` but not `admin` — your app or service mesh enforces it using the caller's certificate name (its SAN). For example `payments` accepts a client whose SAN is `*.team-b-prod.svc.cluster.local` (or just `web.team-b-prod.svc.cluster.local` for one app), while `admin` accepts none. The chart hands you the trusted CA plus the allowed-tenant list; turning that into a per-app rule is done in your app config or a mesh `AuthorizationPolicy`.
 
 > **Needs:** [trust-manager](https://cert-manager.io/docs/trust/trust-manager/), installed with its trust namespace set to the operator namespace (that's where the `<tenant>-ca` source ConfigMaps live).
+>
+> **Also needs: trust-manager must be allowed to read Secrets in that namespace.** Its ClusterRole covers ConfigMaps cluster-wide but not Secrets — the chart only grants Secrets in trust-manager's *own* release namespace. Point the trust namespace elsewhere and trust-manager cannot start its informer cache, so it reconciles **no Bundle at all** and the Bundle gets no `status` whatsoever. Nothing reports an error; the trust ConfigMaps simply never appear. Add a Role + RoleBinding for `secrets: [get, list, watch]` in the operator namespace, bound to trust-manager's ServiceAccount:
+>
+> ```bash
+> kubectl create role trust-manager-source-secrets -n <operator-ns> \
+>   --verb=get,list,watch --resource=secrets
+> kubectl create rolebinding trust-manager-source-secrets -n <operator-ns> \
+>   --role=trust-manager-source-secrets \
+>   --serviceaccount=cert-manager:trust-manager
+> ```
+>
+> Check it worked with `kubectl get bundle <tenant>-trust -o jsonpath='{.status}'` — empty output means trust-manager never processed it.
 
 ---
 

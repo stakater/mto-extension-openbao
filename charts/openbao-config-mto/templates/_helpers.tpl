@@ -158,8 +158,9 @@ Effective tenant PKI mount path. In hierarchy mode the tenant CA is a
 type=intermediate rendered at a FRESH mount (pki.hierarchy.mountPath) so it
 never reuses a root-bearing mount; otherwise it's the self-signed root at
 pki.mountPath. Every template that references the tenant PKI mount (config,
-role, SA policies, cert-manager Issuer) must resolve it through this helper so
-they stay in lockstep.
+role, SA policies, SSO policies, cert-manager Issuer) must resolve it through
+this helper so they stay in lockstep. Reading pki.mountPath directly grants
+paths on a mount that does not exist whenever hierarchy mode is on.
 Usage (root context): {{ include "openbao.pkiMount" . }}
 */}}
 {{- define "openbao.pkiMount" -}}
