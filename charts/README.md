@@ -43,7 +43,7 @@ Each application then opts in to what it needs by adding a few annotations to it
 
 | Chart | Install it? | What it does |
 |---|---|---|
-| [`mto-extension-openbao`](mto-extension-openbao/) | Yes | The operator itself: the controller, its RBAC, and all the CRDs. See the [operator README](../README.md). |
+| [`openbao-config-operator`](openbao-config-operator/) | Yes | The operator itself: the controller, its RBAC, and all the CRDs. See the [operator README](../README.md). |
 | [`openbao-config-mto-bootstrap`](openbao-config-mto-bootstrap/) | Yes | Sets up the MTO integration once per cluster. Watches `Tenant` CRs and fans out to one render per tenant. |
 | [`openbao-config-mto`](openbao-config-mto/) | No (pulled automatically) | The per-tenant template. The bootstrap chart pulls it from a registry and renders it once per tenant. You don't install this one by hand. |
 
@@ -102,7 +102,7 @@ Install the operator first (see the [operator README](../README.md)), then the b
 ```bash
 helm install openbao-config-mto-bootstrap \
   oci://ghcr.io/stakater/charts/openbao-config-mto-bootstrap \
-  -n mto-extension-openbao-system
+  -n openbao-config-operator-system
 ```
 
 Set cluster-wide defaults (OpenBao address, environment name, SSO on/off, and so on) under `parent.*` in the bootstrap [values.yaml](openbao-config-mto-bootstrap/values.yaml). Set the per-tenant engine details (transit keys, PKI roles, tier permissions, SSO tiers) in the per-tenant chart's [values.yaml](openbao-config-mto/values.yaml).
@@ -111,10 +111,10 @@ After a tenant exists, see what was created for it:
 
 ```bash
 # the per-tenant render
-kubectl -n mto-extension-openbao-system get ti
+kubectl -n openbao-config-operator-system get ti
 
 # the OpenBao resources for one tenant
-kubectl -n mto-extension-openbao-system get \
+kubectl -n openbao-config-operator-system get \
   obns,obse,obam,obkac,obkar,obp,obtk,obpkic,obpkir \
   -l templates.v2.stakater.com/instance=openbao-config-mto-team-a
 ```
@@ -784,7 +784,7 @@ The flip side is that rendered resources cannot drift during an outage either â€
 - Every per-tenant render reports a `Synced` condition â€” `True` means the drift watches are active, not that no drift has ever occurred. It is aggregated per tenant on the parent (with `sync.mode: off` the condition doesn't exist, so `tiSynced` reads empty):
 
   ```bash
-  kubectl -n mto-extension-openbao-system get ti openbao-config-mto-parent \
+  kubectl -n openbao-config-operator-system get ti openbao-config-mto-parent \
     -o jsonpath='{.status.outputs}'   # tiSynced per tenant
   ```
 

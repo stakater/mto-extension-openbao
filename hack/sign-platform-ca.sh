@@ -12,7 +12,7 @@
 # Usage:  ./hack/sign-platform-ca.sh [kube-context]
 set -euo pipefail
 
-NS=mto-extension-openbao-system
+NS=openbao-config-operator-system
 CSR_SECRET=platform-pki-intermediate-csr      # operator writes the CSR here (key: csr)
 CSR_KEY=csr
 SIGNED_SECRET=platform-pki-signed             # operator reads the signed cert here (key: tls.crt)

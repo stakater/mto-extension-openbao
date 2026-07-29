@@ -46,7 +46,7 @@ spec:
             tenant: {{ $tenant }}
           annotations:
             summary: "OpenBao CR {{`{{ $labels.kind }}/{{ $labels.name }}`}} not Ready for tenant {{ $tenant }}"
-            description: "Operator reconcile is failing for this CR; check controller logs in mto-extension-openbao-system."
+            description: "Operator reconcile is failing for this CR; check controller logs in openbao-config-operator-system."
         - alert: OpenBaoExternalSecretSyncFailed
           expr: |
             externalsecret_status_condition{
