@@ -289,15 +289,18 @@ data:
   {{- end }}
 {{- if $.Values.baoCABundle }}
 ---
+{{- /* A CA bundle is a public certificate, so it ships as a ConfigMap — the
+       same shape as kube-root-ca.crt and as the trust-manager Bundle target in
+       11-pki-cross-tenant-trust.yaml. Keeping it out of a Secret is what lets
+       the bootstrap ClusterRole omit Secret write access. */ -}}
 apiVersion: v1
-kind: Secret
+kind: ConfigMap
 metadata:
   name: bao-ca-bundle
   namespace: {{ $saNs }}
   labels:
     {{- $labels | nindent 4 }}
-type: Opaque
-stringData:
+data:
   ca.crt: |
 {{ $.Values.baoCABundle | indent 4 }}
 {{- end }}

@@ -4,9 +4,19 @@
 #   - CRUD TemplateInstance (parent renders child TIs)
 #   - CRUD OpenBao* CRs (child renders the per-tenant scaffolding)
 #   - read ServiceAccounts + Deployments (workload discovery via the
-#     child Template's namespaceSelector-scoped objectFieldRefs)
+#     child Template's namespaceSelector-scoped objectFieldRefs; the SA
+#     read verbs are needed independently of the render-driven CRUD below)
 #   - CRUD ConfigMaps (per-SA bao-env ConfigMap emitted by the tenant chart)
-#   - CRUD SecretStores + ExternalSecrets (ESO integration)
+#   - CRUD SecretStores + ExternalSecrets (ESO integration; only when
+#     parent.eso is "enabled")
+#   - CRUD the remaining kinds the tenant chart can render (ServiceAccounts,
+#     Roles/RoleBindings, Issuers, Bundles, NetworkPolicies, PrometheusRules)
+#     — apply + spec.sync drift watches without the upstream cluster-admin
+#     binding
+#   - DELETE Secrets only, purely so a legacy-Secret upgrade converges (see
+#     the rule comment)
+#   - CREATE serviceaccounts/token (escalation-prevention covering grant;
+#     see the rule comment below)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -54,19 +64,67 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The tenant chart renders no Secret — the bao CA bundle is a public
+  # certificate and ships as a ConfigMap. `delete` is the only Secret verb
+  # granted, and it exists solely so that upgrading from a release that did
+  # render `bao-ca-bundle` as a Secret can converge: template-operator-v2
+  # reaps resources that leave the render set, and without `delete` the reap
+  # returns Forbidden rather than NotFound, so it never confirms the object is
+  # gone and requeues forever. Fully automatic reaping would additionally need
+  # `update` (to strip template-operator-v2's own finalizer); that is withheld
+  # deliberately, because `update` on Secrets cluster-wide is the largest grant
+  # this chart could hand out. The trade is one manual finalizer strip per
+  # workload namespace on that upgrade — see the chart README. Read verbs are
+  # absent because template-operator-v2's own secret-reader ClusterRole already
+  # grants get/list/watch independently of this chart.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["delete"]
+  {{- if eq .Values.parent.eso "enabled" }}
+  # Gated on the same switch the tenant chart uses to decide whether to render
+  # SecretStores and ExternalSecrets at all, so the grant and the resources it
+  # covers appear and disappear together.
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- end }}
   - apiGroups: ["templates.v2.stakater.com"]
     resources: ["templateinstances"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["issuers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["trust.cert-manager.io"]
+    resources: ["bundles"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["prometheusrules"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Escalation prevention: creating a Role/RoleBinding is denied unless the
+  # creator holds every permission that Role grants (or the escalate/bind
+  # verbs, which are deliberately not granted here). The tenant chart's
+  # bao-cert-manager-token-create Role grants create on serviceaccounts/token
+  # scoped to resourceNames ["bao-cert-manager"]; the escalation check
+  # accepts a covering grant with the same scope. Keep the resourceNames —
+  # unscoped token-create would let this ServiceAccount mint a token for ANY
+  # ServiceAccount, including cluster-admin-bound ones.
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["bao-cert-manager"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -19,6 +19,9 @@ spec:
       allow:
         literal:
           - {{ .Values.operatorNamespace }}
+  {{- with include "openbao-config-mto-bootstrap.templateSync" . }}
+  {{- . | nindent 2 }}
+  {{- end }}
   parameters:
     - name: tenant
       required: true
