@@ -9,6 +9,8 @@
 {{- $ssoIssuerUrl := .parameters.ssoIssuerUrl }}
 {{- $eso := .parameters.eso }}
 {{- $esoRefresh := .parameters.externalSecretRefreshInterval }}
+{{- $certManager := .parameters.certManagerEnabled }}
+{{- $crossTenantPki := .parameters.crossTenantPkiEnabled }}
 {{- /* Comma-separated roster of all real tenant names. Passed to each child so
        its chart can skip cross-tenant shares whose peer is not a real tenant
        (no dangling Policy/Role; self-heals when the peer appears). */ -}}
@@ -60,15 +62,24 @@ spec:
 {{- $tns := default dict $t.spec.namespaces }}
 {{- $hasNs := or (gt (len (default list $tns.withTenantPrefix)) 0) (gt (len (default list $tns.withoutTenantPrefix)) 0) }}
 {{- if $hasNs }}
+{{- /* One TI per enabled component, so a disabled integration has no TI at
+       all. Optional suffixes use a dot because tenant names are RFC1123
+       labels (no dots): with a hyphen, the core TI of tenant "<x>-eso" would
+       collide with the eso TI of tenant "<x>". */ -}}
+{{- $slices := list (dict "suffix" "" "tmpl" "") }}
+{{- if eq $eso "enabled" }}{{- $slices = append $slices (dict "suffix" ".eso" "tmpl" "-eso") }}{{- end }}
+{{- if eq $certManager "true" }}{{- $slices = append $slices (dict "suffix" ".certmanager" "tmpl" "-certmanager") }}{{- end }}
+{{- if eq $crossTenantPki "true" }}{{- $slices = append $slices (dict "suffix" ".trust" "tmpl" "-trust") }}{{- end }}
+{{- range $slice := $slices }}
 ---
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: TemplateInstance
 metadata:
-  name: openbao-config-mto-{{ $name }}
+  name: openbao-config-mto-{{ $name }}{{ $slice.suffix }}
   namespace: {{ $opNs }}
 spec:
   templateRef:
-    name: {{ $childTemplate }}
+    name: {{ $childTemplate }}{{ $slice.tmpl }}
     namespace: {{ $opNs }}
   parameters:
     - name: tenant
@@ -107,5 +118,6 @@ spec:
           namespaceSelector:
             matchLabels:
               {{ $tenantLabel }}: {{ $name }}
+{{- end }}
 {{- end }}
 {{- end }}

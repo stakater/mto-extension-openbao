@@ -7,6 +7,11 @@ SecretStore wired to that role (when eso=enabled).
 Bao namespace lives at .Values.sharedTenant.name (default "shared"). Renaming
 matters only when running two operator installs against the same bao backend.
 */}}
+{{- /* Two components share this file's per-SA/per-peer loop: core emits the
+       Policy/Role pair, eso emits the SecretStore. */ -}}
+{{- $renderCore := include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
+{{- $renderEso := include "openbao.componentEnabled" (dict "component" "eso" "ctx" .) }}
+{{- if or $renderCore $renderEso }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $shared := .Values.sharedTenant.name }}
@@ -21,6 +26,7 @@ matters only when running two operator installs against the same bao backend.
 {{- $peer = trim $peer }}
 {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
 {{- $shareInName := include "openbao.shareInName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "peer" $peer) }}
+{{- if $renderCore }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPolicy
@@ -63,7 +69,8 @@ spec:
   {{- if $.Values.token.period }}
   tokenPeriod: {{ $.Values.token.period }}
   {{- end }}
-{{- if eq $.Values.eso "enabled" }}
+{{- end }}
+{{- if and $renderEso (eq $.Values.eso "enabled") }}
 ---
 apiVersion: external-secrets.io/v1
 kind: SecretStore
@@ -88,6 +95,7 @@ spec:
           role: {{ $shareInName }}
           serviceAccountRef:
             name: {{ $saName }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

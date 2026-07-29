@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 6 — per-tenant OIDC scaffolding for human SSO.
 
@@ -57,4 +58,5 @@ spec:
   oidcClientSecretRef:
     name: {{ $secretName }}
     key: {{ .Values.sso.dex.clientSecretRef.key }}
+{{- end }}
 {{- end }}

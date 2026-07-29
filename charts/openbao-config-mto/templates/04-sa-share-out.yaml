@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 4a (share-out) — per `bao.stakater.com/kv-export-tenant: <peer-1>,<peer-2>`
 annotation entry, emit a Policy + Role pair in <sharedTenant>/ that grants the SA
@@ -59,6 +60,7 @@ spec:
   {{- if $.Values.token.period }}
   tokenPeriod: {{ $.Values.token.period }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -1,45 +1,56 @@
-# Child Template — the parent emits one TemplateInstance of this per MTO
-# Tenant CR. Each TI pulls the openbao-config-mto chart from OCI and
-# renders it with parameters resolved per tenant (tenant name, SA list,
-# deployment list, env, etc.).
+# Child Templates — one per chart component. The parent emits, per MTO Tenant
+# CR, one TemplateInstance of the core Template plus one per enabled optional
+# integration. Each TI pulls the same openbao-config-mto chart from OCI and
+# renders one slice of it (values.component), so a missing optional CRD fails
+# only that tenant's optional TI at server-side dry-run — the core bao wiring
+# applies regardless.
+#
+# The Templates are rendered from one range so they share a parameter list and
+# valuesTemplate and cannot drift; they differ only in the component literal
+# and their status outputs.
 #
 # baoCABundle is NOT a pass-through parameter — it's a multi-line PEM that
 # must be set as a chart-level value at chart-package or chart-pull time
 # (or via a separate overlay). See the chart README → "Going to prod →
 # bao HTTPS".
+{{- range $slice := list
+  (dict "component" "core" "nameSuffix" "")
+  (dict "component" "eso" "nameSuffix" "-eso")
+  (dict "component" "certManager" "nameSuffix" "-certmanager")
+  (dict "component" "trust" "nameSuffix" "-trust") }}
 ---
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: Template
 metadata:
-  name: openbao-config-mto
-  namespace: {{ .Values.operatorNamespace }}
+  name: openbao-config-mto{{ $slice.nameSuffix }}
+  namespace: {{ $.Values.operatorNamespace }}
 spec:
   targetNamespaces:
     explicit:
       allow:
         literal:
-          - {{ .Values.operatorNamespace }}
+          - {{ $.Values.operatorNamespace }}
   parameters:
     - name: tenant
       required: true
     - name: env
-      value: {{ .Values.parent.env | quote }}
+      value: {{ $.Values.parent.env | quote }}
     - name: kubernetesHost
-      value: {{ .Values.parent.kubernetesHost | quote }}
+      value: {{ $.Values.parent.kubernetesHost | quote }}
     - name: baoServer
-      value: {{ .Values.parent.baoServer | quote }}
+      value: {{ $.Values.parent.baoServer | quote }}
     - name: eso
-      value: {{ .Values.parent.eso | quote }}
+      value: {{ $.Values.parent.eso | quote }}
     - name: externalSecretRefreshInterval
-      value: {{ .Values.parent.externalSecretRefreshInterval | quote }}
+      value: {{ $.Values.parent.externalSecretRefreshInterval | quote }}
     - name: ssoEnabled
-      value: {{ .Values.parent.sso.enabled | quote }}
+      value: {{ $.Values.parent.sso.enabled | quote }}
     - name: ssoIssuerUrl
-      value: {{ .Values.parent.sso.issuerUrl | quote }}
+      value: {{ $.Values.parent.sso.issuerUrl | quote }}
     - name: sharedTenantName
-      value: {{ .Values.parent.sharedTenantName | quote }}
+      value: {{ $.Values.parent.sharedTenantName | quote }}
     - name: tenantLabelKey
-      value: {{ .Values.parent.tenantLabelKey | quote }}
+      value: {{ $.Values.parent.tenantLabelKey | quote }}
     # Roster of all real tenant names (CSV). Stamped per-child by the parent
     # gotemplate; the chart skips cross-tenant shares whose peer isn't listed.
     - name: knownTenants
@@ -48,32 +59,38 @@ spec:
     # chart renders its CA as a type=intermediate cross-ns-signed by this
     # platform CA; otherwise it keeps its self-signed root.
     - name: pkiHierarchyEnabled
-      value: {{ .Values.platformPki.enabled | quote }}
+      value: {{ $.Values.platformPki.enabled | quote }}
     - name: platformPkiMount
-      value: {{ .Values.platformPki.mountPath | quote }}
+      value: {{ $.Values.platformPki.mountPath | quote }}
     - name: platformPkiNamespace
-      value: {{ .Values.platformPki.openbaoNamespace | quote }}
+      value: {{ $.Values.platformPki.openbaoNamespace | quote }}
     - name: crossTenantPkiEnabled
-      value: {{ .Values.crossTenantPki.enabled | quote }}
+      value: {{ $.Values.crossTenantPki.enabled | quote }}
+    - name: certManagerEnabled
+      value: {{ $.Values.parent.certManager.enabled | quote }}
     - name: serviceAccounts
     - name: deployments
-  # Per-tenant status outputs surfaced on the child TI:
+{{- if eq $slice.component "core" }}
+  # Per-tenant status output surfaced on the core child TI:
   #   - caSerialNumber: tracks the tenant's PKI root CA. Flips only when
   #     a super-admin SSO user regenerates the root, so an unexpected
   #     change is a red flag.
-  #   - externalSecretSync: per-workload ES sync state. Lets ops see which
-  #     workloads are not getting secrets without per-namespace iteration.
-  # Status size scales with per-tenant cardinality. Drop externalSecretSync
-  # if tenants run O(1000) ExternalSecrets.
   outputs:
     - name: caSerialNumber
       from:
         apiVersion: security.mto.stakater.com/v1alpha1
         kind: OpenBaoPKISecretEngineConfig
         name: {{ `"{.parameters.tenant}-pki-root"` }}
-        namespace: {{ .Values.operatorNamespace }}
+        namespace: {{ $.Values.operatorNamespace }}
       fields:
         - { name: caSerial, jsonPath: "{.status.caSerialNumber}" }
+{{- else if eq $slice.component "eso" }}
+  # Per-tenant status output surfaced on the eso child TI:
+  #   - externalSecretSync: per-workload ES sync state. Lets ops see which
+  #     workloads are not getting secrets without per-namespace iteration.
+  # Status size scales with per-tenant cardinality. Drop externalSecretSync
+  # if tenants run O(1000) ExternalSecrets.
+  outputs:
     - name: externalSecretSync
       fromAll:
         apiVersion: external-secrets.io/v1
@@ -82,27 +99,29 @@ spec:
       fields:
         - { name: esReady,       jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
         - { name: esLastRefresh, jsonPath: "{.status.refreshTime}" }
+{{- end }}
   helm:
     chart:
       repository:
-        url: {{ .Values.openbaoConfigMto.registry | quote }}
-        name: {{ .Values.openbaoConfigMto.name | quote }}
-        version: {{ .Values.openbaoConfigMto.version | quote }}
-        {{- if .Values.openbaoConfigMto.authSecretName }}
+        url: {{ $.Values.openbaoConfigMto.registry | quote }}
+        name: {{ $.Values.openbaoConfigMto.name | quote }}
+        version: {{ $.Values.openbaoConfigMto.version | quote }}
+        {{- if $.Values.openbaoConfigMto.authSecretName }}
         auth:
           secretRef:
-            name: {{ .Values.openbaoConfigMto.authSecretName | quote }}
+            name: {{ $.Values.openbaoConfigMto.authSecretName | quote }}
         {{- end }}
-    releaseName: {{ .Values.openbaoConfigMto.releaseName | quote }}
+    releaseName: {{ $.Values.openbaoConfigMto.releaseName | quote }}
     version: v4
     valuesTemplate: |
+      component: {{ $slice.component }}
       tenant: {{ `{{ .parameters.tenant }}` }}
       env: {{ `{{ .parameters.env }}` }}
       baoServer: {{ `{{ .parameters.baoServer }}` }}
       kubernetesHost: {{ `{{ .parameters.kubernetesHost }}` }}
       eso: {{ `{{ .parameters.eso }}` }}
       externalSecretRefreshInterval: {{ `{{ .parameters.externalSecretRefreshInterval }}` }}
-      operatorNamespace: {{ .Values.operatorNamespace }}
+      operatorNamespace: {{ $.Values.operatorNamespace }}
       tokenReviewerSecretName: bao-token-reviewer
       tenantLabelKey: {{ `{{ .parameters.tenantLabelKey }}` }}
       knownTenants: {{ `{{ .parameters.knownTenants | quote }}` }}
@@ -113,6 +132,8 @@ spec:
           platformNamespace: {{ `{{ .parameters.platformPkiNamespace }}` }}
         crossTenant:
           enabled: {{ `{{ .parameters.crossTenantPkiEnabled }}` }}
+        certManager:
+          enabled: {{ `{{ .parameters.certManagerEnabled }}` }}
       sharedTenant:
         name: {{ `{{ .parameters.sharedTenantName }}` }}
       sso:
@@ -121,3 +142,4 @@ spec:
           issuerUrl: {{ `{{ .parameters.ssoIssuerUrl | quote }}` }}
       serviceAccounts: {{ `{{ .parameters.serviceAccounts | toJson }}` }}
       deployments: {{ `{{ .parameters.deployments | toJson }}` }}
+{{- end }}

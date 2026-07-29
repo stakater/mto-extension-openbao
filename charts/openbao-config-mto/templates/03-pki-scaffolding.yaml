@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 3 — per-tenant PKI secret engine (doc-aligned single-role model).
 
@@ -88,11 +89,11 @@ metadata:
 spec:
   path: {{ $mount }}
   openbaoNamespace: {{ $tenant }}/
-  {{- if .Values.pki.crossTenant.enabled }}
+  {{- /* Deliberately not gated on pki.crossTenant.enabled — that would let an
+         optional toggle mutate this core object. A CA cert is public. */}}
   # Publish this tenant's CA cert to a ConfigMap so trust-manager Bundles can
   # source it for cross-tenant trust (see 11-pki-cross-tenant-trust.yaml).
   publishCABundleConfigMap: {{ $tenant }}-ca
-  {{- end }}
   {{- if $hier.enabled }}
   type: intermediate
   internalSign:
@@ -173,5 +174,6 @@ spec:
   {{- if $r.keyBits }}
   keyBits: {{ $r.keyBits }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

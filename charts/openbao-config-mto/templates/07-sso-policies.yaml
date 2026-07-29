@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 7 — per (tenant, tier) SSO role + policy. For each tier in
 .Values.sso.tiers:
@@ -187,5 +188,6 @@ spec:
   {{- if $.Values.ssoToken.maxTTL }}
   tokenMaxTtl: {{ $.Values.ssoToken.maxTTL }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

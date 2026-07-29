@@ -74,6 +74,47 @@ bootstrap chart (installed once)  ──one render per tenant──▶  openbao-
 
 This all happens through [template-operator-v2](https://github.com/stakater/template-operator), which does the "one render per tenant" step.
 
+**Each tenant gets up to four renders, not one.** The core render
+(`openbao-config-mto-<tenant>`) holds everything OpenBao needs: the tenant's
+private space, secret engines, policies, and login roles. (One exception:
+the OpenBao policy and login role that exist only so cert-manager can log
+in travel with the cert-manager render — they are useless without it.)
+Optional integrations live in their own renders:
+
+- `openbao-config-mto-<tenant>.eso` — the ESO `SecretStore` and
+  `ExternalSecret` objects. Only exists when `parent.eso` is `enabled`.
+- `openbao-config-mto-<tenant>.certmanager` — the cert-manager `Issuer`
+  wiring. Only exists when `parent.certManager.enabled` is `true`.
+- `openbao-config-mto-<tenant>.trust` — the trust-manager `Bundle` for
+  cross-tenant PKI trust. Only exists when `crossTenantPki.enabled` is
+  `true`.
+
+Why split? template-operator-v2 checks every object in a render against the
+cluster before applying, and one bad object fails the whole render. Each
+optional render matches exactly one operator, so if ESO, cert-manager, or
+trust-manager is not installed, only that small render fails — the tenant's
+core OpenBao setup still works. Install the missing operator later and the
+failed render fixes itself within a minute, with no manual steps.
+
+**If you ever need to force a render to start over,** turn its integration off
+and back on — set the value to `false` (or `disabled`) so the bootstrap stops
+emitting that render, then set it back. Do not delete the render's
+`TemplateInstance` by hand. The bootstrap is still generating it, so the delete
+cannot finish: the objects it created are removed, but the name stays held by a
+terminating `TemplateInstance` that the bootstrap cannot replace, and that
+render stays down until the value is toggled.
+
+**Tenant name length.** The render's name is stamped as a label on every
+object it produces, and Kubernetes caps label values at 63 characters. That
+puts a ceiling on tenant names: 44 characters for the core render, 40 with
+`.eso`, 38 with `.trust`, 32 with `.certmanager`. A tenant name over the
+limit for an enabled render fails that render with a message naming the
+budget, so this shows up at install time rather than as an unexplained
+invalid-label error.
+
+Installing the per-tenant chart directly with `helm install` renders
+everything in one pass (`component: all`) and none of this applies.
+
 ---
 
 ## Before you start
@@ -109,14 +150,19 @@ Set cluster-wide defaults (OpenBao address, environment name, SSO on/off, and so
 After a tenant exists, see what was created for it:
 
 ```bash
-# the per-tenant render
+# the per-tenant renders — core, plus .eso / .certmanager / .trust when enabled
 kubectl -n mto-extension-openbao-system get ti
 
-# the OpenBao resources for one tenant
+# the OpenBao resources for one tenant (core render)
 kubectl -n mto-extension-openbao-system get \
   obns,obse,obam,obkac,obkar,obp,obtk,obpkic,obpkir \
   -l templates.v2.stakater.com/instance=openbao-config-mto-team-a
 ```
+
+ESO objects carry the `.eso` render's label instead
+(`templates.v2.stakater.com/instance=openbao-config-mto-team-a.eso`), and
+the per-workload sync status (`externalSecretSync`) shows on that render's
+`TemplateInstance` status, not on the core one.
 
 ---
 
@@ -265,6 +311,11 @@ These keys are always present. Sharing, Transit, and PKI add more (shown in each
 
 **Turn it on & what you need.** ESO is on by default (`eso: enabled`). Set `eso: disabled` to skip all ESO resources and use the direct method instead.
 > **Needs:** External Secrets Operator installed in the cluster.
+
+All ESO objects live in their own per-tenant render
+(`openbao-config-mto-<tenant>.eso`). If you enable ESO but the operator is
+missing, only that render fails — the tenant's core OpenBao setup is
+untouched, and everything heals on its own once ESO is installed.
 
 **What the chart creates.** For each ServiceAccount you give a tier:
 
@@ -572,7 +623,7 @@ There are two CA setups:
 
 ### Two ways to get a certificate
 
-**1. Through cert-manager (recommended).** Turn on `pki.certManager.enabled`. The chart creates a cert-manager `Issuer` (named after the tenant's PKI role) in each namespace that opts in. Your app then requests a certificate the normal cert-manager way:
+**1. Through cert-manager (recommended).** Turn on `parent.certManager.enabled` in the bootstrap chart (or `pki.certManager.enabled` when using the per-tenant chart standalone). The chart creates a cert-manager `Issuer` (named after the tenant's PKI role) in each namespace that opts in, all inside a separate per-tenant render (`openbao-config-mto-<tenant>.certmanager`) — so a cluster without cert-manager fails only that render, never the tenant's core setup. Your app then requests a certificate the normal cert-manager way:
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -632,7 +683,7 @@ There's nothing to set up — PKI has no per-namespace sharing. Every namespace 
 
 ### Trust across tenants
 
-Different tenants have different CAs, so by default they don't trust each other. Trust is **opt-in**, **directional**, and decided by the **consuming** side — a peer can never grant itself trust. Turn it on with `pki.crossTenant.enabled`, then opt in with an annotation on one of your ServiceAccounts. The two annotations match the two directions of a call:
+Different tenants have different CAs, so by default they don't trust each other. Trust is **opt-in**, **directional**, and decided by the **consuming** side — a peer can never grant itself trust. Turn it on with `crossTenantPki.enabled` in the bootstrap chart (or `pki.crossTenant.enabled` when using the per-tenant chart standalone), then opt in with an annotation on one of your ServiceAccounts. The trust bundle lives in its own per-tenant render (`openbao-config-mto-<tenant>.trust`), independent of the cert-manager toggle — a cluster without trust-manager fails only that render. The two annotations match the two directions of a call:
 
 - **`pki-trust-tenant: team-b`** — *outbound.* "I call team-b and need to trust the **server** certificate it presents." Adds team-b's CA to your trust bundle — nothing more.
 - **`pki-allow-tenant: team-b`** — *inbound.* "I accept team-b as a **client** calling me." You can't accept a client you can't authenticate, so this **implies trust**: it adds team-b's CA to your bundle *and* lists team-b in your accepted-clients (the authorization layer). This one annotation covers the whole inbound case — you don't add `pki-trust-tenant` as well.

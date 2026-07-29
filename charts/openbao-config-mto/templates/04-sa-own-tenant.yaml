@@ -24,6 +24,11 @@ Per-SA opt-ins:
   bao.stakater.com/pki-trust-tenant      cross-tenant PKI: CSV of peer tenants to trust outbound only (trust without
                                           accepting inbound); consumed by 11-pki-cross-tenant-trust.yaml
 */}}
+{{- /* Two components share this file's per-SA loop and validations: core
+       emits Policy/Role/ConfigMap/Secret, eso emits the SecretStore. */ -}}
+{{- $renderCore := include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
+{{- $renderEso := include "openbao.componentEnabled" (dict "component" "eso" "ctx" .) }}
+{{- if or $renderCore $renderEso }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $labels := include "openbao.labels" . }}
@@ -80,6 +85,7 @@ Per-SA opt-ins:
 {{- fail (printf "bao.stakater.com/subscribe-to-ns on ServiceAccount %s/%s references namespace %q, which is not a namespace of tenant %q (tenant owns: %s)" $saNs $saName $subNs $tenant (keys $tenantNamespaces | sortAlpha | join ", ")) }}
 {{- end }}
 {{- end }}
+{{- if $renderCore }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPolicy
@@ -301,7 +307,8 @@ stringData:
   ca.crt: |
 {{ $.Values.baoCABundle | indent 4 }}
 {{- end }}
-{{- if eq $.Values.eso "enabled" }}
+{{- end }}
+{{- if and $renderEso (eq $.Values.eso "enabled") }}
 ---
 apiVersion: external-secrets.io/v1
 kind: SecretStore
@@ -326,6 +333,7 @@ spec:
           role: {{ $roleName }}
           serviceAccountRef:
             name: {{ $saName }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
