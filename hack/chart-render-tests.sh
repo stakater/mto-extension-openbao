@@ -38,7 +38,27 @@
 #                    reap a slice's objects are granted regardless of any
 #                    toggle. Gating them alongside `create` orphans every
 #                    object the slice created when the toggle goes off.
-#  12. subread    — a subscribe-to-ns grant is read-only on the PRODUCING
+#  12. toggletypo — a near-miss on an integration switch (yes / on / True / 1,
+#                    or "true" for the string-valued parent.eso) fails the
+#                    render instead of silently disabling the integration.
+#                    Either boundary satisfies this — 13 and 14 pin them
+#                    individually. Canonical forms must still render.
+#                    `component` is left to _helpers.tpl's own fail(), which
+#                    predates this and gives a better message — see check 6.
+#  13. toggleschema — values.schema.json rejects a typo with the templates
+#                    stripped out, so the schema is verified independently of
+#                    the template guard.
+#  14. togglehelper — _helpers.tpl rejects a typo with values.schema.json
+#                    removed, so the guard is verified independently of the
+#                    schema. Stops the helpers being deleted on the assumption
+#                    the schema covers it: the schema is skippable (helm >=
+#                    3.16 --skip-schema-validation) and is not applied on every
+#                    path that renders a chart through the Helm SDK.
+#  15. togglenorm — each child Template parameter carries the value of the
+#                    toggle it is named after (a mis-wiring guard). Every
+#                    toggle in the fixture gets a distinct value, or swapping
+#                    two of them would go unnoticed.
+#  16. subread    — a subscribe-to-ns grant is read-only on the PRODUCING
 #                    namespace's prefix, on the metadata path as well as the
 #                    data path. KV v2 metadata is not a read-only view: update
 #                    sets delete_version_after/max_versions and delete removes
@@ -338,6 +358,76 @@ grants_case rbacscope all-on  enabled  true  true  present "$OPTIONAL_CREATE_GRA
 
 grants_case rbacteardown all-off disabled false false present "$TEARDOWN_GRANTS"
 grants_case rbacteardown all-on  enabled  true  true  present "$TEARDOWN_GRANTS"
+
+# 12. toggletypo — near-misses are rejected, canonical forms are not
+boot_render() { # boot_render <set-string args...>
+  "$HELM" template boot "$BOOTSTRAP" "$@" 2>&1
+}
+typo_ok=0; typo_detail=""
+for kv in \
+  "parent.certManager.enabled=yes" "parent.certManager.enabled=on" \
+  "parent.certManager.enabled=True" "parent.certManager.enabled=1" \
+  "crossTenantPki.enabled=yes" "crossTenantPki.enabled=TRUE" \
+  "parent.eso=enabledd" "parent.eso=true" "parent.eso=Enabled" \
+  "sync.mode=on"; do
+  if boot_render --set-string "$kv" >/dev/null 2>&1; then
+    typo_ok=1; typo_detail="$typo_detail [accepted:$kv]"
+  fi
+done
+# and the canonical forms must still work, or the check passes vacuously
+for kv in "parent.certManager.enabled=true" "parent.certManager.enabled=false" \
+          "crossTenantPki.enabled=true" "parent.eso=enabled" "parent.eso=disabled" \
+          "sync.mode=revert" "sync.mode=off"; do
+  if ! boot_render --set-string "$kv" >/dev/null 2>&1; then
+    typo_ok=1; typo_detail="$typo_detail [rejected-valid:$kv]"
+  fi
+done
+[ "$typo_ok" -eq 0 ] && check toggletypo 0 || check toggletypo 1 "$typo_detail"
+
+# 13. togglenorm — parameters stamped for the gotemplate are canonical
+norm_ok=0; norm_detail=""
+# Every toggle gets a DISTINCT value on purpose. With two switches both set to
+# "true", swapping which helper feeds which parameter is undetectable — the
+# first version of this check passed with the wiring crossed.
+norm_out="$(boot_render --set-string parent.certManager.enabled=true \
+                        --set-string crossTenantPki.enabled=false \
+                        --set-string parent.eso=enabled \
+                        --set-string parent.sso.enabled=false \
+                        --set-string platformPki.enabled=true)"
+for pair in "certManagerEnabled:true" "crossTenantPkiEnabled:false" "eso:enabled" "ssoEnabled:false" "pkiHierarchyEnabled:true"; do
+  pname="${pair%%:*}"; want="${pair##*:}"
+  got="$(printf '%s\n' "$norm_out" | "$YQ" ea -N "select(.kind == \"Template\") | .spec.parameters[] | select(.name == \"$pname\") | .value" - | sort -u | tr '\n' ',' | sed 's/,$//')"
+  [ "$got" = "$want" ] || { norm_ok=1; norm_detail="$norm_detail [$pname=$got want=$want]"; }
+done
+[ "$norm_ok" -eq 0 ] && check togglenorm 0 || check togglenorm 1 "$norm_detail"
+
+# 14. toggleschema — the schema rejects a typo on its own, with no template
+# logic in play. Rendered from a copy whose templates are stripped, so nothing
+# but values.schema.json can produce the error. Without this, loosening the
+# schema still "passes" toggletypo because the _helpers.tpl guard catches it.
+mkdir -p "$WORK/boot-noguard/templates"
+cp "$BOOTSTRAP/Chart.yaml" "$BOOTSTRAP/values.yaml" "$BOOTSTRAP/values.schema.json" "$WORK/boot-noguard/"
+printf '# intentionally empty\n' > "$WORK/boot-noguard/templates/noop.yaml"
+schema_ok=0; schema_detail=""
+for kv in "parent.certManager.enabled=yes" "crossTenantPki.enabled=True" "parent.eso=enabledd"; do
+  if "$HELM" template boot "$WORK/boot-noguard" --set-string "$kv" >/dev/null 2>&1; then
+    schema_ok=1; schema_detail="$schema_detail [schema accepted:$kv]"
+  fi
+done
+if "$HELM" template boot "$WORK/boot-noguard" --set-string parent.certManager.enabled=true >/dev/null 2>&1; then :; else
+  schema_ok=1; schema_detail="$schema_detail [schema rejected a valid value]"
+fi
+[ "$schema_ok" -eq 0 ] && check toggleschema 0 || check toggleschema 1 "$schema_detail"
+
+# 14. togglehelper — the fail guard works with the schema removed
+cp -R "$BOOTSTRAP" "$WORK/boot-noschema"
+rm -f "$WORK/boot-noschema/values.schema.json"
+helper_err="$("$HELM" template boot "$WORK/boot-noschema" --set-string parent.certManager.enabled=yes 2>&1 || true)"
+if printf '%s\n' "$helper_err" | grep -q 'parent.certManager.enabled must be a boolean'; then
+  check togglehelper 0
+else
+  check togglehelper 1 "schema-less render did not hit the _helpers.tpl guard: $(printf '%s' "$helper_err" | head -2 | tr '\n' ' ' | cut -c1-100)"
+fi
 
 # 12. subread — subscriptions must be read-only on the producer's prefix.
 # values-full.yaml has team-a-dev/app-a subscribing to team-a-tools. Its policy

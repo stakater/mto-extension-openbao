@@ -20,14 +20,17 @@
        gotemplate's TI-emission predicates exactly — toString comparisons, so a
        stringly "false" disables both sides together rather than rendering a
        Template with no TI (or worse, a TI with no Template). */ -}}
+{{- $eso := include "openbao-config-mto-bootstrap.esoMode" . }}
+{{- $certManager := include "openbao-config-mto-bootstrap.certManagerEnabled" . }}
+{{- $crossTenantPki := include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" . }}
 {{- $slices := list (dict "component" "core" "nameSuffix" "") }}
-{{- if eq (toString .Values.parent.eso) "enabled" }}
+{{- if eq $eso "enabled" }}
 {{- $slices = append $slices (dict "component" "eso" "nameSuffix" "-eso") }}
 {{- end }}
-{{- if eq (toString .Values.parent.certManager.enabled) "true" }}
+{{- if eq $certManager "true" }}
 {{- $slices = append $slices (dict "component" "certManager" "nameSuffix" "-certmanager") }}
 {{- end }}
-{{- if eq (toString .Values.crossTenantPki.enabled) "true" }}
+{{- if eq $crossTenantPki "true" }}
 {{- $slices = append $slices (dict "component" "trust" "nameSuffix" "-trust") }}
 {{- end }}
 {{- range $slice := $slices }}
@@ -57,11 +60,11 @@ spec:
     - name: baoServer
       value: {{ $.Values.parent.baoServer | quote }}
     - name: eso
-      value: {{ $.Values.parent.eso | quote }}
+      value: {{ $eso | quote }}
     - name: externalSecretRefreshInterval
       value: {{ $.Values.parent.externalSecretRefreshInterval | quote }}
     - name: ssoEnabled
-      value: {{ $.Values.parent.sso.enabled | quote }}
+      value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" $ | quote }}
     - name: ssoIssuerUrl
       value: {{ $.Values.parent.sso.issuerUrl | quote }}
     - name: sharedTenantName
@@ -76,15 +79,15 @@ spec:
     # chart renders its CA as a type=intermediate cross-ns-signed by this
     # platform CA; otherwise it keeps its self-signed root.
     - name: pkiHierarchyEnabled
-      value: {{ $.Values.platformPki.enabled | quote }}
+      value: {{ include "openbao-config-mto-bootstrap.platformPkiEnabled" $ | quote }}
     - name: platformPkiMount
       value: {{ $.Values.platformPki.mountPath | quote }}
     - name: platformPkiNamespace
       value: {{ $.Values.platformPki.openbaoNamespace | quote }}
     - name: crossTenantPkiEnabled
-      value: {{ $.Values.crossTenantPki.enabled | quote }}
+      value: {{ $crossTenantPki | quote }}
     - name: certManagerEnabled
-      value: {{ $.Values.parent.certManager.enabled | quote }}
+      value: {{ $certManager | quote }}
     - name: serviceAccounts
     - name: deployments
 {{- if eq $slice.component "core" }}

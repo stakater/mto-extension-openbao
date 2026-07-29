@@ -114,7 +114,7 @@ rules:
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
     verbs: ["get", "list", "watch", "update", "patch", "delete"]
-  {{- if eq (toString .Values.parent.eso) "enabled" }}
+  {{- if eq (include "openbao-config-mto-bootstrap.esoMode" .) "enabled" }}
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
     verbs: ["create"]
@@ -140,7 +140,7 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles", "rolebindings"]
     verbs: ["get", "list", "watch", "update", "patch", "delete"]
-  {{- if eq (toString .Values.parent.certManager.enabled) "true" }}
+  {{- if eq (include "openbao-config-mto-bootstrap.certManagerEnabled" .) "true" }}
   - apiGroups: ["cert-manager.io"]
     resources: ["issuers"]
     verbs: ["create"]
@@ -180,7 +180,7 @@ rules:
   - apiGroups: ["trust.cert-manager.io"]
     resources: ["bundles"]
     verbs: ["get", "list", "watch", "update", "patch", "delete"]
-  {{- if eq (toString .Values.crossTenantPki.enabled) "true" }}
+  {{- if eq (include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" .) "true" }}
   - apiGroups: ["trust.cert-manager.io"]
     resources: ["bundles"]
     verbs: ["create"]
@@ -204,7 +204,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.templateOperator.serviceAccountName }}
     namespace: {{ .Values.templateOperator.namespace }}
-{{- if eq (toString .Values.parent.certManager.enabled) "true" }}
+{{- if eq (include "openbao-config-mto-bootstrap.certManagerEnabled" .) "true" }}
 ---
 # Lets cert-manager mint a serviceaccount-token for the bao-cert-manager SA, so
 # it can log into bao with kubernetes auth when issuing a tenant's certificates.
