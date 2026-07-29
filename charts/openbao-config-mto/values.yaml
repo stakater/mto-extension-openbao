@@ -30,7 +30,7 @@ env: dev
 baoServer: http://openbao.openbao.svc.cluster.local:8200
 
 # Optional PEM CA bundle for the bao server cert. When set, the chart emits
-# a Secret in every workload namespace named bao-ca-bundle and adds
+# a ConfigMap in every workload namespace named bao-ca-bundle and adds
 # VAULT_CACERT to the per-SA ConfigMap pointing at the mount path. Empty
 # means trust system roots.
 baoCABundle: ""

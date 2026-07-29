@@ -33,6 +33,7 @@ Each application then opts in to what it needs by adding a few annotations to it
 - [Feature: PKI (certificates)](#feature-pki-certificates)
 - [Feature: Human SSO (OIDC login)](#feature-human-sso-oidc-login)
 - [Which auth methods the charts set up](#which-auth-methods-the-charts-set-up)
+- [Drift protection](#drift-protection)
 - [Configuration](#configuration)
 - [Going to production](#going-to-production)
 
@@ -103,6 +104,20 @@ emitting that render, then set it back. Do not delete the render's
 cannot finish: the objects it created are removed, but the name stays held by a
 terminating `TemplateInstance` that the bootstrap cannot replace, and that
 render stays down until the value is toggled.
+
+**Turning an integration off leaves its permissions in place.** The bootstrap
+`ClusterRole` gates only `create` on an integration's object kinds; read,
+update and delete stay granted whether the integration is on or off. That is
+deliberate. Turning an integration off in one `helm upgrade` removes its
+render and rewrites the `ClusterRole` at the same moment, but the objects the
+render created are cleaned up *afterwards* — and that cleanup needs to list
+them, remove a finalizer from each, and delete them. Revoking those verbs
+together with the toggle wedges the cleanup permanently: the render sticks in
+`Terminating`, and every object it created is left behind holding a finalizer
+that nothing will ever remove. Gating `create` alone keeps the property worth
+having — a cluster with an integration off cannot be made to mint new
+`Issuer`s, `Bundle`s, `SecretStore`s, `ServiceAccount`s or RBAC — while
+letting cleanup finish.
 
 **Tenant name length.** The render's name is stamped as a label on every
 object it produces, and Kubernetes caps label values at 63 characters. That
@@ -636,11 +651,47 @@ spec:
   issuerRef:
     name: team-a-svc          # the Issuer the chart created
     kind: Issuer
+  commonName: web.team-a-api.svc.cluster.local   # required — see below
   dnsNames:
     - web.team-a-api.svc.cluster.local
 ```
 
+`commonName` is not optional here. The tenant's PKI role keeps OpenBao's
+default `require_cn`, so a `Certificate` with only `dnsNames` is refused at
+signing time — the `Certificate` sits at `Ready=False`, and the reason is on
+the `CertificateRequest`, not the `Certificate`:
+
+```text
+kubectl describe certificaterequest -n team-a-api
+  ... the common_name field is required, or must be provided in a CSR with
+      "use_csr_common_name" set to true, unless "require_cn" is set to false
+```
+
 cert-manager logs into OpenBao with its own identity, so the workload does **not** need the `bao.stakater.com/pki` annotation here. cert-manager also generates the private key **inside the cluster** and only sends a CSR to OpenBao — the key never leaves your cluster (the same best practice as `sign`, below).
+
+**Where cert-manager's permission comes from.** To log into OpenBao,
+cert-manager mints a short-lived token for the `bao-cert-manager` ServiceAccount
+in the workload namespace. The bootstrap chart defines that permission once, as
+a `ClusterRole` named `bao-cert-manager-token-create`, and the `.certmanager`
+render binds it per namespace with an ordinary `RoleBinding`. A `RoleBinding`
+grants a `ClusterRole`'s rules **only inside its own namespace**, so
+cert-manager can mint that one token in the namespaces that opted into PKI and
+nowhere else — and `resourceNames` pins it to the `bao-cert-manager`
+ServiceAccount alone, not to every ServiceAccount in those namespaces.
+
+The definition has to sit in the bootstrap chart rather than in the render.
+template-operator-v2 checks an entire render against the cluster before applying
+any of it, and that check never writes anything — so a `Role` shipped alongside
+its own `RoleBinding` does not exist at the moment Kubernetes resolves the
+binding's `roleRef`. The binding is rejected, the whole render is abandoned, and
+the `Role` that would have unblocked it never gets written. Kubernetes treats
+this as working as designed ([kubernetes/kubectl#1575](https://github.com/kubernetes/kubectl/issues/1575)),
+so the chart works around it by having helm — which runs as a cluster admin and
+writes for real — create the definition up front.
+
+Installing the per-tenant chart standalone (`component: all`) keeps a plain
+namespaced `Role` instead, because helm writes it for real and there is no
+check to fail.
 
 **2. Directly from OpenBao.** Add `bao.stakater.com/pki: "true"` to the ServiceAccount. The ConfigMap then gives the workload two endpoints, and **which one you use matters for security**:
 
@@ -812,9 +863,77 @@ The operator itself can manage JWT and cert login too, but the charts don't gene
 
 ---
 
+## Drift protection
+
+The bootstrap chart turns on template-operator-v2's drift protection (`sync.mode: revert`, the chart's default — template-operator-v2's own default is `off`) for everything the Templates render: the per-tenant OpenBao resources, the `bao-config-<sa>` ConfigMaps, the ESO stores, and so on.
+
+**Minimum version: template-operator-v2 ≥ 0.0.5** — the chart's child TemplateInstances need `namespaceSelector`, which released CRDs carry only from 0.0.5. `spec.sync` itself exists since 0.0.3; on a pre-0.0.3 install the API server silently prunes the block (the chart installs cleanly and drift protection is simply absent). `strict` was verified working on 0.0.5; see the `strict` notes below.
+
+**The enforcement webhook fails closed, in every mode.** template-operator-v2 installs a cluster-wide `sync-enforcement` ValidatingWebhookConfiguration with `failurePolicy: Fail`, and its CEL `matchConditions` select on the `templates.v2.stakater.com/instance` label — not on `sync.mode`. The mode check lives inside the handler, which never runs when the operator pod is unreachable. So while template-operator-v2 is down, every update and delete of a rendered resource is refused whatever mode you set:
+
+```text
+Error from server (InternalError): failed calling webhook
+"sync-enforcement.templates.v2.stakater.com": no endpoints available
+```
+
+The flip side is that rendered resources cannot drift during an outage either — edits, key additions, deletes, and removing the ownership label are all refused — so no window exists in which drift accumulates unwatched. Verified with `sync.mode: revert` and template-operator-v2 scaled to zero. This is not a cost `strict` introduces; `revert` and `off` already pay it.
+
+**What it does.**
+
+- If someone edits a rendered resource out of band — say, changes a value in a `bao-config-<sa>` ConfigMap — template-operator-v2 notices and puts it back within seconds. Each revert leaves a `Drift detected` line in the template-operator-v2 logs.
+- If a rendered resource is missing entirely, it is recreated immediately — the deletion event itself triggers the re-apply.
+- Every per-tenant render reports a `Synced` condition — `True` means the drift watches are active, not that no drift has ever occurred. It is aggregated per tenant on the parent (with `sync.mode: off` the condition doesn't exist, so `tiSynced` reads empty):
+
+  ```bash
+  kubectl -n mto-extension-openbao-system get ti openbao-config-mto-parent \
+    -o jsonpath='{.status.outputs}'   # tiSynced per tenant
+  ```
+
+**What it does not do.**
+
+- **A direct delete does not come back on its own.** Rendered resources carry a template-operator-v2 finalizer in every mode (`off` included), so `kubectl delete` leaves the object stuck in `Terminating` instead of removing it — its data keeps being served, but it is not recreated fresh. To force a clean recreate, remove the finalizer; the delete then completes and the resource is recreated immediately:
+
+  ```bash
+  kubectl -n team-a-api patch cm bao-config-web --type=merge \
+    -p '{"metadata":{"finalizers":null}}'
+  ```
+
+- **Deleting a per-tenant `TemplateInstance` is not blocked.** That removes the tenant's whole rendered config — `revert` has no admission webhook; only `strict` blocks deletes.
+- The bootstrap chart's own resources (the Templates, the parent `TemplateInstance`, RBAC, the platform PKI) are managed by helm/GitOps, not by sync.
+
+**Turning it off.** Set `sync.mode: off` in the bootstrap values. The Templates are then rendered without a `spec.sync` block.
+
+**Upgrading from 0.3.x.** A plain `helm upgrade` turns drift protection on — `revert` is the chart's default. If anyone has been hand-editing rendered resources and relying on those edits sticking, they stop sticking at that moment. Set `sync.mode: off` in your values alongside the upgrade to keep the old behavior.
+
+**About `strict`.** `strict` adds an admission webhook that blocks updates and deletes of rendered resources by anyone other than template-operator-v2 itself (the webhook exempts exactly one identity — template-operator-v2's own ServiceAccount, configured at operator startup; there is no user-facing allowlist). Before enabling it, know that:
+
+- The webhook registers for UPDATE and DELETE on `*` with `failurePolicy: Fail`, narrowed by a CEL `matchConditions` guard to objects carrying the `templates.v2.stakater.com/instance` label. Creates are unaffected, and unlabelled objects are not intercepted. (This webhook is installed regardless of the mode you choose — see the fails-closed note above.) Confirm the guard is present on your install before enabling: `kubectl get validatingwebhookconfiguration <name> -o jsonpath='{.webhooks[0].matchConditions}'` — an empty result means interception is cluster-wide.
+- The guard also evaluates `oldObject`, so removing the ownership label to escape enforcement is itself blocked.
+- Subresources are not intercepted (`*` does not match `*/status`), so controllers that only write status — including the OpenBao operator — are unaffected.
+- You must set `sync.ignoreFields: ["metadata.finalizers"]` so the OpenBao operator can add its finalizers to the rendered CRs. Without it, every newly rendered CR sticks at `Ready=False` with the operator's finalizer patch denied. **Note the cost:** that entry exempts the whole finalizers array from enforcement, so anyone with `patch` on a rendered resource can replace it — dropping template-operator-v2's own finalizer and adding one no controller will ever clear, which makes the object permanently undeletable. template-operator-v2 restores its finalizer only on the next real re-apply.
+- **Deleting a namespace that holds rendered resources can wedge it.** DELETE is refused unless the owning TemplateInstance is itself being deleted, so the namespace controller's cleanup of a rendered ConfigMap or CR is denied and the namespace can sit in `Terminating`. Delete the per-tenant TemplateInstance first. `revert` is unaffected — it has no admission enforcement at all.
+
+Test on a non-production cluster first.
+
+**RBAC note.** The bootstrap chart grants template-operator-v2's ServiceAccount cluster-wide access to every kind the per-tenant chart can render, and `create` on `serviceaccounts/token` limited to ServiceAccounts named `bao-cert-manager` (Kubernetes escalation rules require a covering grant to create the per-tenant cert-manager token Role; the limit keeps template-operator-v2 from minting tokens for any other ServiceAccount). Two grants are deliberately absent or conditional:
+
+- **Secrets: `delete` only.** The chart renders no Secret — `bao-ca-bundle` is a ConfigMap, because a CA bundle is a public certificate. No `create`, `update`, or `patch` is granted; cluster-wide Secret write is the largest grant this chart could hand out. The lone `delete` exists so the legacy-Secret upgrade below can converge. (template-operator-v2's own `secret-reader` ClusterRole grants `get`/`list`/`watch` on Secrets independently of this chart.)
+- **ESO access only when `parent.eso: enabled`.** The `secretstores`/`externalsecrets` rule is gated on the same switch that decides whether those resources are rendered.
+
+Installs that already run template-operator-v2 with its cluster-admin binding gain nothing new from these grants.
+
+**Upgrading from a release that rendered `bao-ca-bundle` as a Secret.** Only affects installs that set `baoCABundle` — it is empty by default. The new ConfigMap is created normally, but the old Secret is left behind: template-operator-v2 issues the delete, then cannot strip its own finalizer without Secret `update`, so the object sits in `Terminating` and the operator retries in the background. Nothing surfaces on the TemplateInstance — all conditions stay `True`, so this is log-only. Clear it once per workload namespace:
+
+```bash
+kubectl -n <workload-ns> patch secret bao-ca-bundle --type=merge \
+  -p '{"metadata":{"finalizers":null}}'
+```
+
+---
+
 ## Configuration
 
-- Cluster-wide defaults: [`openbao-config-mto-bootstrap/values.yaml`](openbao-config-mto-bootstrap/values.yaml) (under `parent.*` and `platformPki.*`).
+- Cluster-wide defaults: [`openbao-config-mto-bootstrap/values.yaml`](openbao-config-mto-bootstrap/values.yaml) (under `parent.*`, `platformPki.*`, and `sync.*` — see [Drift protection](#drift-protection)).
 - Per-tenant engine settings: [`openbao-config-mto/values.yaml`](openbao-config-mto/values.yaml) (KV tiers, `transit.*`, `pki.*`, `sso.*`).
 
 Both files have comments on every setting.
@@ -825,6 +944,7 @@ Both files have comments on every setting.
 
 A few defaults are tuned for trying things out, not for production:
 
+- **Operator credentials.** The operator deployment defaults to Kubernetes auth: the operator logs into OpenBao with its own ServiceAccount and stores no token anywhere. This needs a one-time bootstrap per OpenBao server (auth mount + policy + role) — see the [operator README](../README.md#openbao-authentication). Never give the operator the root token; the legacy static-token mode (`BAO_AUTH_METHOD=token` + a `VAULT_TOKEN` env) exists only for local development and migration.
 - **Use TLS.** Set `baoServer` to an `https://` address. If OpenBao uses a private CA, also set `baoCABundle`.
 - **Token lifetimes.** Workload tokens default to 1h / 4h max (`token.*`); SSO tokens to 15m / 1h (`ssoToken.*`). Shorten high-privilege tiers if your IdP can't revoke tokens.
 - **Secret refresh.** `externalSecretRefreshInterval` defaults to `1h`. Lower values mean more frequent OpenBao logins.

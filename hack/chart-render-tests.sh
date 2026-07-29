@@ -10,7 +10,8 @@
 #   2. disjoint    — no object is emitted by two slices, so two
 #                    TemplateInstances never fight over one object via SSA.
 #   3. union       — the four slices together emit exactly the all set (no
-#                    block gated into zero components).
+#                    block gated into zero components), minus one recorded
+#                    standalone-only object; see the check for why.
 #   4. exclusivity — each optional operator's apiVersions appear only in
 #                    their own slice.
 #   5. empty       — certManager slice with zero PKI opt-ins renders zero
@@ -23,6 +24,26 @@
 #   8. namebudget  — sliced renders fail with the budget table when the tenant
 #                    name would push the implied TI name past the 63-char
 #                    label-value cap; component=all is exempt.
+#   9. templateset — the bootstrap installs a child Template for exactly the
+#                    enabled components, and every templateRef the parent
+#                    emits resolves to one of them. Guards both directions: a
+#                    Template with no TI is a standing chart-pull cost, a TI
+#                    with no Template is a broken tenant.
+#  10. rbacscope   — `create` on each optional integration's kinds exists only
+#                    while its toggle is on. template-operator-v2 renders
+#                    arbitrary charts, so every grant it holds is reachable by
+#                    anything templated through it; cluster-scoped Bundles in
+#                    particular cannot be narrowed any other way.
+#  11. rbacteardown — the counterweight: the verbs the TI finalizer needs to
+#                    reap a slice's objects are granted regardless of any
+#                    toggle. Gating them alongside `create` orphans every
+#                    object the slice created when the toggle goes off.
+#  12. subread    — a subscribe-to-ns grant is read-only on the PRODUCING
+#                    namespace's prefix, on the metadata path as well as the
+#                    data path. KV v2 metadata is not a read-only view: update
+#                    sets delete_version_after/max_versions and delete removes
+#                    every version, so a subscriber carrying its own tier caps
+#                    here can destroy secrets it should only read.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -95,10 +116,24 @@ done
 [ -z "$overlap" ] && check disjoint 0 || check disjoint 1 "emitted by two slices: $overlap"
 
 # 3. union
-sort $(for c in $SLICES; do echo "$WORK/$c.ids"; done) > "$WORK/union.ids"
-diff "$WORK/union.ids" "$WORK/all.ids" > /dev/null \
-  && check union 0 \
-  || check union 1 "slices ∪ ≠ all: $(diff "$WORK/union.ids" "$WORK/all.ids" | head -4 | tr '\n' ' ')"
+# One object is deliberately standalone-only, so it is excluded from both sides
+# rather than allowed to mask a real gap: the per-namespace Role backing
+# bao-cert-manager's token-create permission. Under the operator that permission
+# is defined once as a ClusterRole by the bootstrap chart and only bound by the
+# certManager slice, because a Role rendered next to its own RoleBinding can
+# never pass template-operator-v2's dry-run (see 10-cert-manager-issuer.yaml).
+# component=all has no dry-run and no bootstrap chart, so it keeps the Role.
+# Anything else diverging between the two paths still fails this check.
+STANDALONE_ONLY='\|Role\|[^|]*\|bao-cert-manager-token-create$'
+grep -vE "$STANDALONE_ONLY" "$WORK/all.ids" > "$WORK/all.union-cmp"
+sort $(for c in $SLICES; do echo "$WORK/$c.ids"; done) | grep -vE "$STANDALONE_ONLY" > "$WORK/union.ids"
+if [ "$(grep -cE "$STANDALONE_ONLY" "$WORK/all.ids")" -eq 0 ]; then
+  check union 1 "the standalone-only Role is gone from component=all — drop the exclusion above"
+else
+  diff "$WORK/union.ids" "$WORK/all.union-cmp" > /dev/null \
+    && check union 0 \
+    || check union 1 "slices ∪ ≠ all: $(diff "$WORK/union.ids" "$WORK/all.union-cmp" | head -4 | tr '\n' ' ')"
+fi
 
 # 4. exclusivity — optional apiVersion groups appear only in their own slice
 exclusivity_ok=0
@@ -213,5 +248,117 @@ fi
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set-string "tenant=$LONG_TENANT" > /dev/null 2>&1 \
   && check namebudget-all-exempt 0 \
   || check namebudget-all-exempt 1 "component=all must not enforce the TI budget (standalone use)"
+
+# 9. templateset — the installed child Templates match the enabled components,
+# and every templateRef the parent emits resolves to an installed Template.
+tset() { # tset <eso> <certManager> <crossTenantPki> -> sorted Template names
+  "$HELM" template boot "$BOOTSTRAP" -n "$NS" \
+    --set-string "parent.eso=$1" \
+    --set-string "parent.certManager.enabled=$2" \
+    --set-string "crossTenantPki.enabled=$3" \
+    | "$YQ" 'select(.kind == "Template") | .metadata.name' - | grep -v '^---$' | sort
+}
+
+templateset_case() { # templateset_case <name> <eso> <cm> <ct> <expected...>
+  local name="$1" eso="$2" cm="$3" ct="$4"; shift 4
+  local got expected refs missing
+  got="$(tset "$eso" "$cm" "$ct")"
+  expected="$(printf '%s\n' "$@" openbao-config-mto-parent | sort)"
+  if [ "$got" != "$expected" ]; then
+    check "templateset:$name" 1 "Templates were [$(echo "$got" | tr '\n' ' ')], want [$(echo "$expected" | tr '\n' ' ')]"
+    return
+  fi
+  # Every templateRef the parent emits for this toggle set must be installed.
+  refs="$(emit "$eso" "$cm" "$ct" | sed 's/.*->//' | sort -u)"
+  missing="$(comm -23 <(printf '%s\n' "$refs") <(printf '%s\n' "$got"))"
+  [ -z "$missing" ] \
+    && check "templateset:$name" 0 \
+    || check "templateset:$name" 1 "parent emits TIs referencing absent Templates: $(echo "$missing" | tr '\n' ' ')"
+}
+
+rbac_rules() { # rbac_rules <eso> <certManager> <crossTenantPki> -> "group/resources -> verbs"
+  "$HELM" template boot "$BOOTSTRAP" -n "$NS" \
+    --set-string "parent.eso=$1" \
+    --set-string "parent.certManager.enabled=$2" \
+    --set-string "crossTenantPki.enabled=$3" \
+    | "$YQ" 'select(.kind == "ClusterRole" and .metadata.name == "openbao-config-mto-manager")
+             | .rules[] | ((.apiGroups[0] // "core") + "/" + (.resources | join(",")) + " -> " + (.verbs | join(",")))' - \
+    | sort -u
+}
+
+# `create` on a kind that only an optional integration renders must exist only
+# while that integration is switched on. Anything here that survives its toggle
+# being off lets an engine that renders arbitrary charts mint new Issuers,
+# Bundles, SecretStores, ServiceAccounts or RBAC cluster-wide.
+# Keys are "<apiGroup>/<resources> -> <verbs>"; the core group renders empty,
+# so its keys start with "/".
+OPTIONAL_CREATE_GRANTS='external-secrets.io/secretstores,externalsecrets -> create
+cert-manager.io/issuers -> create
+trust.cert-manager.io/bundles -> create
+rbac.authorization.k8s.io/rolebindings -> create
+/serviceaccounts/token -> create
+/serviceaccounts -> create'
+
+# The mirror image, and the reason the gating above is create-only: these must
+# be granted REGARDLESS of any toggle. Turning an integration off in one helm
+# upgrade removes the child Template and rewrites this ClusterRole at the same
+# time, but template-operator-v2 reaps the slice's objects afterwards — its TI
+# finalizer lists them, patches its own finalizer off each one, and deletes
+# them. Revoking these alongside the toggle wedges that finalizer on Forbidden
+# forever: TI stuck Terminating, child Template unable to finalize behind it,
+# and every object the slice created orphaned with a finalizer nothing will
+# remove. Recovery needs a hand-applied ClusterRole.
+TEARDOWN_GRANTS='external-secrets.io/secretstores,externalsecrets -> get,list,watch,update,patch,delete
+cert-manager.io/issuers -> get,list,watch,update,patch,delete
+trust.cert-manager.io/bundles -> get,list,watch,update,patch,delete
+rbac.authorization.k8s.io/roles,rolebindings -> get,list,watch,update,patch,delete
+/serviceaccounts -> update,patch,delete'
+
+grants_case() { # grants_case <test> <name> <eso> <cm> <ct> <present|absent> <grantlist>
+  local test="$1" name="$2" eso="$3" cm="$4" ct="$5" mode="$6" list="$7"
+  local got wrong=""
+  got="$(rbac_rules "$eso" "$cm" "$ct")"
+  while IFS= read -r g; do
+    [ -z "$g" ] && continue
+    if printf '%s\n' "$got" | grep -qF "$g"; then
+      [ "$mode" = absent ] && wrong="$wrong [granted:$g]"
+    else
+      [ "$mode" = present ] && wrong="$wrong [missing:$g]"
+    fi
+  done <<EOF
+$list
+EOF
+  [ -z "$wrong" ] \
+    && check "$test:$name" 0 \
+    || check "$test:$name" 1 "expected $mode, but:$wrong"
+}
+
+grants_case rbacscope all-off disabled false false absent  "$OPTIONAL_CREATE_GRANTS"
+grants_case rbacscope all-on  enabled  true  true  present "$OPTIONAL_CREATE_GRANTS"
+
+grants_case rbacteardown all-off disabled false false present "$TEARDOWN_GRANTS"
+grants_case rbacteardown all-on  enabled  true  true  present "$TEARDOWN_GRANTS"
+
+# 12. subread — subscriptions must be read-only on the producer's prefix.
+# values-full.yaml has team-a-dev/app-a subscribing to team-a-tools. Its policy
+# must not carry a write/delete verb on from-team-a-tools; its OWN from-team-a-dev
+# prefix must keep them, which is what stops this passing vacuously.
+subread_policy="$("$YQ" ea 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-a-editor") | .spec.policy' "$WORK/core.yaml")"
+sub_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-tools/' || true)"
+own_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-dev/' | grep -c 'create' || true)"
+if [ -z "$sub_line" ]; then
+  check subread 1 "no subscribed-namespace metadata rule found — fixture drifted"
+elif printf '%s\n' "$sub_line" | grep -qE '"(create|update|delete)"'; then
+  check subread 1 "subscription grants write on the producer's metadata: $(printf '%s' "$sub_line" | tr -s ' ')"
+elif [ "$own_line" -eq 0 ]; then
+  check subread 1 "own-namespace metadata lost its write caps — test would pass vacuously"
+else
+  check subread 0
+fi
+
+templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
+templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust
+templateset_case all-off   disabled false false openbao-config-mto
+templateset_case trust-only disabled false true openbao-config-mto openbao-config-mto-trust
 
 exit "$fail"

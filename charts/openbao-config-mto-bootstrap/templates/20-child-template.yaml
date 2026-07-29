@@ -13,11 +13,24 @@
 # must be set as a chart-level value at chart-package or chart-pull time
 # (or via a separate overlay). See the chart README → "Going to prod →
 # bao HTTPS".
-{{- range $slice := list
-  (dict "component" "core" "nameSuffix" "")
-  (dict "component" "eso" "nameSuffix" "-eso")
-  (dict "component" "certManager" "nameSuffix" "-certmanager")
-  (dict "component" "trust" "nameSuffix" "-trust") }}
+{{- /* Only enabled components get a Template. template-operator-v2 re-validates
+       every Template on a timer by pulling the chart and dry-run rendering it,
+       so an unused Template is a standing chart-pull cost for a slice no
+       TemplateInstance references. The predicates below must match the parent
+       gotemplate's TI-emission predicates exactly — toString comparisons, so a
+       stringly "false" disables both sides together rather than rendering a
+       Template with no TI (or worse, a TI with no Template). */ -}}
+{{- $slices := list (dict "component" "core" "nameSuffix" "") }}
+{{- if eq (toString .Values.parent.eso) "enabled" }}
+{{- $slices = append $slices (dict "component" "eso" "nameSuffix" "-eso") }}
+{{- end }}
+{{- if eq (toString .Values.parent.certManager.enabled) "true" }}
+{{- $slices = append $slices (dict "component" "certManager" "nameSuffix" "-certmanager") }}
+{{- end }}
+{{- if eq (toString .Values.crossTenantPki.enabled) "true" }}
+{{- $slices = append $slices (dict "component" "trust" "nameSuffix" "-trust") }}
+{{- end }}
+{{- range $slice := $slices }}
 ---
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: Template
@@ -30,6 +43,10 @@ spec:
       allow:
         literal:
           - {{ $.Values.operatorNamespace }}
+  {{- /* $ , not . — the slice range above shadows the root context. */}}
+  {{- with include "openbao-config-mto-bootstrap.templateSync" $ }}
+  {{- . | nindent 2 }}
+  {{- end }}
   parameters:
     - name: tenant
       required: true

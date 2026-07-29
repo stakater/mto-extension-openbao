@@ -111,14 +111,26 @@ spec:
     path "kv/data/{{ $env }}/_shared/from-{{ $saNs }}/*"     { capabilities = ["read", "list"] }
     {{- end }}
     path "kv/metadata/{{ $env }}/_shared/from-{{ $saNs }}/*" { capabilities = {{ $caps }} }
+    {{- /* Subscriptions are READ-ONLY on the producing namespace's prefix, on
+           BOTH the data and the metadata path. The subscriber's own tier caps
+           must not be used here: in KV v2 the metadata endpoint is not a
+           read-only view of the secret, it is where the secret's lifecycle
+           lives. `update` sets max_versions / delete_version_after /
+           cas_required — enough to destroy the producer's version history or
+           break its writes — and `delete` removes the secret and every version
+           outright. Granting an admin-tier subscriber its full caps here let it
+           permanently destroy secrets belonging to a namespace it merely reads
+           from. Own-namespace prefixes above keep full caps; those are the
+           subscriber's own data. */ -}}
     {{- if $subscribeRaw }}
+    {{- $subCaps := ternary "[\"list\"]" "[\"read\", \"list\"]" (eq $tier "audit-read") }}
     {{- range $subNs := splitList "," $subscribeRaw }}
     {{- $subNs = trim $subNs }}
     {{- if $subNs }}
     {{- if ne $tier "audit-read" }}
     path "kv/data/{{ $env }}/_shared/from-{{ $subNs }}/*"     { capabilities = ["read", "list"] }
     {{- end }}
-    path "kv/metadata/{{ $env }}/_shared/from-{{ $subNs }}/*" { capabilities = {{ $caps }} }
+    path "kv/metadata/{{ $env }}/_shared/from-{{ $subNs }}/*" { capabilities = {{ $subCaps }} }
     {{- end }}
     {{- end }}
     {{- end }}
@@ -295,15 +307,18 @@ data:
   {{- end }}
 {{- if $.Values.baoCABundle }}
 ---
+{{- /* A CA bundle is a public certificate, so it ships as a ConfigMap — the
+       same shape as kube-root-ca.crt and as the trust-manager Bundle target in
+       11-pki-cross-tenant-trust.yaml. Keeping it out of a Secret is what lets
+       the bootstrap ClusterRole omit Secret write access. */ -}}
 apiVersion: v1
-kind: Secret
+kind: ConfigMap
 metadata:
   name: bao-ca-bundle
   namespace: {{ $saNs }}
   labels:
     {{- $labels | nindent 4 }}
-type: Opaque
-stringData:
+data:
   ca.crt: |
 {{ $.Values.baoCABundle | indent 4 }}
 {{- end }}

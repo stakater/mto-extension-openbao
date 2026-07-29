@@ -44,11 +44,11 @@ to bao directly via its own dedicated SA.
 
 {{- /* Unique workload namespaces across the tenant. */ -}}
 {{- $namespaces := dict }}
-{{- range $sa := .Values.serviceAccounts }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $ns := dig "metadata" "namespace" "" $sa }}
 {{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
 {{- end }}
-{{- range $d := .Values.deployments }}
+{{- range $d := (ternary .Values.deployments (list) (kindIs "slice" .Values.deployments)) }}
 {{- $ns := dig "metadata" "namespace" "" $d }}
 {{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
 {{- end }}

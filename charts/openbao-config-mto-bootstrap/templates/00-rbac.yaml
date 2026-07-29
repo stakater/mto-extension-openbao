@@ -4,9 +4,22 @@
 #   - CRUD TemplateInstance (parent renders child TIs)
 #   - CRUD OpenBao* CRs (child renders the per-tenant scaffolding)
 #   - read ServiceAccounts + Deployments (workload discovery via the
-#     child Template's namespaceSelector-scoped objectFieldRefs)
+#     child Template's namespaceSelector-scoped objectFieldRefs; the SA
+#     read verbs are needed independently of the render-driven CRUD below)
 #   - CRUD ConfigMaps (per-SA bao-env ConfigMap emitted by the tenant chart)
-#   - CRUD SecretStores + ExternalSecrets (ESO integration)
+#   - CRUD the remaining kinds the tenant chart can render (ServiceAccounts,
+#     Roles/RoleBindings, Issuers, Bundles, SecretStores, ExternalSecrets,
+#     NetworkPolicies, PrometheusRules) — apply + spec.sync drift watches
+#     without the upstream cluster-admin binding
+#   - DELETE Secrets only, purely so a legacy-Secret upgrade converges (see
+#     the rule comment)
+#   - CREATE serviceaccounts/token (escalation-prevention covering grant;
+#     see the rule comment below)
+#
+# Kinds that belong to an optional integration are granted in two parts: the
+# reap verbs (get/list/watch/update/patch/delete) unconditionally, and `create`
+# only while that integration's toggle is on. Gating the whole block deadlocks
+# teardown — see the comment above the external-secrets rule.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -52,6 +65,10 @@ rules:
       - openbaopkisecretengineconfigs
       - openbaopkisecretengineroles
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The child Templates resolve workload ServiceAccounts through
+  # namespaceSelector-scoped objectFieldRefs, which needs read access
+  # independently of any toggle. bao-cert-manager is the only ServiceAccount
+  # any slice renders, so the write verbs sit in the certManager blocks below.
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch"]
@@ -61,11 +78,118 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # The tenant chart renders no Secret — the bao CA bundle is a public
+  # certificate and ships as a ConfigMap. `delete` is the only Secret verb
+  # granted, and it exists solely so that upgrading from a release that did
+  # render `bao-ca-bundle` as a Secret can converge: template-operator-v2
+  # reaps resources that leave the render set, and without `delete` the reap
+  # returns Forbidden rather than NotFound, so it never confirms the object is
+  # gone and requeues forever. Fully automatic reaping would additionally need
+  # `update` (to strip template-operator-v2's own finalizer); that is withheld
+  # deliberately, because `update` on Secrets cluster-wide is the largest grant
+  # this chart could hand out. The trade is one manual finalizer strip per
+  # workload namespace on that upgrade — see the chart README. Read verbs are
+  # absent because template-operator-v2's own secret-reader ClusterRole already
+  # grants get/list/watch independently of this chart.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["delete"]
+  # Only `create` is toggle-gated. Everything else an optional integration
+  # needs is granted unconditionally, because template-operator-v2 reaps a
+  # slice's objects *after* the toggle flips: turning an integration off in
+  # one `helm upgrade` both removes the child Template (so the parent stops
+  # emitting the TI) and rewrites this ClusterRole. The TI then enters
+  # deletion and its finalizer has to list the owned objects, patch its own
+  # `template-instance-resource` finalizer off each one, and delete them. If
+  # the upgrade had already revoked list/patch/delete, that finalizer fails
+  # Forbidden forever: the TI is stuck Terminating, the child Template can't
+  # finalize while a TI references it, and every object the slice created is
+  # orphaned with a finalizer nothing will ever remove. Recovering needs a
+  # hand-applied ClusterRole. Gating `create` alone keeps the property that
+  # actually matters — a cluster with the integration off cannot be made to
+  # mint new Issuers, Bundles, SecretStores, ServiceAccounts or RBAC — while
+  # leaving teardown able to complete. The residual standing grant is
+  # tamper/delete on objects of these kinds that already exist; see the chart
+  # README.
   - apiGroups: ["external-secrets.io"]
     resources: ["secretstores", "externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  {{- if eq (toString .Values.parent.eso) "enabled" }}
+  - apiGroups: ["external-secrets.io"]
+    resources: ["secretstores", "externalsecrets"]
+    verbs: ["create"]
+  {{- end }}
   - apiGroups: ["templates.v2.stakater.com"]
     resources: ["templateinstances"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Issuers, the bao-cert-manager ServiceAccount and the Role/RoleBinding pair
+  # are rendered by the .certmanager slice and by nothing else. Same create-only
+  # gating as above, for the same teardown reason.
+  - apiGroups: ["cert-manager.io"]
+    resources: ["issuers"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["update", "patch", "delete"]
+  # `roles` gets no `create`, in any configuration: the tenant chart renders no
+  # Role when driven by the operator — the bao-cert-manager-token-create rules
+  # are defined once as a ClusterRole below and merely bound per namespace. The
+  # reap verbs stay so that upgrading from a release that DID render a per-
+  # namespace Role converges: those Roles leave the render set and have to be
+  # deleted, finalizer and all.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  {{- if eq (toString .Values.parent.certManager.enabled) "true" }}
+  - apiGroups: ["cert-manager.io"]
+    resources: ["issuers"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["create"]
+  # Escalation prevention: creating a RoleBinding is denied unless the creator
+  # holds every permission the referenced role grants (or the bind/escalate
+  # verbs, which are deliberately not granted here — see the tenant chart's
+  # 10-cert-manager-issuer.yaml for why `bind` was rejected). The ClusterRole
+  # below grants create on serviceaccounts/token scoped to resourceNames
+  # ["bao-cert-manager"], and the escalation check accepts a covering grant with
+  # the same scope — which is this rule. Keep the resourceNames on both:
+  # unscoped token-create would let this ServiceAccount mint a token for ANY
+  # ServiceAccount, including cluster-admin-bound ones.
+  #
+  # This rule is create-only, so unlike the blocks above it disappears entirely
+  # when the toggle is off; nothing in teardown needs it.
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["bao-cert-manager"]
+    verbs: ["create"]
+  {{- end }}
+  # trust-manager Bundles are CLUSTER-SCOPED, so this grant cannot be limited to
+  # a namespace, and resourceNames cannot narrow it either: the names are
+  # per-tenant and discovered at runtime, and create/list/watch are not
+  # name-restrictable by RBAC in any case. Toggle-gating `create` is the only
+  # reduction available — a cluster that does not use cross-tenant PKI trust
+  # cannot be made to mint a Bundle, which is the injection this grant is
+  # dangerous for: a Bundle's target is a cluster-wide namespaceSelector, so
+  # creating one distributes a CA wherever the creator chooses. Where the
+  # feature IS on, the blast radius is bounded by the rendered Bundle's target
+  # namespaceSelector rather than by RBAC; see the chart README.
+  - apiGroups: ["trust.cert-manager.io"]
+    resources: ["bundles"]
+    verbs: ["get", "list", "watch", "update", "patch", "delete"]
+  {{- if eq (toString .Values.crossTenantPki.enabled) "true" }}
+  - apiGroups: ["trust.cert-manager.io"]
+    resources: ["bundles"]
+    verbs: ["create"]
+  {{- end }}
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["prometheusrules"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -80,3 +204,35 @@ subjects:
   - kind: ServiceAccount
     name: {{ .Values.templateOperator.serviceAccountName }}
     namespace: {{ .Values.templateOperator.namespace }}
+{{- if eq (toString .Values.parent.certManager.enabled) "true" }}
+---
+# Lets cert-manager mint a serviceaccount-token for the bao-cert-manager SA, so
+# it can log into bao with kubernetes auth when issuing a tenant's certificates.
+#
+# This grants NOTHING on its own — a ClusterRole is a definition, not access.
+# The tenant chart's .certmanager slice binds it with a namespaced RoleBinding
+# per workload namespace, and a RoleBinding confers a ClusterRole's rules only
+# inside its own namespace. So cert-manager ends up able to mint a token for
+# bao-cert-manager in exactly the namespaces that opted into PKI, and nowhere
+# else — the same reach a per-namespace Role gave, defined once instead of N
+# times.
+#
+# It lives here, in the chart a cluster admin installs with helm, rather than in
+# the render, because template-operator-v2 dry-runs a whole render before
+# applying any of it and a dry-run never persists: a Role rendered next to its
+# RoleBinding does not exist when Kubernetes checks the roleRef, so the binding
+# is rejected and the render can never apply. See the long comment in the tenant
+# chart's 10-cert-manager-issuer.yaml.
+#
+# resourceNames is load-bearing. Without it this would let cert-manager mint a
+# token for ANY ServiceAccount in those namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bao-cert-manager-token-create
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: ["bao-cert-manager"]
+    verbs: ["create"]
+{{- end }}
