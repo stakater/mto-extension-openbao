@@ -8,7 +8,7 @@
 # Namespace where the operator + bootstrap CRs (Templates, TI, RBAC,
 # token-reviewer Secret) live. Must match the OpenBao config operator
 # install namespace.
-operatorNamespace: mto-extension-openbao-system
+operatorNamespace: openbao-config-operator-system
 
 # t-op-v2 install identity. The ClusterRoles in this chart bind to the
 # t-op-v2 controller's ServiceAccount; defaults match the upstream
