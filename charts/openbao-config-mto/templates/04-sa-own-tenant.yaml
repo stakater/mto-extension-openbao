@@ -55,10 +55,10 @@ Per-SA opt-ins:
 {{- /* Fall back to defaultCapability when SA omits the tier annotation. */ -}}
 {{- $tier := $rawTier }}
 {{- if not $tier }}{{ $tier = $.Values.defaultCapability }}{{ end }}
-{{- /* A tier outside tierCaps (typo, or super-admin which is SSO-only) makes the
-       caps lookup nil and the SA is silently skipped — a workload denied access
-       with no signal. Fail loudly instead, matching subscribe-to-ns. "none" opts
-       the SA out and is always allowed. */ -}}
+{{- /* A tier outside tierCaps (typically a typo) makes the caps lookup nil and
+       the SA is silently skipped — a workload denied access with no signal.
+       Fail loudly instead, matching subscribe-to-ns. "none" opts the SA out
+       and is always allowed. */ -}}
 {{- if not (has $tier (append (keys $.Values.tierCaps) "none")) }}
 {{- fail (printf "bao.stakater.com/tier %q on ServiceAccount %s/%s is not a known tier (valid: %s, or \"none\" to opt out)" $tier $saNs $saName (keys $.Values.tierCaps | sortAlpha | join ", ")) }}
 {{- end }}

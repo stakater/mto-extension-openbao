@@ -63,8 +63,6 @@ sharedTenant:
 # viewer       read + list on KV
 # editor       create/read/update/list
 # admin        editor + delete (data) + later destroy (versions)
-# super-admin  reserved for tier-aware sso policies — workload SAs never
-#              receive super-admin; see sso.tiers
 tierCaps:
   audit-read: '["list"]'
   viewer:     '["read", "list"]'
@@ -270,9 +268,9 @@ sso:
     perTenantClient: false
 
   # Default IdP-group pattern when no per-tier override is set.
-  # Placeholders: {tenant} (tenant name), {tier} (super-admin|admin|editor|
-  # viewer|audit-read). Use a literal (no placeholder) to bind every
-  # tenant's tier to the same IdP group — useful for cluster-wide admin.
+  # Placeholders: {tenant} (tenant name), {tier} (admin|editor|viewer|
+  # audit-read). Use a literal (no placeholder) to bind every tenant's
+  # tier to the same IdP group — useful for cluster-wide admin.
   tenantGroupTemplate: "{tenant}-{tier}s"
 
   # Per-tier role mapping. Empty entry → use tenantGroupTemplate. Override
@@ -286,7 +284,6 @@ sso:
   # tenant via that role and inherit the fallback tier. Default `deny`
   # means no fallback role is emitted (the user must match a group).
   tenantRoleMapping:
-    super-admin: {}                # uses tenantGroupTemplate
     admin:       {}                # uses tenantGroupTemplate
     editor:      {}
     viewer:      {}
@@ -297,12 +294,11 @@ sso:
   allowedRedirectUris:
     - "http://localhost:8250/oidc/callback"
 
-  # Tiers to emit SSO roles for. Note: `super-admin` is reserved for the
-  # destructive CA-management path; v9 emits the role iff this includes
-  # it. Tenant admins get admin (KV+transit+PKI ops) without root/config
-  # destruction; only super-admin can re-generate the tenant root CA.
+  # Tiers to emit SSO roles for. Every entry must have a tierCaps entry.
+  # `admin` is the highest tier: KV + transit + PKI issue/role ops. No
+  # tier can reach pki/root or pki/config — the tenant CA is managed
+  # through the OpenBaoPKISecretEngineConfig CR, not by logging in.
   tiers:
-    - super-admin
     - admin
     - editor
     - viewer

@@ -61,9 +61,8 @@ spec:
     - name: serviceAccounts
     - name: deployments
   # Per-tenant status outputs surfaced on the child TI:
-  #   - caSerialNumber: tracks the tenant's PKI root CA. Flips only when
-  #     a super-admin SSO user regenerates the root, so an unexpected
-  #     change is a red flag.
+  #   - caSerialNumber: tracks the tenant's PKI root CA. Flips only when the
+  #     CA is replaced through its CR, so an unexpected change is a red flag.
   #   - externalSecretSync: per-workload ES sync state. Lets ops see which
   #     workloads are not getting secrets without per-namespace iteration.
   # Status size scales with per-tenant cardinality. Drop externalSecretSync

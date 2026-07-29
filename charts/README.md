@@ -672,8 +672,8 @@ metadata:
   name: team-a-trust              # cluster-scoped, chart-authored — tenants can't self-grant
 spec:
   sources:
-    - configMap: { name: team-a-ca, key: ca.crt }   # own CA
-    - configMap: { name: team-b-ca, key: ca.crt }   # opted-in peer
+    - configMap: { name: team-a-ca, includeAllKeys: true }   # own CA(s)
+    - configMap: { name: team-b-ca, includeAllKeys: true }   # opted-in peer
   target:
     configMap: { key: trust-bundle.pem }
     namespaceSelector:
@@ -681,6 +681,8 @@ spec:
 ```
 
 trust-manager writes a ConfigMap named `team-a-trust` (key `trust-bundle.pem`) into each of those namespaces.
+
+**Why `includeAllKeys`.** Each `<tenant>-ca` ConfigMap holds the active CA under `ca.crt`, and — once a CA has been replaced — the CA it replaced under `ca-previous.crt`. Taking every key means both are trusted while workloads re-issue their certificates. Without that overlap, replacing a CA would break every certificate still issued by the old one, because verifiers would stop trusting it the moment the new CA was published. Only one previous CA is kept; a second replacement drops the one before it.
 
 **How a workload uses it.** Mount that ConfigMap and point your TLS stack at `trust-bundle.pem` as its CA trust store:
 
@@ -727,11 +729,12 @@ For each tier in `sso.tiers`, the chart creates a login role bound to an IdP gro
 
 | Tier | What a person can do |
 |---|---|
-| `super-admin` | Everything `admin` can, **plus** destroy/regenerate the tenant CA. Break-glass only. |
-| `admin` | Full KV (including delete), full Transit, issue certificates and manage roles. Cannot destroy the CA. |
+| `admin` | Full KV (including delete), full Transit, issue certificates and manage roles. |
 | `editor` | Read/create/update KV; encrypt/decrypt with Transit; issue certificates. |
 | `viewer` | Read KV; read Transit and PKI. No changes. |
 | `audit-read` | List KV names; list Transit keys; read PKI. No values. |
+
+No tier can destroy or regenerate the tenant CA. That is done by changing the tenant's `OpenBaoPKISecretEngineConfig`, so it goes through Git and review rather than a login.
 
 SSO tokens are short-lived (default 15 minutes, 1 hour max), because group changes in the IdP don't apply to tokens already handed out.
 

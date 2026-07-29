@@ -7,6 +7,10 @@ template renders a cert-manager trust-manager Bundle `<tenant>-trust` whose
 sources are:
   - this tenant's OWN CA (so its namespaces trust their own certs), plus
   - the CA of each PEER an SA opted into.
+
+Each source takes every key of the ConfigMap, so a CA replacement (active CA
+under ca.crt, the one it replaced under ca-previous.crt) is trusted on both
+sides of the migration without editing this Bundle.
 The Bundle target is synced (by tenant label) into THIS tenant's namespaces
 only. A consumer trusts ONLY opted-in peers — never the platform CA — so an
 un-opted peer fails closed at the handshake.
@@ -48,17 +52,22 @@ metadata:
     {{- $labels | nindent 4 }}
 spec:
   sources:
-    # This tenant's own CA — its namespaces validate their own certs.
+    {{- /* includeAllKeys rather than key: ca.crt — the operator publishes the
+           active CA under ca.crt and the CA it replaced under ca-previous.crt,
+           and both must be trusted while workloads re-issue. Taking every key
+           means a replacement needs no Bundle change, and no source dangles on
+           a ConfigMap that only has the active CA. */}}
+    # This tenant's own CA(s) — its namespaces validate their own certs.
     - configMap:
         name: {{ $tenant }}-ca
-        key: ca.crt
+        includeAllKeys: true
     {{- range $peer, $_ := $trustPeers }}
     {{- /* Skip peers absent from the known-tenants roster (no dangling source
            for a tenant that does not exist; self-heals when it appears). */ -}}
     {{- if eq $peer $tenant }}{{- else if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $known) }}
     - configMap:
         name: {{ $peer }}-ca
-        key: ca.crt
+        includeAllKeys: true
     {{- end }}
     {{- end }}
   target:

@@ -9,15 +9,16 @@ Section 7 — per (tenant, tier) SSO role + policy. For each tier in
 
 Tier ladder (most → least privilege):
 
-  super-admin  every admin grant PLUS CA destroy/regen on pki/root + pki/config.
-               Reserved for platform-team-level break-glass; tenant CA
-               regen invalidates every cert ever issued.
   admin        KV CRUD + delete/destroy; transit full ops; PKI issue +
-               role CRUD. Does NOT include CA destroy.
+               role CRUD.
   editor       KV CRU + transit encrypt/decrypt/rewrap; PKI issue.
   viewer       KV read/list + transit + PKI read; no writes.
   audit-read   KV metadata list only; no data reads. Designed for
                compliance probes that need to enumerate without exposure.
+
+No tier grants pki/root or pki/config. The tenant CA is created and replaced
+through the OpenBaoPKISecretEngineConfig CR, so no login can destroy or
+regenerate it — a regen would invalidate every cert the CA ever issued.
 */}}
 {{- if .Values.sso.enabled }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
@@ -25,10 +26,6 @@ Tier ladder (most → least privilege):
 {{- $labels := include "openbao.labels" . }}
 {{- range $tier := $.Values.sso.tiers }}
 {{- $caps := index $.Values.tierCaps $tier }}
-{{- /* super-admin reuses admin tier caps for KV; the extra PKI scope is
-       added below. tierCaps is allowed to omit super-admin to avoid
-       duplicating the admin caps verbatim. */ -}}
-{{- if and (not $caps) (eq $tier "super-admin") }}{{ $caps = index $.Values.tierCaps "admin" }}{{ end }}
 {{- if not $caps }}{{ fail (printf "sso.tiers includes %q but tierCaps has no entry for it" $tier) }}{{ end }}
 {{- $roleName := include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $tier) }}
 {{- $group := include "openbao.ssoGroup" (dict "tenant" $tenant "tier" $tier
@@ -54,14 +51,14 @@ spec:
     path "kv/data/{{ $env }}/*"     { capabilities = {{ $caps }} }
     path "kv/metadata/{{ $env }}/*" { capabilities = {{ $caps }} }
     {{- end }}
-    {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
+    {{- if eq $tier "admin" }}
     path "kv/delete/{{ $env }}/*"   { capabilities = ["update"] }
     path "kv/undelete/{{ $env }}/*" { capabilities = ["update"] }
     path "kv/destroy/{{ $env }}/*"  { capabilities = ["update"] }
     {{- end }}
     {{- if $.Values.transit.enabled }}
     # Transit — humans get tier-appropriate access to every tenant key.
-    {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
+    {{- if eq $tier "admin" }}
     path "{{ $.Values.transit.mountPath }}/*"            { capabilities = ["create", "read", "update", "list", "delete"] }
     {{- else if eq $tier "editor" }}
     path "{{ $.Values.transit.mountPath }}/encrypt/+"    { capabilities = ["update"] }
@@ -78,27 +75,21 @@ spec:
     {{- end }}
     {{- if $.Values.pki.enabled }}
     # PKI — every SSO tier can read the CA bundle; editors + admins can
-    # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
+    # issue against any role; admins can manage roles. No tier gets the
+    # CA root/config paths: regenerating the CA invalidates every
+    # previously issued cert, so it goes through the CR, not a login.
     path "{{ $.Values.pki.mountPath }}/ca/pem"           { capabilities = ["read"] }
     path "{{ $.Values.pki.mountPath }}/ca_chain"         { capabilities = ["read"] }
     path "{{ $.Values.pki.mountPath }}/cert/ca"          { capabilities = ["read"] }
     path "{{ $.Values.pki.mountPath }}/certs"            { capabilities = ["list"] }
     path "{{ $.Values.pki.mountPath }}/cert/+"           { capabilities = ["read"] }
-    {{- if or (eq $tier "editor") (eq $tier "admin") (eq $tier "super-admin") }}
+    {{- if or (eq $tier "editor") (eq $tier "admin") }}
     path "{{ $.Values.pki.mountPath }}/issue/+"          { capabilities = ["update"] }
     path "{{ $.Values.pki.mountPath }}/sign/+"           { capabilities = ["update"] }
     {{- end }}
-    {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
+    {{- if eq $tier "admin" }}
     path "{{ $.Values.pki.mountPath }}/roles"            { capabilities = ["list"] }
     path "{{ $.Values.pki.mountPath }}/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
-    {{- end }}
-    {{- /* root + config restricted to super-admin only. Tenant admins
-           cannot blow away the CA. */ -}}
-    {{- if eq $tier "super-admin" }}
-    path "{{ $.Values.pki.mountPath }}/root/*"           { capabilities = ["create", "read", "update", "delete"] }
-    path "{{ $.Values.pki.mountPath }}/config/*"         { capabilities = ["create", "read", "update", "delete"] }
     {{- end }}
     {{- end }}
 ---
