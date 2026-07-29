@@ -774,6 +774,7 @@ Both files have comments on every setting.
 
 A few defaults are tuned for trying things out, not for production:
 
+- **Operator credentials.** The operator deployment defaults to Kubernetes auth: the operator logs into OpenBao with its own ServiceAccount and stores no token anywhere. This needs a one-time bootstrap per OpenBao server (auth mount + policy + role) — see the [operator README](../README.md#openbao-authentication). Never give the operator the root token; the legacy static-token mode (`BAO_AUTH_METHOD=token` + a `VAULT_TOKEN` env) exists only for local development and migration.
 - **Use TLS.** Set `baoServer` to an `https://` address. If OpenBao uses a private CA, also set `baoCABundle`.
 - **Token lifetimes.** Workload tokens default to 1h / 4h max (`token.*`); SSO tokens to 15m / 1h (`ssoToken.*`). Shorten high-privilege tiers if your IdP can't revoke tokens.
 - **Secret refresh.** `externalSecretRefreshInterval` defaults to `1h`. Lower values mean more frequent OpenBao logins.
