@@ -686,6 +686,8 @@ trust-manager writes a ConfigMap named `team-a-trust` (key `trust-bundle.pem`) i
 
 **The operator owns `<tenant>-ca` completely.** Because the Bundle takes every key, any certificate written into that ConfigMap would become a trust anchor for every workload in the tenant. So the operator prunes on each reconcile: only `ca.crt` and `ca-previous.crt` survive, and an extra key is treated as drift and removed. Don't store anything else in these ConfigMaps — it will be deleted. If you need to distribute an additional CA, add it as its own source on the Bundle rather than as a key here.
 
+**One publisher per ConfigMap.** Following from that ownership: only one `OpenBaoPKISecretEngineConfig` may name a given ConfigMap in `publishCABundleConfigMap`. A second one goes `Ready=False, reason=NameCollision` rather than publishing, because two publishers would prune each other's CA and reclaim ownership on every reconcile — leaving the ConfigMap, and every trust bundle sourcing it, flapping between two CAs. The charts never produce this (only the active PKI mount publishes); you would only hit it with hand-written CRs.
+
 **How a workload uses it.** Mount that ConfigMap and point your TLS stack at `trust-bundle.pem` as its CA trust store:
 
 ```yaml

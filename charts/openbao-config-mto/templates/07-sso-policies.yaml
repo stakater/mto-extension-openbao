@@ -23,7 +23,7 @@ regenerate it — a regen would invalidate every cert the CA ever issued.
 {{- if .Values.sso.enabled }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
-{{- $pkiMount := include "openbao.pkiMount" . }}
+{{- $pkiMount := include "openbao.pkiActiveMount" . }}
 {{- $labels := include "openbao.labels" . }}
 {{- range $tier := $.Values.sso.tiers }}
 {{- $caps := index $.Values.tierCaps $tier }}

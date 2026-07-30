@@ -31,6 +31,7 @@ to bao directly via its own dedicated SA.
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $hier := .Values.pki.hierarchy }}
 {{- $mount := include "openbao.pkiMount" . }}
+{{- $activeMount := include "openbao.pkiActiveMount" . }}
 {{- $labels := include "openbao.labels" . }}
 {{- if $hier.enabled }}
 {{- if not $hier.platformNamespace }}
@@ -62,35 +63,46 @@ to bao directly via its own dedicated SA.
 {{- end }}
 {{- end }}
 {{- $allDomains = $allDomains | uniq }}
+{{- /* One engine + CA per rendered mount. The original mount keeps the
+       historical unsuffixed CR names; extra mounts are suffixed. Never switch a
+       mount by editing an existing CR's spec.path — that is a rename, and the
+       operator unmounts the old path, destroying the CA and private key. */ -}}
+{{- range $m := splitList " " (include "openbao.pkiAllMounts" .) }}
+{{- $sfx := include "openbao.pkiCRSuffix" (dict "mount" $m "root" $) }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoSecretEngine
 metadata:
-  name: {{ $tenant }}-pki
-  namespace: {{ .Values.operatorNamespace }}
+  name: {{ $tenant }}-pki{{ $sfx }}
+  namespace: {{ $.Values.operatorNamespace }}
   labels:
     {{- $labels | nindent 4 }}
 spec:
-  path: {{ $mount }}
+  path: {{ $m }}
   openbaoNamespace: {{ $tenant }}/
   pki: {}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPKISecretEngineConfig
 metadata:
-  # Name kept as <tenant>-pki-root across both modes so the bootstrap's
-  # caSerialNumber output keeps tracking it; in hierarchy mode the bao type
-  # is intermediate (the name is just the k8s object name).
-  name: {{ $tenant }}-pki-root
-  namespace: {{ .Values.operatorNamespace }}
+  # <tenant>-pki-root for the original mount (the bootstrap's caSerialNumber
+  # output tracks that name); extra mounts append their mount path. In
+  # hierarchy mode the bao type is intermediate — the name is just the k8s
+  # object name.
+  name: {{ $tenant }}-pki-root{{ $sfx }}
+  namespace: {{ $.Values.operatorNamespace }}
   labels:
     {{- $labels | nindent 4 }}
 spec:
-  path: {{ $mount }}
+  path: {{ $m }}
   openbaoNamespace: {{ $tenant }}/
-  {{- if .Values.pki.crossTenant.enabled }}
+  {{- if and $.Values.pki.crossTenant.enabled (eq $m $activeMount) }}
   # Publish this tenant's CA cert to a ConfigMap so trust-manager Bundles can
   # source it for cross-tenant trust (see 11-pki-cross-tenant-trust.yaml).
+  # Only the ACTIVE mount publishes: two CRs writing one ConfigMap would each
+  # prune the other's cert on every reconcile. When activeMount moves, the new
+  # CR takes over and retains the outgoing CA under ca-previous.crt, which is
+  # what keeps certs from the old CA verifying during the migration.
   publishCABundleConfigMap: {{ $tenant }}-ca
   {{- end }}
   {{- if $hier.enabled }}
@@ -107,18 +119,21 @@ spec:
   {{- else }}
   type: root
   {{- end }}
-  commonName: {{ include "openbao.subTenant" (dict "tenant" $tenant "s" .Values.pki.rootCA.commonName) | quote }}
-  {{- if .Values.pki.rootCA.ttl }}
-  TTL: {{ .Values.pki.rootCA.ttl | quote }}
+  commonName: {{ include "openbao.subTenant" (dict "tenant" $tenant "s" $.Values.pki.rootCA.commonName) | quote }}
+  {{- if $.Values.pki.rootCA.ttl }}
+  TTL: {{ $.Values.pki.rootCA.ttl | quote }}
   {{- end }}
-  {{- if .Values.pki.rootCA.keyType }}
-  keyType: {{ .Values.pki.rootCA.keyType }}
+  {{- if $.Values.pki.rootCA.keyType }}
+  keyType: {{ $.Values.pki.rootCA.keyType }}
   {{- end }}
-  {{- if .Values.pki.rootCA.keyBits }}
-  keyBits: {{ .Values.pki.rootCA.keyBits }}
+  {{- if $.Values.pki.rootCA.keyBits }}
+  keyBits: {{ $.Values.pki.rootCA.keyBits }}
   {{- end }}
+{{- end }}
 {{- /* Role catalog — one OpenBaoPKISecretEngineRole per pki.roles entry, each
-       with its own allowedDomains (union of its template across namespaces). */ -}}
+       with its own allowedDomains (union of its template across namespaces).
+       Roles exist only on the ACTIVE mount: a retired mount needs no new
+       issuance, only for its CA to stay trusted until certs it signed expire. */ -}}
 {{- range $r := .Values.pki.roles }}
 {{- $roleName := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) }}
 {{- $rdomains := list }}
@@ -137,7 +152,7 @@ metadata:
     {{- $labels | nindent 4 }}
 spec:
   name: {{ $roleName }}
-  path: {{ $mount }}
+  path: {{ $activeMount }}
   openbaoNamespace: {{ $tenant }}/
   allowedDomains:
     {{- range $rdomains }}

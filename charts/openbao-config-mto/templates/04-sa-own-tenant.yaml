@@ -51,7 +51,7 @@ Per-SA opt-ins:
 {{- $transitImportRaw := dig "metadata" "annotations" "bao.stakater.com/transit-import-tenant" "" $sa }}
 {{- $pkiOptIn := dig "metadata" "annotations" "bao.stakater.com/pki" "" $sa }}
 {{- $transitMount := $.Values.transit.mountPath }}
-{{- $pkiMount := include "openbao.pkiMount" $ }}
+{{- $pkiMount := include "openbao.pkiActiveMount" $ }}
 {{- /* Fall back to defaultCapability when SA omits the tier annotation. */ -}}
 {{- $tier := $rawTier }}
 {{- if not $tier }}{{ $tier = $.Values.defaultCapability }}{{ end }}

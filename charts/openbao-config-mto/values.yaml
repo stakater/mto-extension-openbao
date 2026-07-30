@@ -148,6 +148,36 @@ pki:
     platformNamespace: platform/
     mountPath: pki-int
 
+  # ─── CA replacement ────────────────────────────────────────────────
+  # Replacing a tenant CA takes two steps, because a CA cannot be rotated in
+  # place: bao has no API to re-key one, and unmounting its path destroys the
+  # private key along with every cert it signed. So a replacement means
+  # standing up a SECOND mount and moving issuance to it.
+  #
+  # mounts       every PKI mount to render. Each gets its own engine + CA. The
+  #              mount matching hierarchy.mountPath (or mountPath when hierarchy
+  #              is off) keeps the historical CR names <tenant>-pki /
+  #              <tenant>-pki-root; others append their mount path. Empty means
+  #              just that original mount — what every install had before CA
+  #              replacement existed, so leaving this alone changes nothing.
+  # activeMount  which mount issues certificates: roles, SA policies, SSO grants
+  #              and cert-manager Issuers all follow it, and only its CA is
+  #              published for trust distribution. Empty = the original mount.
+  #              Must be one of `mounts`.
+  #
+  # Replacement sequence, one commit per step:
+  #   1. mounts: [pki-int, pki-int-2]    new CA appears; nothing issues from it
+  #   2. (wait)                          both CAs sit in the trust bundle
+  #   3. activeMount: pki-int-2          issuance + Issuers move; certs re-issue
+  #   4. mounts: [pki-int-2]             old mount unmounted, old CA destroyed
+  #
+  # Never collapse this into fewer commits. Adding and removing a mount in one
+  # apply destroys the old CA before anything has re-issued against the new one,
+  # and every cert the old CA signed stops verifying. Step 4 is the only
+  # irreversible step — hold it until no workload presents an old-CA cert.
+  mounts: []
+  activeMount: ""
+
   # Root CA config (used for the self-signed type=root CA, and for the key
   # parameters of the intermediate in hierarchy mode). The CA's private key
   # stays inside bao either way.

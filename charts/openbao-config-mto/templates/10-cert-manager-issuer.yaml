@@ -30,7 +30,7 @@ in the cluster — the chart doesn't install cert-manager itself.
 {{- if and .Values.pki.enabled .Values.pki.certManager.enabled }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $labels := include "openbao.labels" . }}
-{{- $pkiMount := include "openbao.pkiMount" . }}
+{{- $pkiMount := include "openbao.pkiActiveMount" . }}
 
 {{- /* Collect every unique workload ns whose SAs opted into PKI. */ -}}
 {{- $namespaces := dict }}

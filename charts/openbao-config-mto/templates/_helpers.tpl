@@ -154,13 +154,14 @@ Per-tenant PKI role CR name: pki-<tenant>-<roleName>.
 {{- end -}}
 
 {{/*
-Effective tenant PKI mount path. In hierarchy mode the tenant CA is a
-type=intermediate rendered at a FRESH mount (pki.hierarchy.mountPath) so it
-never reuses a root-bearing mount; otherwise it's the self-signed root at
-pki.mountPath. Every template that references the tenant PKI mount (config,
-role, SA policies, SSO policies, cert-manager Issuer) must resolve it through
-this helper so they stay in lockstep. Reading pki.mountPath directly grants
-paths on a mount that does not exist whenever hierarchy mode is on.
+The tenant's ORIGINAL PKI mount path — the one this chart has always created.
+In hierarchy mode the tenant CA is a type=intermediate rendered at a FRESH
+mount (pki.hierarchy.mountPath) so it never reuses a root-bearing mount;
+otherwise it's the self-signed root at pki.mountPath.
+
+This is the mount whose CRs carry the unsuffixed names (<tenant>-pki,
+<tenant>-pki-root). Use openbao.pkiActiveMount for the mount that should
+actually issue certificates — the two differ during a CA replacement.
 Usage (root context): {{ include "openbao.pkiMount" . }}
 */}}
 {{- define "openbao.pkiMount" -}}
@@ -170,6 +171,56 @@ Usage (root context): {{ include "openbao.pkiMount" . }}
 {{- else -}}
 {{- $pki.mountPath -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Every PKI mount this chart renders scaffolding for. Empty pki.mounts means just
+the original mount, which is what every install had before CA replacement
+existed. A mount stays in this list for as long as its CA must remain valid:
+removing it deletes its OpenBaoSecretEngine, which unmounts the path and
+destroys the CA and private key along with every cert that CA signed.
+Usage (root context): {{ include "openbao.pkiAllMounts" . }} -> space-separated
+*/}}
+{{- define "openbao.pkiAllMounts" -}}
+{{- $all := list -}}
+{{- range $m := (default (list) .Values.pki.mounts) -}}
+{{- $m = trim (toString $m) -}}
+{{- if and $m (not (has $m $all)) -}}{{- $all = append $all $m -}}{{- end -}}
+{{- end -}}
+{{- if not $all -}}{{- $all = list (include "openbao.pkiMount" .) -}}{{- end -}}
+{{- join " " $all -}}
+{{- end -}}
+
+{{/*
+The mount that issues certificates: pki.activeMount when set, else the
+original. Roles, SA policies, SSO grants and cert-manager Issuers all resolve
+through this so they move together in one step. Fails when activeMount names a
+mount this chart does not render — otherwise every PKI grant would silently
+point at a path that does not exist.
+Usage (root context): {{ include "openbao.pkiActiveMount" . }}
+*/}}
+{{- define "openbao.pkiActiveMount" -}}
+{{- $active := trim (toString (default "" .Values.pki.activeMount)) -}}
+{{- if not $active -}}
+{{- include "openbao.pkiMount" . -}}
+{{- else -}}
+{{- $all := splitList " " (include "openbao.pkiAllMounts" .) -}}
+{{- if not (has $active $all) -}}
+{{- fail (printf "pki.activeMount=%q is not a rendered mount (have: %s) — add it to pki.mounts first, or the tenant's PKI grants would point at a path that does not exist" $active (join ", " $all)) -}}
+{{- end -}}
+{{- $active -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+CR-name suffix for a PKI mount. The original mount keeps the historical
+unsuffixed names so an upgrade never renames an existing CR: renaming an
+OpenBaoSecretEngine's spec.path unmounts the old path, which destroys the CA.
+Extra mounts get "-<mount>".
+Usage: {{ include "openbao.pkiCRSuffix" (dict "mount" $m "root" $) }}
+*/}}
+{{- define "openbao.pkiCRSuffix" -}}
+{{- if eq .mount (include "openbao.pkiMount" .root) -}}{{- else -}}-{{ .mount }}{{- end -}}
 {{- end -}}
 
 {{/*
