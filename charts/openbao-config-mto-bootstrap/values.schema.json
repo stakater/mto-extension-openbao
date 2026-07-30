@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "openbao-config-mto-bootstrap values",
+  "description": "Constrains only the switches whose values are consumed as string comparisons downstream, where a near-miss (yes / on / True / 1) would otherwise disable an integration silently. Everything else is intentionally unconstrained: this chart is wrapped by other charts and the schema must not become a second place to keep in sync. The accepted forms mirror templates/_helpers.tpl exactly -- a boolean, or the strings \"true\"/\"false\" so that --set-string and wrapper charts passing stringified values still work. If you change one, change the other.",
+  "type": "object",
+  "definitions": {
+    "boolish": {
+      "description": "true or false, as a YAML boolean or as the quoted string \"true\"/\"false\". Anything else (yes, on, off, 1, 0, True, TRUE) is rejected, because it would be read as \"not enabled\" without warning.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string", "enum": ["true", "false"] }
+      ]
+    }
+  },
+  "properties": {
+    "operatorNamespace": { "type": "string", "minLength": 1 },
+    "crossTenantPki": {
+      "type": "object",
+      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+    },
+    "platformPki": {
+      "type": "object",
+      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+    },
+    "parent": {
+      "type": "object",
+      "properties": {
+        "eso": {
+          "description": "A string, not a boolean: \"enabled\" or \"disabled\". true/false/yes/on are rejected.",
+          "type": "string",
+          "enum": ["enabled", "disabled"]
+        },
+        "certManager": {
+          "type": "object",
+          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+        },
+        "sso": {
+          "type": "object",
+          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+        }
+      }
+    },
+    "sync": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "Drift protection. Unquoted on/yes/off parse as YAML booleans and are rejected -- quote the value.",
+          "type": "string",
+          "enum": ["off", "revert", "strict"]
+        },
+        "ignoreFields": {
+          "type": ["array", "null"],
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

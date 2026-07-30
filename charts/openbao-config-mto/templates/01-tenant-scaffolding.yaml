@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 1 — per-Tenant scaffolding. One copy per child TI: the bao
 namespace, the KV-v2 mount, the kubernetes auth mount, and its engine
@@ -58,3 +59,4 @@ spec:
   kubernetesCaCertRef:
     name: {{ .Values.tokenReviewerSecretName }}
     key: ca.crt
+{{- end }}

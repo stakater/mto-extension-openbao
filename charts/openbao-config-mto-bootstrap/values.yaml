@@ -24,7 +24,7 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.9.0
+  version: 0.11.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.
@@ -79,6 +79,10 @@ platformPki:
 # bao.stakater.com/pki-allow-tenant / pki-trust-tenant annotations). Default
 # off — it needs cert-manager trust-manager installed with its trust namespace
 # = operatorNamespace. See the tenant chart's pki.crossTenant.
+#
+# The Bundle renders in its own per-tenant TemplateInstance
+# (`openbao-config-mto-<tenant>.trust`), separate from parent.certManager's —
+# trust-manager and cert-manager are distinct operators with distinct CRDs.
 crossTenantPki:
   enabled: false
 
@@ -92,6 +96,13 @@ parent:
   sharedTenantName: shared
   eso: enabled
   externalSecretRefreshInterval: "1h"
+  # cert-manager Issuer wiring (chart value pki.certManager.enabled). When
+  # true, each tenant with a PKI-opted-in ServiceAccount gets an
+  # `openbao-config-mto-<tenant>.certmanager` TemplateInstance rendering the
+  # per-namespace Issuer + auth wiring. Requires the cert-manager CRDs —
+  # without them only that TI fails; core bao wiring is unaffected.
+  certManager:
+    enabled: false
   sso:
     enabled: false
     issuerUrl: ""

@@ -11,6 +11,16 @@
 #
 # Production deployment guidance lives in README.md → "Going to prod".
 
+# Which slice of the chart this render emits. The bootstrap's child Templates
+# set this per TemplateInstance so optional integrations live in their own TI
+# and a missing CRD (ESO, cert-manager) cannot fail core bao wiring.
+#   all         — everything (standalone/helm-install default)
+#   core        — OpenBao* primitives + core k8s resources only
+#   eso         — SecretStore/ExternalSecret only
+#   certManager — cert-manager Issuer wiring only
+#   trust       — trust-manager Bundle wiring only (cross-tenant PKI trust)
+component: all
+
 # Environment slice for KV paths (kv/data/<env>/...).
 env: dev
 

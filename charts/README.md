@@ -75,6 +75,61 @@ bootstrap chart (installed once)  ──one render per tenant──▶  openbao-
 
 This all happens through [template-operator-v2](https://github.com/stakater/template-operator), which does the "one render per tenant" step.
 
+**Each tenant gets up to four renders, not one.** The core render
+(`openbao-config-mto-<tenant>`) holds everything OpenBao needs: the tenant's
+private space, secret engines, policies, and login roles. (One exception:
+the OpenBao policy and login role that exist only so cert-manager can log
+in travel with the cert-manager render — they are useless without it.)
+Optional integrations live in their own renders:
+
+- `openbao-config-mto-<tenant>.eso` — the ESO `SecretStore` and
+  `ExternalSecret` objects. Only exists when `parent.eso` is `enabled`.
+- `openbao-config-mto-<tenant>.certmanager` — the cert-manager `Issuer`
+  wiring. Only exists when `parent.certManager.enabled` is `true`.
+- `openbao-config-mto-<tenant>.trust` — the trust-manager `Bundle` for
+  cross-tenant PKI trust. Only exists when `crossTenantPki.enabled` is
+  `true`.
+
+Why split? template-operator-v2 checks every object in a render against the
+cluster before applying, and one bad object fails the whole render. Each
+optional render matches exactly one operator, so if ESO, cert-manager, or
+trust-manager is not installed, only that small render fails — the tenant's
+core OpenBao setup still works. Install the missing operator later and the
+failed render fixes itself within a minute, with no manual steps.
+
+**If you ever need to force a render to start over,** turn its integration off
+and back on — set the value to `false` (or `disabled`) so the bootstrap stops
+emitting that render, then set it back. Do not delete the render's
+`TemplateInstance` by hand. The bootstrap is still generating it, so the delete
+cannot finish: the objects it created are removed, but the name stays held by a
+terminating `TemplateInstance` that the bootstrap cannot replace, and that
+render stays down until the value is toggled.
+
+**Turning an integration off leaves its permissions in place.** The bootstrap
+`ClusterRole` gates only `create` on an integration's object kinds; read,
+update and delete stay granted whether the integration is on or off. That is
+deliberate. Turning an integration off in one `helm upgrade` removes its
+render and rewrites the `ClusterRole` at the same moment, but the objects the
+render created are cleaned up *afterwards* — and that cleanup needs to list
+them, remove a finalizer from each, and delete them. Revoking those verbs
+together with the toggle wedges the cleanup permanently: the render sticks in
+`Terminating`, and every object it created is left behind holding a finalizer
+that nothing will ever remove. Gating `create` alone keeps the property worth
+having — a cluster with an integration off cannot be made to mint new
+`Issuer`s, `Bundle`s, `SecretStore`s, `ServiceAccount`s or RBAC — while
+letting cleanup finish.
+
+**Tenant name length.** The render's name is stamped as a label on every
+object it produces, and Kubernetes caps label values at 63 characters. That
+puts a ceiling on tenant names: 44 characters for the core render, 40 with
+`.eso`, 38 with `.trust`, 32 with `.certmanager`. A tenant name over the
+limit for an enabled render fails that render with a message naming the
+budget, so this shows up at install time rather than as an unexplained
+invalid-label error.
+
+Installing the per-tenant chart directly with `helm install` renders
+everything in one pass (`component: all`) and none of this applies.
+
 ---
 
 ## Before you start
@@ -110,14 +165,19 @@ Set cluster-wide defaults (OpenBao address, environment name, SSO on/off, and so
 After a tenant exists, see what was created for it:
 
 ```bash
-# the per-tenant render
+# the per-tenant renders — core, plus .eso / .certmanager / .trust when enabled
 kubectl -n openbao-config-operator-system get ti
 
-# the OpenBao resources for one tenant
+# the OpenBao resources for one tenant (core render)
 kubectl -n openbao-config-operator-system get \
   obns,obse,obam,obkac,obkar,obp,obtk,obpkic,obpkir \
   -l templates.v2.stakater.com/instance=openbao-config-mto-team-a
 ```
+
+ESO objects carry the `.eso` render's label instead
+(`templates.v2.stakater.com/instance=openbao-config-mto-team-a.eso`), and
+the per-workload sync status (`externalSecretSync`) shows on that render's
+`TemplateInstance` status, not on the core one.
 
 ---
 
@@ -266,6 +326,11 @@ These keys are always present. Sharing, Transit, and PKI add more (shown in each
 
 **Turn it on & what you need.** ESO is on by default (`eso: enabled`). Set `eso: disabled` to skip all ESO resources and use the direct method instead.
 > **Needs:** External Secrets Operator installed in the cluster.
+
+All ESO objects live in their own per-tenant render
+(`openbao-config-mto-<tenant>.eso`). If you enable ESO but the operator is
+missing, only that render fails — the tenant's core OpenBao setup is
+untouched, and everything heals on its own once ESO is installed.
 
 **What the chart creates.** For each ServiceAccount you give a tier:
 
@@ -573,7 +638,7 @@ There are two CA setups:
 
 ### Two ways to get a certificate
 
-**1. Through cert-manager (recommended).** Turn on `pki.certManager.enabled`. The chart creates a cert-manager `Issuer` (named after the tenant's PKI role) in each namespace that opts in. Your app then requests a certificate the normal cert-manager way:
+**1. Through cert-manager (recommended).** Turn on `parent.certManager.enabled` in the bootstrap chart (or `pki.certManager.enabled` when using the per-tenant chart standalone). The chart creates a cert-manager `Issuer` (named after the tenant's PKI role) in each namespace that opts in, all inside a separate per-tenant render (`openbao-config-mto-<tenant>.certmanager`) — so a cluster without cert-manager fails only that render, never the tenant's core setup. Your app then requests a certificate the normal cert-manager way:
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -586,11 +651,47 @@ spec:
   issuerRef:
     name: team-a-svc          # the Issuer the chart created
     kind: Issuer
+  commonName: web.team-a-api.svc.cluster.local   # required — see below
   dnsNames:
     - web.team-a-api.svc.cluster.local
 ```
 
+`commonName` is not optional here. The tenant's PKI role keeps OpenBao's
+default `require_cn`, so a `Certificate` with only `dnsNames` is refused at
+signing time — the `Certificate` sits at `Ready=False`, and the reason is on
+the `CertificateRequest`, not the `Certificate`:
+
+```text
+kubectl describe certificaterequest -n team-a-api
+  ... the common_name field is required, or must be provided in a CSR with
+      "use_csr_common_name" set to true, unless "require_cn" is set to false
+```
+
 cert-manager logs into OpenBao with its own identity, so the workload does **not** need the `bao.stakater.com/pki` annotation here. cert-manager also generates the private key **inside the cluster** and only sends a CSR to OpenBao — the key never leaves your cluster (the same best practice as `sign`, below).
+
+**Where cert-manager's permission comes from.** To log into OpenBao,
+cert-manager mints a short-lived token for the `bao-cert-manager` ServiceAccount
+in the workload namespace. The bootstrap chart defines that permission once, as
+a `ClusterRole` named `bao-cert-manager-token-create`, and the `.certmanager`
+render binds it per namespace with an ordinary `RoleBinding`. A `RoleBinding`
+grants a `ClusterRole`'s rules **only inside its own namespace**, so
+cert-manager can mint that one token in the namespaces that opted into PKI and
+nowhere else — and `resourceNames` pins it to the `bao-cert-manager`
+ServiceAccount alone, not to every ServiceAccount in those namespaces.
+
+The definition has to sit in the bootstrap chart rather than in the render.
+template-operator-v2 checks an entire render against the cluster before applying
+any of it, and that check never writes anything — so a `Role` shipped alongside
+its own `RoleBinding` does not exist at the moment Kubernetes resolves the
+binding's `roleRef`. The binding is rejected, the whole render is abandoned, and
+the `Role` that would have unblocked it never gets written. Kubernetes treats
+this as working as designed ([kubernetes/kubectl#1575](https://github.com/kubernetes/kubectl/issues/1575)),
+so the chart works around it by having helm — which runs as a cluster admin and
+writes for real — create the definition up front.
+
+Installing the per-tenant chart standalone (`component: all`) keeps a plain
+namespaced `Role` instead, because helm writes it for real and there is no
+check to fail.
 
 **2. Directly from OpenBao.** Add `bao.stakater.com/pki: "true"` to the ServiceAccount. The ConfigMap then gives the workload two endpoints, and **which one you use matters for security**:
 
@@ -633,7 +734,7 @@ There's nothing to set up — PKI has no per-namespace sharing. Every namespace 
 
 ### Trust across tenants
 
-Different tenants have different CAs, so by default they don't trust each other. Trust is **opt-in**, **directional**, and decided by the **consuming** side — a peer can never grant itself trust. Turn it on with `pki.crossTenant.enabled`, then opt in with an annotation on one of your ServiceAccounts. The two annotations match the two directions of a call:
+Different tenants have different CAs, so by default they don't trust each other. Trust is **opt-in**, **directional**, and decided by the **consuming** side — a peer can never grant itself trust. Turn it on with `crossTenantPki.enabled` in the bootstrap chart (or `pki.crossTenant.enabled` when using the per-tenant chart standalone), then opt in with an annotation on one of your ServiceAccounts. The trust bundle lives in its own per-tenant render (`openbao-config-mto-<tenant>.trust`), independent of the cert-manager toggle — a cluster without trust-manager fails only that render. The two annotations match the two directions of a call:
 
 - **`pki-trust-tenant: team-b`** — *outbound.* "I call team-b and need to trust the **server** certificate it presents." Adds team-b's CA to your trust bundle — nothing more.
 - **`pki-allow-tenant: team-b`** — *inbound.* "I accept team-b as a **client** calling me." You can't accept a client you can't authenticate, so this **implies trust**: it adds team-b's CA to your bundle *and* lists team-b in your accepted-clients (the authorization layer). This one annotation covers the whole inbound case — you don't add `pki-trust-tenant` as well.

@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 9 — monitoring (off by default).
 
@@ -61,4 +62,5 @@ spec:
           annotations:
             summary: "ExternalSecret {{`{{ $labels.namespace }}/{{ $labels.name }}`}} not syncing"
             description: "Bao auth failure or missing source path. Check the ExternalSecret events + bao audit log."
+{{- end }}
 {{- end }}

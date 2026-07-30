@@ -27,7 +27,7 @@ App teams then create Certificate CRs referencing the Issuer:
 cert-manager handles renewal automatically. Requires cert-manager CRDs
 in the cluster — the chart doesn't install cert-manager itself.
 */}}
-{{- if and .Values.pki.enabled .Values.pki.certManager.enabled }}
+{{- if and .Values.pki.enabled .Values.pki.certManager.enabled (include "openbao.componentEnabled" (dict "component" "certManager" "ctx" .)) }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $labels := include "openbao.labels" . }}
 {{- $pkiMount := include "openbao.pkiMount" . }}
@@ -51,12 +51,42 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 ---
-# RBAC enabling cert-manager's controller to mint a serviceaccount-token
-# for the bao-cert-manager SA above. cert-manager uses that token to
-# authenticate against bao's kubernetes-auth method. Without this Role
-# + RoleBinding the Issuer enters VaultError "cannot create
-# serviceaccounts/token". See
-# https://cert-manager.io/docs/configuration/vault/#authenticating-with-a-service-account
+{{- /* RBAC enabling cert-manager's controller to mint a serviceaccount-token
+       for the bao-cert-manager SA above. cert-manager uses that token to
+       authenticate against bao's kubernetes-auth method. Without it the Issuer
+       enters VaultError "cannot create serviceaccounts/token". See
+       https://cert-manager.io/docs/configuration/vault/#authenticating-with-a-service-account
+
+       Under the operator the permission is DEFINED cluster-wide by the
+       bootstrap chart, as ClusterRole bao-cert-manager-token-create, and only
+       BOUND here. A namespaced RoleBinding grants a ClusterRole's rules solely
+       inside its own namespace, so the effective permission is identical to
+       defining a Role per namespace — cert-manager can mint a token for the
+       bao-cert-manager SA in this namespace and nowhere else.
+
+       The definition has to live outside this render. Kubernetes rejects a
+       RoleBinding whose roleRef does not resolve unless the caller holds `bind`
+       on it, and template-operator-v2 server-side dry-runs a whole render
+       before applying any of it — a dry-run never persists, so a Role rendered
+       alongside the RoleBinding does not exist when the RoleBinding is checked.
+       The binding is rejected, the render aborts, and the Role that would have
+       unblocked it is never written: a permanent livelock, not a race. Upstream
+       considers this working as designed (kubernetes/kubectl#1575, closed as a
+       duplicate of #1331: "without significant changes on API server, we can't
+       achieve this"), so the fix has to be on our side. Granting the operator
+       `bind` on the roleRef also works, and was rejected: it switches off
+       escalation prevention for that name, so a Role planted at the same name
+       would be bound unchecked. Defining the rules in the bootstrap chart —
+       which helm applies as a cluster admin, before any dry-run runs — keeps
+       the check fully live.
+
+       Standalone installs (component=all, no bootstrap chart, no operator) keep
+       the namespaced Role instead: helm writes for real there, in kind order,
+       so the Role exists by the time the RoleBinding is applied and there is no
+       dry-run to fail. This is the one place the sliced and standalone renders
+       intentionally differ; hack/chart-render-tests.sh records the exception. */}}
+{{- $standalone := eq $.Values.component "all" }}
+{{- if $standalone }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -70,6 +100,7 @@ rules:
     resourceNames: ["bao-cert-manager"]
     verbs: ["create"]
 ---
+{{- end }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -83,7 +114,7 @@ subjects:
     namespace: {{ $.Values.pki.certManager.controllerNamespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: {{ ternary "Role" "ClusterRole" $standalone }}
   name: bao-cert-manager-token-create
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
