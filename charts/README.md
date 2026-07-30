@@ -33,6 +33,7 @@ Each application then opts in to what it needs by adding a few annotations to it
 - [Feature: PKI (certificates)](#feature-pki-certificates)
 - [Feature: Human SSO (OIDC login)](#feature-human-sso-oidc-login)
 - [Which auth methods the charts set up](#which-auth-methods-the-charts-set-up)
+- [Checking health](#checking-health)
 - [Drift protection](#drift-protection)
 - [Configuration](#configuration)
 - [Going to production](#going-to-production)
@@ -863,6 +864,50 @@ The operator itself can manage JWT and cert login too, but the charts don't gene
 
 ---
 
+## Checking health
+
+The parent `TemplateInstance` aggregates the health of everything the charts render into one object, so a single read covers the whole install:
+
+```bash
+kubectl -n openbao-config-operator-system get templateinstances.templates.v2.stakater.com \
+  openbao-config-mto-parent -o jsonpath='{.status.outputs}' | jq .
+```
+
+Note the fully-qualified resource name — `kubectl get ti` resolves to the older `templateinstances.tenantoperator.stakater.com`.
+
+The map has two halves. The `shared*` fields cover the singletons the parent renders itself — the shared bao namespace, its KV and transit engines, the kubernetes auth mount and that mount's config. Nothing else reports on these, and they sit behind every tenant: if `sharedAuthConfigReady` is not `True`, no workload in any tenant can log into bao. The `ti*` fields cover one child `TemplateInstance` per tenant per slice, and which one is `False` says who fixes it:
+
+| Field | `False` means |
+|---|---|
+| `tiNsAllowed` | the TI landed outside the operator namespace — chart or bootstrap misconfiguration |
+| `tiParamsValid` | a parameter would not resolve, usually the tenant has no matching namespaces |
+| `tiRendered` | the chart itself failed to render for this tenant |
+| `tiApplied` | apply was refused — a missing CRD for an optional integration, or a missing RBAC grant |
+| `tiSynced` | drift watches are not active (absent entirely when `sync.mode: off`) |
+| `tiReady` | the roll-up; consult the others to place the fault |
+
+Two things to know before trusting the values.
+
+**Read `OutputsResolved` and `outputsObservedAt` alongside the map.** When the serialized outputs exceed template-operator-v2's size cap, the previous values are retained rather than replaced — so a fully populated, plausible map can be arbitrarily old. A failed source watch means the same thing more quietly: correct now, never refreshed again. Both states are reported on the condition, not in the values.
+
+```bash
+kubectl -n openbao-config-operator-system get templateinstances.templates.v2.stakater.com \
+  openbao-config-mto-parent \
+  -o jsonpath='{.status.outputsObservedAt}{"\n"}{.status.conditions[?(@.type=="OutputsResolved")].message}{"\n"}'
+```
+
+**Each field holds at most 50 entries.** Past that, entries are dropped and `OutputsResolved` reports the overflow. Since `ti*` carries one entry per child TI, the aggregate covers 50 children — with four slices enabled per tenant, twelve tenants. Beyond that scale, read the child TemplateInstances directly rather than the parent's roll-up.
+
+A `True` value is stored as the string `["True"]`, not `True` — the jsonPaths are condition filters and a filter result is JSON-encoded. To list what is unhealthy:
+
+```bash
+kubectl -n openbao-config-operator-system get templateinstances.templates.v2.stakater.com \
+  openbao-config-mto-parent -o jsonpath='{.status.outputs.tiReady}' \
+  | jq -r 'to_entries[] | select(.value != "[\"True\"]") | .key'
+```
+
+That also catches entries reading `[]`, which is a child that has not reported the condition yet.
+
 ## Drift protection
 
 The bootstrap chart turns on template-operator-v2's drift protection (`sync.mode: revert`, the chart's default — template-operator-v2's own default is `off`) for everything the Templates render: the per-tenant OpenBao resources, the `bao-config-<sa>` ConfigMaps, the ESO stores, and so on.
@@ -885,9 +930,12 @@ The flip side is that rendered resources cannot drift during an outage either �
 - Every per-tenant render reports a `Synced` condition — `True` means the drift watches are active, not that no drift has ever occurred. It is aggregated per tenant on the parent (with `sync.mode: off` the condition doesn't exist, so `tiSynced` reads empty):
 
   ```bash
-  kubectl -n openbao-config-operator-system get ti openbao-config-mto-parent \
-    -o jsonpath='{.status.outputs}'   # tiSynced per tenant
+  kubectl -n openbao-config-operator-system \
+    get templateinstances.templates.v2.stakater.com openbao-config-mto-parent \
+    -o jsonpath='{.status.outputs.tiSynced}'
   ```
+
+  See [Checking health](#checking-health) for the rest of the aggregate and how to read it.
 
 **What it does not do.**
 

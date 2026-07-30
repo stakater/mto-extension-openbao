@@ -91,25 +91,130 @@ spec:
     - name: serviceAccounts
     - name: deployments
 {{- if eq $slice.component "core" }}
-  # Per-tenant status output surfaced on the core child TI:
-  #   - caSerialNumber: tracks the tenant's PKI root CA. Flips only when
-  #     a super-admin SSO user regenerates the root, so an unexpected
-  #     change is a red flag.
+  # Per-tenant health of everything the core slice renders, one entry per kind.
+  # A TI reports that its objects were applied, not that the operator could then
+  # act on them: a tenant whose every OpenBao CR sits Ready=False
+  # reason=Forbidden still shows tiReady=True. The reason says who fixes it —
+  # Invalid is the tenant's spec, Forbidden the operator's bao token, BaoError the
+  # server, InternalError a controller bug.
+  #
+  # See the parent Template for the caps and the filter-path rule that govern
+  # these entries. Two specifics here: a kind the tenant switches off matches
+  # nothing and its fields stay absent (resolved, not failed), and policyReady /
+  # k8sAuthRoleReady are the fields that scale with workload count, so they reach
+  # the 50-entry cap first.
   outputs:
-    - name: caSerialNumber
-      from:
+    - name: namespaces
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoNamespace
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: nsReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: nsReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: engines
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoSecretEngine
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: engineReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: engineReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: authMethods
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoAuthMethod
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: authMethodReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: authMethodReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: k8sAuthConfigs
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoKubernetesAuthEngineConfig
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: k8sAuthConfigReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: k8sAuthConfigReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: k8sAuthRoles
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoKubernetesAuthRole
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: k8sAuthRoleReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: k8sAuthRoleReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: policies
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoPolicy
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: policyReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: policyReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: transitKeys
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoTransitKey
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: transitKeyReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: transitKeyReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: oidcConfigs
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoJWTOIDCAuthEngineConfig
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: oidcConfigReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: oidcConfigReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: oidcRoles
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoJWTOIDCAuthEngineRole
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: oidcRoleReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: oidcRoleReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: pkiRoles
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoPKISecretEngineRole
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: pkiRoleReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: pkiRoleReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    # caSerial flips only when a super-admin SSO user regenerates the root, so an
+    # unexpected change is a red flag. Read through fromAll, not from: `from`
+    # fails terminally when the named object is absent, which is every install
+    # with pki.enabled=false.
+    - name: pkiConfigs
+      fromAll:
         apiVersion: security.mto.stakater.com/v1alpha1
         kind: OpenBaoPKISecretEngineConfig
-        name: {{ `"{.parameters.tenant}-pki-root"` }}
         namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
       fields:
-        - { name: caSerial, jsonPath: "{.status.caSerialNumber}" }
+        - { name: pkiConfigReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: pkiConfigReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+        - { name: caSerial,        jsonPath: "{.status.caSerialNumber}" }
 {{- else if eq $slice.component "eso" }}
-  # Per-tenant status output surfaced on the eso child TI:
-  #   - externalSecretSync: per-workload ES sync state. Lets ops see which
-  #     workloads are not getting secrets without per-namespace iteration.
-  # Status size scales with per-tenant cardinality. Drop externalSecretSync
-  # if tenants run O(1000) ExternalSecrets.
+  # Per-tenant health of the eso slice. Reading the SecretStore as well as the
+  # ExternalSecrets distinguishes "this one workload" from "this tenant's bao
+  # auth" — a broken store fails every ExternalSecret pointing at it. Keyed
+  # namespace/name because these land in the workload namespaces, so the
+  # namespace identifies the workload. One entry per ExternalSecret, against the
+  # 50-entry cap.
   outputs:
     - name: externalSecretSync
       fromAll:
@@ -117,8 +222,64 @@ spec:
         kind: ExternalSecret
       keyTemplate: "{.metadata.namespace}/{.metadata.name}"
       fields:
-        - { name: esReady,       jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
-        - { name: esLastRefresh, jsonPath: "{.status.refreshTime}" }
+        - { name: esReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: esReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+        # Not status.refreshTime: that is a scalar, so one never-synced
+        # ExternalSecret would hold OutputsResolved False for the whole tenant.
+        - { name: esSince,  jsonPath: "{.status.conditions[?(@.type=='Ready')].lastTransitionTime}" }
+    - name: secretStores
+      fromAll:
+        apiVersion: external-secrets.io/v1
+        kind: SecretStore
+      keyTemplate: "{.metadata.namespace}/{.metadata.name}"
+      fields:
+        - { name: storeReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: storeReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+{{- else if eq $slice.component "certManager" }}
+  # Per-tenant health of the certManager slice. The Issuer goes Ready=False on its
+  # own when bao rejects the login, independently of whether this TI applied. The
+  # ServiceAccount, Role and RoleBinding this slice renders have no status to read.
+  outputs:
+    - name: issuers
+      fromAll:
+        apiVersion: cert-manager.io/v1
+        kind: Issuer
+      keyTemplate: "{.metadata.namespace}/{.metadata.name}"
+      fields:
+        - { name: issuerReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: issuerReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: policies
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoPolicy
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: policyReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: policyReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: k8sAuthRoles
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoKubernetesAuthRole
+        namespace: {{ $.Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: k8sAuthRoleReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: k8sAuthRoleReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+{{- else if eq $slice.component "trust" }}
+  # Per-tenant health of the trust slice. trust-manager reports Synced, not Ready
+  # — a filter on Ready would resolve to "[]" forever and read as "nothing to
+  # report" rather than as a failure. Bundles are cluster-scoped, so no namespace
+  # scopes the iteration. The slice's other object is a ConfigMap: no status.
+  outputs:
+    - name: bundles
+      fromAll:
+        apiVersion: trust.cert-manager.io/v1alpha1
+        kind: Bundle
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: bundleSynced, jsonPath: "{.status.conditions[?(@.type=='Synced')].status}" }
+        - { name: bundleReason, jsonPath: "{.status.conditions[?(@.type=='Synced')].reason}" }
 {{- end }}
   helm:
     chart:

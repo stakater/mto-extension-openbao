@@ -446,6 +446,70 @@ else
   check subread 0
 fi
 
+# 17. outputs — the status-outputs contract on every Template the bootstrap
+# installs. A duplicate name across the FLATTENED outputs[].fields[] does not
+# degrade one field: the Template reconciler sets phase=Invalid and returns
+# before rendering, so one collision stops that Template for every tenant. The
+# name pattern and single-{...} jsonPath shape are CRD admission rules, rejected
+# at apply time. Entry and field caps are 50 each. keyTemplate is required on our
+# own CRs, which all land in one namespace where the default {ns}/{name} repeats
+# a constant prefix.
+#
+# Every jsonPath must be a list query (wildcard, recursive descent, or filter): a
+# list query matching nothing resolves to "[]", while a scalar matching nothing
+# fails its whole field and holds OutputsResolved False — and every non-condition
+# field in our status types is omitempty, so absent is normal. SCALAR_OK lists
+# the exceptions; caSerial has no condition to read the CA serial from.
+SCALAR_OK="caSerial"
+outputs_ok=0; outputs_detail=""
+"$HELM" template boot "$BOOTSTRAP" \
+  --set-string parent.eso=enabled \
+  --set-string parent.certManager.enabled=true \
+  --set-string crossTenantPki.enabled=true \
+  | "$YQ" ea 'select(.kind == "Template")' - > "$WORK/boot-templates.yaml"
+
+for tname in $("$YQ" ea -N 'select(.kind == "Template") | .metadata.name' "$WORK/boot-templates.yaml"); do
+  sel="select(.kind == \"Template\" and .metadata.name == \"$tname\")"
+  nentries="$("$YQ" ea "$sel | (.spec.outputs // []) | length" "$WORK/boot-templates.yaml")"
+  if [ "$nentries" -eq 0 ]; then continue; fi
+  [ "$nentries" -le 50 ] || outputs_detail="$outputs_detail [$tname $nentries outputs > 50]"
+
+  names="$("$YQ" ea "$sel | [.spec.outputs[].fields[].name] | .[]" "$WORK/boot-templates.yaml")"
+  dupes="$(printf '%s\n' "$names" | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$dupes" ] || outputs_detail="$outputs_detail [$tname duplicate field name(s): $dupes]"
+
+  bad="$(printf '%s\n' "$names" "$("$YQ" ea "$sel | [.spec.outputs[].name] | .[]" "$WORK/boot-templates.yaml")" \
+    | { grep -vE '^[a-zA-Z][a-zA-Z0-9]{0,62}$' || true; } | tr '\n' ' ')"
+  [ -z "$bad" ] || outputs_detail="$outputs_detail [$tname bad name(s): $bad]"
+
+  # Per-entry field cap, keyTemplate on our own CRs, and the jsonPath shape.
+  for i in $(seq 0 $((nentries - 1))); do
+    e="$sel | .spec.outputs[$i]"
+    nf="$("$YQ" ea "$e | .fields | length" "$WORK/boot-templates.yaml")"
+    [ "$nf" -le 50 ] || outputs_detail="$outputs_detail [$tname outputs[$i] $nf fields > 50]"
+    grp="$("$YQ" ea "$e | (.fromAll.apiVersion // .from.apiVersion)" "$WORK/boot-templates.yaml")"
+    kt="$("$YQ" ea "$e | .keyTemplate // \"\"" "$WORK/boot-templates.yaml")"
+    if [ "${grp%%/*}" = "security.mto.stakater.com" ] && \
+       [ "$("$YQ" ea "$e | has(\"fromAll\")" "$WORK/boot-templates.yaml")" = "true" ] && [ -z "$kt" ]; then
+      outputs_detail="$outputs_detail [$tname outputs[$i] fromAll on our CRs without keyTemplate]"
+    fi
+  done
+done
+
+while IFS='|' read -r fname jpath; do
+  [ -n "$fname" ] || continue
+  printf '%s\n' "$jpath" | grep -qE '^\{[^{}]*\}$' \
+    || outputs_detail="$outputs_detail [$fname jsonPath is not a single {...}: $jpath]"
+  case " $SCALAR_OK " in *" $fname "*) continue ;; esac
+  printf '%s\n' "$jpath" | grep -qE '\*|\.\.|\[\?' \
+    || outputs_detail="$outputs_detail [$fname is a scalar path: $jpath]"
+done <<EOF
+$("$YQ" ea -N 'select(.kind == "Template") | .spec.outputs[]?.fields[]? | .name + "|" + .jsonPath' "$WORK/boot-templates.yaml")
+EOF
+
+if [ -n "$outputs_detail" ]; then outputs_ok=1; fi
+check outputs "$outputs_ok" "$outputs_detail"
+
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust
 templateset_case all-off   disabled false false openbao-config-mto

@@ -54,12 +54,60 @@ spec:
       value: {{ include "openbao-config-mto-bootstrap.certManagerEnabled" . | quote }}
     - name: crossTenantPkiEnabled
       value: {{ include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" . | quote }}
-  # Cluster-wide aggregator. The parent's rendered output includes every
-  # child TI it emits, so fromAll over TemplateInstance gives one-shot
-  # per-tenant health from the parent TI's status — no per-child
-  # iteration needed:
-  #   kubectl -n <opNs> get ti openbao-config-mto-parent -o jsonpath='{.status.outputs}'
+  # Health of the shared bao scaffolding this Template renders itself, plus every
+  # child TI it emits. The shared objects are singletons behind every tenant —
+  # if the kubernetes auth config is not Ready, no tenant's workload can log into
+  # bao — and they appear on no child TI.
+  #
+  # Constraints that govern every entry here and in the child Template:
+  #   - Each field's inner map holds 50 entries; beyond that entries are dropped
+  #     and OutputsResolved reports it. `tenants` keys per child TI, so it covers
+  #     50 children — 12 tenants at four slices each.
+  #   - jsonPaths are condition filters, never plain field reads: a filter
+  #     matching nothing resolves to "[]", while a scalar path matching nothing
+  #     fails its whole field and holds OutputsResolved False.
+  #   - Read the map with the OutputsResolved condition and outputsObservedAt: on
+  #     size-cap overflow the previous values are retained, so a populated map
+  #     can be stale, and a failed source watch never refreshes.
   outputs:
+    - name: sharedNamespace
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoNamespace
+        namespace: {{ .Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: sharedNsReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: sharedNsReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: sharedEngines
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoSecretEngine
+        namespace: {{ .Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: sharedEngineReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: sharedEngineReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: sharedAuthMethod
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoAuthMethod
+        namespace: {{ .Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: sharedAuthReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: sharedAuthReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    - name: sharedAuthConfig
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoKubernetesAuthEngineConfig
+        namespace: {{ .Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: sharedAuthConfigReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: sharedAuthConfigReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    # tiRendered / tiNsAllowed / tiParamsValid separate failure classes a bare
+    # tiReady=False cannot: each needs a different fix.
     - name: tenants
       fromAll:
         apiVersion: templates.v2.stakater.com/v2alpha1
@@ -70,6 +118,11 @@ spec:
         - { name: tiApplied,           jsonPath: "{.status.conditions[?(@.type=='Applied')].status}" }
         - { name: tiReady,             jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
         - { name: tiSynced,            jsonPath: "{.status.conditions[?(@.type=='Synced')].status}" }
-        - { name: tiMatchedNamespaces, jsonPath: "{.status.matchedNamespaces}" }
+        - { name: tiRendered,          jsonPath: "{.status.conditions[?(@.type=='Rendered')].status}" }
+        - { name: tiNsAllowed,         jsonPath: "{.status.conditions[?(@.type=='TargetNamespaceAllowed')].status}" }
+        - { name: tiParamsValid,       jsonPath: "{.status.conditions[?(@.type=='ParametersValid')].status}" }
+        # [*] keeps this a list query: matchedNamespaces is absent until a
+        # namespaceSelector resolves. Same value once populated.
+        - { name: tiMatchedNamespaces, jsonPath: "{.status.matchedNamespaces[*]}" }
   gotemplate: |
 {{ .Files.Get "files/parent-gotemplate.tpl" | indent 4 }}
