@@ -1,4 +1,36 @@
 {{/*
+Returns "true" when the given component should render in this pass, "" when
+it should not. Every template block belongs to exactly one component (core,
+eso, certManager, trust); component=all renders them all. trust (the
+trust-manager Bundle wiring) is separate from certManager because the two
+depend on different operators' CRDs and toggle independently. Fails the
+render on an unrecognized .Values.component so a typo surfaces loudly
+instead of silently emitting nothing.
+Usage:  {{ if include "openbao.componentEnabled" (dict "component" "eso" "ctx" $) }}
+*/}}
+{{- define "openbao.componentEnabled" -}}
+{{- $valid := list "all" "core" "eso" "certManager" "trust" -}}
+{{- if not (has .ctx.Values.component $valid) -}}
+{{- fail (printf "unknown component %q — must be one of: %s" .ctx.Values.component (join ", " $valid)) -}}
+{{- end -}}
+{{- /* A sliced render only happens under the bootstrap's per-tenant
+       TemplateInstance convention (openbao-config-mto-<tenant>[.suffix]),
+       and template-operator-v2 stamps that TI name as a label value on every
+       rendered resource — Kubernetes caps label values at 63 chars. Fail the
+       render with a clear message instead of letting every object bounce off
+       server-side dry-run with an opaque invalid-label error. component=all
+       (standalone helm install, no TI) is exempt. */ -}}
+{{- if ne .ctx.Values.component "all" -}}
+{{- $suffix := index (dict "core" "" "eso" ".eso" "certManager" ".certmanager" "trust" ".trust") .ctx.Values.component -}}
+{{- $tiName := printf "openbao-config-mto-%s%s" (.ctx.Values.tenant | default "") $suffix -}}
+{{- if gt (len $tiName) 63 -}}
+{{- fail (printf "tenant name %q (%d chars) makes TemplateInstance name %q %d chars; it is stamped as a label value on every rendered resource and label values cap at 63 — shorten the tenant name (budget: ≤44 core, ≤40 .eso, ≤38 .trust, ≤32 .certmanager). Checked in every template, so the file named above is incidental." .ctx.Values.tenant (len .ctx.Values.tenant) $tiName (len $tiName)) -}}
+{{- end -}}
+{{- end -}}
+{{- if or (eq .ctx.Values.component "all") (eq .ctx.Values.component .component) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Returns the JSON-list capabilities string for a tier.
 Usage:  {{ include "openbao.tierCaps" (dict "tier" "editor" "tierCaps" .Values.tierCaps) }}
 */}}

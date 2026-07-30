@@ -12,5 +12,5 @@ description: |
   Requires: the OpenBao config operator installed (provides the OpenBao*
   CRDs this chart emits).
 type: application
-version: 0.10.0
+version: 0.12.0
 appVersion: "0.4.0"

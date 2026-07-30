@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 2 — per-tenant transit secret engine (doc-aligned model).
 
@@ -70,5 +71,6 @@ spec:
   {{- if $rotate }}
   autoRotatePeriod: {{ $rotate | quote }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

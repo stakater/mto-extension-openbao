@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 3 — per-tenant PKI secret engine (doc-aligned single-role model).
 
@@ -96,13 +97,17 @@ metadata:
 spec:
   path: {{ $m }}
   openbaoNamespace: {{ $tenant }}/
-  {{- if and $.Values.pki.crossTenant.enabled (eq $m $activeMount) }}
+  {{- /* Deliberately not gated on pki.crossTenant.enabled — that would let an
+         optional toggle mutate this core object. A CA cert is public.
+
+         It IS gated on the active mount. Two CRs naming one ConfigMap each
+         prune the other's cert on every reconcile, so exactly one mount may
+         publish. When activeMount moves, the new mount's CR takes over and
+         retains the outgoing CA under ca-previous.crt — that retention is what
+         keeps certificates the old CA signed verifying through the migration. */}}
+  {{- if eq $m $activeMount }}
   # Publish this tenant's CA cert to a ConfigMap so trust-manager Bundles can
   # source it for cross-tenant trust (see 11-pki-cross-tenant-trust.yaml).
-  # Only the ACTIVE mount publishes: two CRs writing one ConfigMap would each
-  # prune the other's cert on every reconcile. When activeMount moves, the new
-  # CR takes over and retains the outgoing CA under ca-previous.crt, which is
-  # what keeps certs from the old CA verifying during the migration.
   publishCABundleConfigMap: {{ $tenant }}-ca
   {{- end }}
   {{- if $hier.enabled }}
@@ -188,5 +193,6 @@ spec:
   {{- if $r.keyBits }}
   keyBits: {{ $r.keyBits }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

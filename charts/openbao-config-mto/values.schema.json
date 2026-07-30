@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "openbao-config-mto values",
+  "description": "Deliberately minimal. This chart is normally rendered by template-operator-v2 from the bootstrap chart's valuesTemplate, so any constraint here has to accept everything t-op-v2 can send -- including serviceAccounts/deployments arriving as JSON null when a tenant has no workloads yet. Only the switches consumed as string comparisons are constrained, because a near-miss there (yes / on / True / 1) silently disables a feature. serviceAccounts, deployments, tierCaps, transit.tierCaps, pki.roles and sso.tiers are left entirely unconstrained on purpose. The boolean forms mirror the bootstrap chart's _helpers.tpl: a boolean, or the quoted strings \"true\"/\"false\".",
+  "type": "object",
+  "definitions": {
+    "boolish": {
+      "description": "true or false, as a YAML boolean or as the quoted string \"true\"/\"false\". yes, on, off, 1, 0, True and TRUE are rejected, because they would be read as \"not enabled\" without warning.",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string", "enum": ["true", "false"] }
+      ]
+    }
+  },
+  "comment-on-component": "`component` is deliberately NOT constrained here. templates/_helpers.tpl already fails on an unknown component with a message naming the valid set, and a schema enum would pre-empt it with a vaguer error while duplicating the valid list in a second place. Schema covers only the switches that had no guard at all.",
+  "properties": {
+    "eso": {
+      "description": "A string, not a boolean: \"enabled\" or \"disabled\".",
+      "type": "string",
+      "enum": ["enabled", "disabled"]
+    },
+    "pki": {
+      "type": "object",
+      "comment-on-mounts": "mounts and activeMount drive CA replacement. Constrained only for shape — a bare string where a list belongs, an empty mount path. Whether activeMount names a mount that is actually rendered is checked by openbao.pkiActiveMount in _helpers.tpl, which can see the resolved list; a schema cannot.",
+      "properties": {
+        "enabled": { "$ref": "#/definitions/boolish" },
+        "hierarchy": {
+          "type": "object",
+          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+        },
+        "crossTenant": {
+          "type": "object",
+          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+        },
+        "certManager": {
+          "type": "object",
+          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+        },
+        "mounts": {
+          "description": "Every PKI mount path to render scaffolding for. Empty or absent means just the one mount implied by mountPath/hierarchy.mountPath.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "activeMount": {
+          "description": "The mount that issues certificates. Empty or absent means the original mount.",
+          "type": "string"
+        }
+      }
+    },
+    "transit": {
+      "type": "object",
+      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+    },
+    "sso": {
+      "type": "object",
+      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+    }
+  }
+}

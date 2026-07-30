@@ -1,3 +1,4 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
 {{/*
 Section 4c (cross-tenant transit share-out) — per
 `bao.stakater.com/transit-export-tenant: <peer-1>,<peer-2>` annotation
@@ -111,6 +112,7 @@ spec:
   {{- if $.Values.token.period }}
   tokenPeriod: {{ $.Values.token.period }}
   {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

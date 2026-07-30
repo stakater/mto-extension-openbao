@@ -38,14 +38,22 @@ spec:
       value: {{ .Values.parent.tenantLabelKey | quote }}
     - name: sharedTenantName
       value: {{ .Values.parent.sharedTenantName | quote }}
+    {{- /* Toggles go through the validating helpers so a typo fails the render
+           instead of silently disabling the integration. For accepted values
+           the output is identical to quoting the raw value — see _helpers.tpl
+           for why they are still routed this way. */}}
     - name: ssoEnabled
-      value: {{ .Values.parent.sso.enabled | quote }}
+      value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" . | quote }}
     - name: ssoIssuerUrl
       value: {{ .Values.parent.sso.issuerUrl | quote }}
     - name: eso
-      value: {{ .Values.parent.eso | quote }}
+      value: {{ include "openbao-config-mto-bootstrap.esoMode" . | quote }}
     - name: externalSecretRefreshInterval
       value: {{ .Values.parent.externalSecretRefreshInterval | quote }}
+    - name: certManagerEnabled
+      value: {{ include "openbao-config-mto-bootstrap.certManagerEnabled" . | quote }}
+    - name: crossTenantPkiEnabled
+      value: {{ include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" . | quote }}
   # Cluster-wide aggregator. The parent's rendered output includes every
   # child TI it emits, so fromAll over TemplateInstance gives one-shot
   # per-tenant health from the parent TI's status — no per-child

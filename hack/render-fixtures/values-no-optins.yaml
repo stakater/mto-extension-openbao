@@ -1,0 +1,22 @@
+# Render-test fixture: cert-manager toggle on but zero PKI opt-ins, no
+# deployment annotations, crossTenant off. The certManager component must
+# render zero objects with these values (a tenant that hasn't opted into
+# anything is a benign empty slice, not a failure).
+tenant: team-a
+knownTenants: "team-a,team-b"
+
+eso: enabled
+
+pki:
+  enabled: true
+  certManager:
+    enabled: true
+
+serviceAccounts:
+  - metadata:
+      name: app-a
+      namespace: team-a-dev
+      annotations:
+        bao.stakater.com/tier: editor
+
+deployments: []
