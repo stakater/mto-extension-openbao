@@ -8,12 +8,14 @@ write access to kv/data/<env>/from-<own-tenant>/to-<peer>/*.
 {{- $env := .Values.env }}
 {{- $shared := .Values.sharedTenant.name }}
 {{- $labels := include "openbao.labels" . }}
+{{- $tenantNamespaces := include "openbao.tenantNamespaces" . | fromYaml }}
+{{- $appClaims := include "openbao.appClaims" . | fromYaml }}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
-{{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
-{{- $saName := dig "metadata" "name" "" $sa }}
-{{- $saNs := dig "metadata" "namespace" "" $sa }}
+{{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml }}
+{{- $saName := $f.name }}
+{{- $saNs := $f.ns }}
 {{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/kv-export-tenant" "" $sa }}
-{{- if and $tier $saName $saNs $exposeRaw }}
+{{- if and $f.kvOn (not $f.errors) $saName $saNs $exposeRaw }}
 {{- range $peer := splitList "," $exposeRaw }}
 {{- $peer = trim $peer }}
 {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}

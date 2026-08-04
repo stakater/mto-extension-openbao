@@ -433,7 +433,7 @@ fi
 # values-full.yaml has team-a-dev/app-a subscribing to team-a-tools. Its policy
 # must not carry a write/delete verb on from-team-a-tools; its OWN from-team-a-dev
 # prefix must keep them, which is what stops this passing vacuously.
-subread_policy="$("$YQ" ea 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-a-editor") | .spec.policy' "$WORK/core.yaml")"
+subread_policy="$("$YQ" ea 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-a") | .spec.policy' "$WORK/core.yaml")"
 sub_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-tools/' || true)"
 own_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-dev/' | grep -c 'create' || true)"
 if [ -z "$sub_line" ]; then
@@ -509,6 +509,167 @@ EOF
 
 if [ -n "$outputs_detail" ]; then outputs_ok=1; fi
 check outputs "$outputs_ok" "$outputs_detail"
+
+
+# 18. appgrain — the KV boundary is the app, not the namespace. A bare
+# <env>/<ns>/ own-prefix grant anywhere means an app can read and overwrite
+# every other app in its namespace, which is the whole point of this layout.
+# Also pins that bao.stakater.com/app is honoured (app-a resolves to `payments`)
+# and that an SA without it falls back to its own name.
+appgrain_bare="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy") | .spec.policy' "$WORK/all.yaml" \
+  | { grep -E 'path "kv/(data|metadata|delete|undelete|destroy)/dev/team-a-(dev|tools)/\*"' || true; })"
+appgrain_app="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-a") | .spec.policy' "$WORK/all.yaml" \
+  | { grep -c 'kv/data/dev/team-a-dev/payments/\*' || true; })"
+appgrain_dflt="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-c") | .spec.policy' "$WORK/all.yaml" \
+  | { grep -c 'kv/data/dev/team-a-dev/app-c/\*' || true; })"
+if [ -n "$appgrain_bare" ]; then
+  check appgrain 1 "namespace-wide own-prefix grant found: $(printf '%s' "$appgrain_bare" | tr -s ' ' | head -1)"
+elif [ "$appgrain_app" -eq 0 ]; then
+  check appgrain 1 "bao.stakater.com/app not honoured — expected kv/data/dev/team-a-dev/payments/*"
+elif [ "$appgrain_dflt" -eq 0 ]; then
+  check appgrain 1 "app did not default to the ServiceAccount name for app-c"
+else
+  check appgrain 0
+fi
+
+# 19. rolename — the tier must not appear in a policy/role name. With it there, a
+# tier edit renames the object, and a rename is delete-then-create: deleting a
+# bao policy strips live tokens immediately and the workload's cached
+# VAULT_K8S_ROLE then names a role that no longer exists.
+rolename_bad="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy" or .kind == "OpenBaoKubernetesAuthRole") | .metadata.name' "$WORK/all.yaml" \
+  | { grep -E -- '-(viewer|editor|admin|audit-read)$' || true; } | { grep -v '^sso-' || true; } | tr '\n' ' ')"
+[ -z "$rolename_bad" ] && check rolename 0 || check rolename 1 "tier in object name: $rolename_bad"
+
+# 20. transitmatch — every transit key a policy grants must be a key the chart
+# actually creates. These are derived in different templates from different
+# objects, so a divergence is silent: the workload gets permission denied on a
+# key that does not exist, or a key is created that nothing can use and then
+# stays in bao forever because OpenBaoTransitKey is orphan-by-design.
+granted="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy") | .spec.policy' "$WORK/all.yaml" \
+  | { grep -oE 'transit/encrypt/[a-z0-9-]+' || true; } | sed 's|transit/encrypt/||' | sort -u)"
+created="$("$YQ" ea -N 'select(.kind == "OpenBaoTransitKey") | .spec.name' "$WORK/all.yaml" | sort -u)"
+missing="$(comm -23 <(printf '%s\n' "$granted") <(printf '%s\n' "$created") | tr '\n' ' ')"
+unused="$(comm -13 <(printf '%s\n' "$granted") <(printf '%s\n' "$created") | tr '\n' ' ')"
+if [ -n "$missing" ]; then
+  check transitmatch 1 "policy grants keys that are never created: $missing"
+elif [ -n "$unused" ]; then
+  check transitmatch 1 "keys created that no policy grants: $unused"
+else
+  check transitmatch 0
+fi
+
+# 21. guards — a misconfigured ServiceAccount is reported next to itself and does
+# NOT stop the rest of the tenant rendering. One TemplateInstance renders every
+# namespace a tenant owns, so a fail() would freeze unrelated namespaces; the
+# chart emits bao-config-<sa>-error instead. Each broken SA must get exactly one
+# error ConfigMap and no policy, and the valid SA in another namespace must still
+# get its full object set.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-guards.yaml" --set component=all > "$WORK/guards.yaml" 2>"$WORK/guards.err" \
+  && guards_rendered=0 || guards_rendered=1
+guards_detail=""
+if [ "$guards_rendered" -ne 0 ]; then
+  guards_detail="render failed outright — a per-SA mistake must not fail the tenant: $(head -1 "$WORK/guards.err")"
+else
+  broken="g-tier-only g-no-tier g-bad-tier g-empty-caps g-injection g-wildcard g-reserved g-claimed g-claimer g-orphan-share default g-foreign-ns g-unknown-key g-bad-bool"
+  for sa in $broken; do
+    n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$sa-error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+    [ "$n" -eq 1 ] || guards_detail="$guards_detail [no error ConfigMap for $sa]"
+    p="$("$YQ" ea -N "select(.kind == \"OpenBaoPolicy\" and .metadata.name == \"team-a-team-a-dev-$sa\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+    [ "$p" -eq 0 ] || guards_detail="$guards_detail [$sa was granted a policy despite being rejected]"
+    c="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$sa\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+    [ "$c" -eq 0 ] || guards_detail="$guards_detail [$sa got a real bao-config ConfigMap]"
+  done
+  # the injection payload must never reach a rendered policy body
+  sudo_leak="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy") | .spec.policy' "$WORK/guards.yaml" | { grep -c 'sudo' || true; })"
+  [ "$sudo_leak" -eq 0 ] || guards_detail="$guards_detail [injected capability reached a policy body]"
+  # and the unrelated namespace is untouched
+  for kind in OpenBaoPolicy OpenBaoKubernetesAuthRole; do
+    g="$("$YQ" ea -N "select(.kind == \"$kind\" and .metadata.name == \"team-a-team-a-prod-good-sa\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+    [ "$g" -eq 1 ] || guards_detail="$guards_detail [valid SA in another namespace lost its $kind]"
+  done
+fi
+[ -z "$guards_detail" ] && check guards 0 || check guards 1 "$guards_detail"
+
+# 22. esdedupe — two Deployments sharing a ServiceAccount and asking for the same
+# secret is a normal pattern (a service and its migration job). It must render
+# ONE ExternalSecret, not fail: the rendered name is per-ServiceAccount, so both
+# claim it. Two different asks under one name genuinely cannot be rendered and
+# must be reported on both Deployments instead.
+es_detail=""
+dedupe="$("$YQ" ea -N 'select(.kind == "ExternalSecret" and .metadata.name == "good-sa-db") | .metadata.name' "$WORK/guards.yaml" | { grep -c . || true; })"
+[ "$dedupe" -eq 1 ] || es_detail="$es_detail [identical asks rendered $dedupe ExternalSecrets, want 1]"
+clash="$("$YQ" ea -N 'select(.kind == "ExternalSecret" and .metadata.name == "good-sa-cfg") | .metadata.name' "$WORK/guards.yaml" | { grep -c . || true; })"
+[ "$clash" -eq 0 ] || es_detail="$es_detail [conflicting asks still rendered an ExternalSecret]"
+for d in d-clash-a d-clash-b d-no-sa d-misplaced; do
+  n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-deploy-$d-error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+  [ "$n" -eq 1 ] || es_detail="$es_detail [no error ConfigMap for Deployment $d]"
+done
+[ -z "$es_detail" ] && check esdedupe 0 || check esdedupe 1 "$es_detail"
+
+
+# 23. removedvalue — `defaultCapability` was deleted, and Helm ignores unknown
+# values silently. A values file still setting it (a stale GitOps values, or
+# `helm upgrade --reuse-values` carrying it forward) would therefore lose every
+# grant it believes it is making. values.schema.json is deliberately permissive
+# and has no additionalProperties:false, so the helper's fail() is the only
+# defense; without this check a refactor of componentEnabled could drop it and
+# nothing would go red.
+removedvalue_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" --set defaultCapability=none 2>&1 || true)"
+if printf '%s' "$removedvalue_out" | grep -q "defaultCapability was removed"; then
+  check removedvalue 0
+else
+  check removedvalue 1 "setting defaultCapability must fail the render with a migration message"
+fi
+
+# 24. uniqueids — no two objects in one slice may share (apiVersion, kind,
+# namespace, name). The disjoint and union checks compare ACROSS slices and
+# cannot see a duplicate inside one: it appears on both sides of the diff and
+# cancels out. A within-slice duplicate silently applies last-wins, which for a
+# transit key would mean two apps sharing crypto material.
+uniqueids_detail=""
+for c in all $SLICES; do
+  render "$c" "$FIXTURES/values-full.yaml" > "$WORK/uid-$c.yaml" 2>/dev/null || continue
+  dupes="$("$YQ" ea -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-$c.yaml" \
+    | { grep -v '^null' || true; } | sort | uniq -d | tr '\n' ' ')"
+  [ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [$c: $dupes]"
+done
+# the guards fixture too — it renders the error-ConfigMap paths
+render all "$FIXTURES/values-guards.yaml" > "$WORK/uid-guards.yaml" 2>/dev/null
+dupes="$("$YQ" ea -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-guards.yaml" \
+  | { grep -v '^null' || true; } | sort | uniq -d | tr '\n' ' ')"
+[ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [guards: $dupes]"
+[ -z "$uniqueids_detail" ] && check uniqueids 0 || check uniqueids 1 "duplicate object identity within a slice:$uniqueids_detail"
+
+# 25. grantmatch — an ExternalSecret must never be rendered for a path the
+# workload's policy does not grant. Both cases here produced a permanent silent
+# 403 before: reading a sibling namespace's _shared/ without kv-subscribe-ns, and
+# importing from a tenant absent from the roster. Positive controls sit alongside
+# so the check cannot pass by rejecting everything.
+grantmatch_detail=""
+for d in d-sub-nogrant d-imp-bad; do
+  n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-deploy-$d-error\") | .metadata.name" "$WORK/uid-guards.yaml" | { grep -c . || true; })"
+  [ "$n" -eq 1 ] || grantmatch_detail="$grantmatch_detail [no error ConfigMap for $d]"
+done
+for es in sub-ok-y good-sa-z; do
+  n="$("$YQ" ea -N "select(.kind == \"ExternalSecret\" and .metadata.name == \"$es\") | .metadata.name" "$WORK/uid-guards.yaml" | { grep -c . || true; })"
+  [ "$n" -eq 1 ] || grantmatch_detail="$grantmatch_detail [positive control $es did not render]"
+done
+# an app annotation with no engine registers nothing and must say so
+n="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-g-app-only-error") | .metadata.name' "$WORK/uid-guards.yaml" | { grep -c . || true; })"
+[ "$n" -eq 1 ] || grantmatch_detail="$grantmatch_detail [app-without-engine not reported]"
+[ -z "$grantmatch_detail" ] && check grantmatch 0 || check grantmatch 1 "$grantmatch_detail"
+
+# 26. esooff — with ESO disabled install-wide, a Deployment still asking for a
+# secret must be told. The whole ExternalSecret file is gated on eso=enabled, so
+# this report has to come from the core slice or it cannot exist at all.
+esooff_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-guards.yaml" \
+  --set component=core --set eso=disabled 2>&1 || true)"
+if printf '%s' "$esooff_out" | grep -q "External Secrets Operator is disabled for this whole install"; then
+  check esooff 0
+else
+  check esooff 1 "eso=disabled must still report Deployments that request secrets"
+fi
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust

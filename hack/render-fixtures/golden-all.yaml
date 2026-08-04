@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-svc
   namespace: team-a-dev
@@ -33,9 +33,9 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: partner-data
+  name: app-a-partner-data
   namespace: team-a-dev
 spec:
   dataFrom:
@@ -47,7 +47,7 @@ spec:
     name: app-a-share-team-b-bao
   target:
     creationPolicy: Owner
-    name: partner-data
+    name: app-a-partner-data
 ---
 # Source: openbao-config-mto/templates/05-deployment-externalsecrets.yaml
 apiVersion: external-secrets.io/v1
@@ -58,9 +58,9 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: tools-shared
+  name: app-a-tools-shared
   namespace: team-a-dev
 spec:
   dataFrom:
@@ -72,7 +72,7 @@ spec:
     name: app-a-bao
   target:
     creationPolicy: Owner
-    name: tools-shared
+    name: app-a-tools-shared
 ---
 # Source: openbao-config-mto/templates/05-deployment-externalsecrets.yaml
 apiVersion: external-secrets.io/v1
@@ -83,21 +83,21 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: web-cfg
+  name: app-a-web-cfg
   namespace: team-a-dev
 spec:
   dataFrom:
     - extract:
-        key: dev/team-a-dev/app-config
+        key: dev/team-a-dev/payments/app-config
   refreshInterval: 1h
   secretStoreRef:
     kind: SecretStore
     name: app-a-bao
   target:
     creationPolicy: Owner
-    name: web-cfg
+    name: app-a-web-cfg
 ---
 # Source: openbao-config-mto/templates/05-deployment-externalsecrets.yaml
 apiVersion: external-secrets.io/v1
@@ -108,14 +108,14 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: web-db
+  name: app-a-web-db
   namespace: team-a-dev
 spec:
   data:
     - remoteRef:
-        key: dev/team-a-dev/db-creds
+        key: dev/team-a-dev/payments/db-creds
         property: password
       secretKey: password
   refreshInterval: 1h
@@ -124,7 +124,7 @@ spec:
     name: app-a-bao
   target:
     creationPolicy: Owner
-    name: web-db
+    name: app-a-web-db
 ---
 # Source: openbao-config-mto/templates/04-sa-own-tenant.yaml
 apiVersion: external-secrets.io/v1
@@ -135,7 +135,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: app-a-bao
   namespace: team-a-dev
@@ -145,7 +145,7 @@ spec:
       auth:
         kubernetes:
           mountPath: kubernetes
-          role: team-a-team-a-dev-app-a-editor
+          role: team-a-team-a-dev-app-a
           serviceAccountRef:
             name: app-a
       caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJGSVhUVVJFT05MWU5PVEFSRUFMQ0VSVEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
@@ -163,7 +163,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: app-a-share-team-b-bao
   namespace: team-a-dev
@@ -191,7 +191,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: app-c-bao
   namespace: team-a-dev
@@ -201,7 +201,7 @@ spec:
       auth:
         kubernetes:
           mountPath: kubernetes
-          role: team-a-team-a-dev-app-c-viewer
+          role: team-a-team-a-dev-app-c
           serviceAccountRef:
             name: app-c
       caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJGSVhUVVJFT05MWU5PVEFSRUFMQ0VSVEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
@@ -219,7 +219,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: app-b-bao
   namespace: team-a-tools
@@ -229,7 +229,7 @@ spec:
       auth:
         kubernetes:
           mountPath: kubernetes
-          role: team-a-team-a-tools-app-b-admin
+          role: team-a-team-a-tools-app-b
           serviceAccountRef:
             name: app-b
       caBundle: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJGSVhUVVJFT05MWU5PVEFSRUFMQ0VSVEFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEKLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
@@ -247,7 +247,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-team-a
   namespace: monitoring
@@ -296,7 +296,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-bao-egress
   namespace: team-a-dev
@@ -319,7 +319,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-default-deny
   namespace: team-a-dev
@@ -366,7 +366,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-bao-egress
   namespace: team-a-tools
@@ -389,7 +389,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-default-deny
   namespace: team-a-tools
@@ -436,7 +436,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-cert-manager-token-create
   namespace: team-a-dev
@@ -458,7 +458,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-cert-manager-token-create
   namespace: team-a-dev
@@ -481,7 +481,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-kubernetes
   namespace: openbao-config-operator-system
@@ -499,7 +499,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-oidc
   namespace: openbao-config-operator-system
@@ -517,7 +517,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-oidc-config
   namespace: openbao-config-operator-system
@@ -539,7 +539,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-admin
   namespace: openbao-config-operator-system
@@ -575,7 +575,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-audit-read
   namespace: openbao-config-operator-system
@@ -611,7 +611,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-editor
   namespace: openbao-config-operator-system
@@ -647,7 +647,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-super-admin
   namespace: openbao-config-operator-system
@@ -683,7 +683,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-viewer
   namespace: openbao-config-operator-system
@@ -719,7 +719,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-kubernetes-config
   namespace: openbao-config-operator-system
@@ -742,7 +742,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
@@ -769,7 +769,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
@@ -796,7 +796,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
@@ -823,7 +823,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
@@ -850,16 +850,16 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: team-a-team-a-dev-app-a-editor
+  name: team-a-team-a-dev-app-a
   namespace: openbao-config-operator-system
 spec:
-  name: team-a-team-a-dev-app-a-editor
+  name: team-a-team-a-dev-app-a
   openbaoNamespace: team-a/
   path: kubernetes
   policies:
-    - team-a-team-a-dev-app-a-editor
+    - team-a-team-a-dev-app-a
   targetNamespaces:
     targetNamespaces:
       - team-a-dev
@@ -877,16 +877,16 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: team-a-team-a-dev-app-c-viewer
+  name: team-a-team-a-dev-app-c
   namespace: openbao-config-operator-system
 spec:
-  name: team-a-team-a-dev-app-c-viewer
+  name: team-a-team-a-dev-app-c
   openbaoNamespace: team-a/
   path: kubernetes
   policies:
-    - team-a-team-a-dev-app-c-viewer
+    - team-a-team-a-dev-app-c
   targetNamespaces:
     targetNamespaces:
       - team-a-dev
@@ -904,16 +904,16 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: team-a-team-a-tools-app-b-admin
+  name: team-a-team-a-tools-app-b
   namespace: openbao-config-operator-system
 spec:
-  name: team-a-team-a-tools-app-b-admin
+  name: team-a-team-a-tools-app-b
   openbaoNamespace: team-a/
   path: kubernetes
   policies:
-    - team-a-team-a-tools-app-b-admin
+    - team-a-team-a-tools-app-b
   targetNamespaces:
     targetNamespaces:
       - team-a-tools
@@ -931,7 +931,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: ten-team-a-pki-team-a-dev
   namespace: openbao-config-operator-system
@@ -958,7 +958,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a
   namespace: openbao-config-operator-system
@@ -974,7 +974,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   # Name kept as <tenant>-pki-root across both modes so the bootstrap's
   # caSerialNumber output keeps tracking it; in hierarchy mode the bao type
@@ -1008,7 +1008,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: pki-team-a-svc
   namespace: openbao-config-operator-system
@@ -1035,7 +1035,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
@@ -1055,7 +1055,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
@@ -1075,7 +1075,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
@@ -1096,7 +1096,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
@@ -1118,7 +1118,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-admin
   namespace: openbao-config-operator-system
@@ -1128,8 +1128,8 @@ spec:
   policy: |
     # SSO tier admin for tenant team-a.
     # KV — audit-read gets metadata list only; everyone else gets data.
-    path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "delete", "list"] }
-    path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
+    path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
     path "kv/delete/dev/*"   { capabilities = ["update"] }
     path "kv/undelete/dev/*" { capabilities = ["update"] }
     path "kv/destroy/dev/*"  { capabilities = ["update"] }
@@ -1158,7 +1158,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-audit-read
   namespace: openbao-config-operator-system
@@ -1190,7 +1190,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-editor
   namespace: openbao-config-operator-system
@@ -1200,8 +1200,8 @@ spec:
   policy: |
     # SSO tier editor for tenant team-a.
     # KV — audit-read gets metadata list only; everyone else gets data.
-    path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "list"] }
-    path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "list"] }
+    path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "patch", "list"] }
+    path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "patch", "list"] }
     # Transit — humans get tier-appropriate access to every tenant key.
     path "transit/encrypt/+"    { capabilities = ["update"] }
     path "transit/decrypt/+"    { capabilities = ["update"] }
@@ -1229,7 +1229,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-super-admin
   namespace: openbao-config-operator-system
@@ -1239,8 +1239,8 @@ spec:
   policy: |
     # SSO tier super-admin for tenant team-a.
     # KV — audit-read gets metadata list only; everyone else gets data.
-    path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "delete", "list"] }
-    path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
+    path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
     path "kv/delete/dev/*"   { capabilities = ["update"] }
     path "kv/undelete/dev/*" { capabilities = ["update"] }
     path "kv/destroy/dev/*"  { capabilities = ["update"] }
@@ -1271,7 +1271,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: sso-team-a-viewer
   namespace: openbao-config-operator-system
@@ -1305,27 +1305,39 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: team-a-team-a-dev-app-a-editor
+  name: team-a-team-a-dev-app-a
   namespace: openbao-config-operator-system
 spec:
-  name: team-a-team-a-dev-app-a-editor
+  name: team-a-team-a-dev-app-a
   openbaoNamespace: team-a/
   policy: |
-    # 1. SA's own k8s namespace.
-    path "kv/data/dev/team-a-dev/*"     { capabilities = ["create", "read", "update", "list"] }
-    path "kv/metadata/dev/team-a-dev/*" { capabilities = ["create", "read", "update", "list"] }
-    # 2a. _shared/ READ — own k8s ns sub-prefix (all data-reading tiers).
+    # 1. The app's own secrets, at kv/data/<env>/<ns>/<app>/. The app defaults to
+    # the ServiceAccount name — the identity bao authenticated — and is unique
+    # within the namespace either by Kubernetes' own guarantee or by the render
+    # check behind `bao.stakater.com/app`. Scoping here rather than at the
+    # namespace stops one workload reading or overwriting another's secrets just
+    # by sharing a namespace with it.
+    path "kv/data/dev/team-a-dev/payments/*"     { capabilities = ["create", "read", "update", "patch", "list"] }
+    path "kv/metadata/dev/team-a-dev/payments/*" { capabilities = ["create", "read", "update", "patch", "list"] }
+    # 2a. _shared/ READ — own k8s ns sub-prefix (all data-reading tiers). This is
+    # also how two apps in one namespace share deliberately: whatever is written
+    # here is readable by every tiered app in the namespace, and by any sibling
+    # namespace that subscribes to it.
     path "kv/data/dev/_shared/from-team-a-dev/*"     { capabilities = ["read", "list"] }
-    path "kv/metadata/dev/_shared/from-team-a-dev/*" { capabilities = ["create", "read", "update", "list"] }
+    path "kv/metadata/dev/_shared/from-team-a-dev/*" { capabilities = ["create", "read", "update", "patch", "list"] }
     path "kv/data/dev/_shared/from-team-a-tools/*"     { capabilities = ["read", "list"] }
     path "kv/metadata/dev/_shared/from-team-a-tools/*" { capabilities = ["read", "list"] }
     # 2b. _shared/ WRITE scoped to own k8s ns sub-prefix.
-    path "kv/data/dev/_shared/from-team-a-dev/*"     { capabilities = ["create", "read", "update", "list"] }
-    path "kv/metadata/dev/_shared/from-team-a-dev/*" { capabilities = ["create", "read", "update", "list"] }
-    # 3. Transit — encrypt/decrypt/rewrap on the SA's own-namespace key and
-    # the tenant shared key. Bao uses POST on these endpoints (update).
+    path "kv/data/dev/_shared/from-team-a-dev/*"     { capabilities = ["create", "read", "update", "patch", "list"] }
+    path "kv/metadata/dev/_shared/from-team-a-dev/*" { capabilities = ["create", "read", "update", "patch", "list"] }
+    # 3. Transit — three keys, mirroring the KV layout: the app's own key
+    # (private to it), the namespace key (shared with the apps beside it) and the
+    # tenant shared key. Bao uses POST on these endpoints (update).
+    path "transit/encrypt/team-a-dev-payments-dev-3f5614"  { capabilities = ["update"] }
+    path "transit/decrypt/team-a-dev-payments-dev-3f5614"  { capabilities = ["update"] }
+    path "transit/rewrap/team-a-dev-payments-dev-3f5614"   { capabilities = ["update"] }
     path "transit/encrypt/team-a-dev-dev"  { capabilities = ["update"] }
     path "transit/decrypt/team-a-dev-dev"  { capabilities = ["update"] }
     path "transit/rewrap/team-a-dev-dev"   { capabilities = ["update"] }
@@ -1352,18 +1364,26 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: team-a-team-a-dev-app-c-viewer
+  name: team-a-team-a-dev-app-c
   namespace: openbao-config-operator-system
 spec:
-  name: team-a-team-a-dev-app-c-viewer
+  name: team-a-team-a-dev-app-c
   openbaoNamespace: team-a/
   policy: |
-    # 1. SA's own k8s namespace.
-    path "kv/data/dev/team-a-dev/*"     { capabilities = ["read", "list"] }
-    path "kv/metadata/dev/team-a-dev/*" { capabilities = ["read", "list"] }
-    # 2a. _shared/ READ — own k8s ns sub-prefix (all data-reading tiers).
+    # 1. The app's own secrets, at kv/data/<env>/<ns>/<app>/. The app defaults to
+    # the ServiceAccount name — the identity bao authenticated — and is unique
+    # within the namespace either by Kubernetes' own guarantee or by the render
+    # check behind `bao.stakater.com/app`. Scoping here rather than at the
+    # namespace stops one workload reading or overwriting another's secrets just
+    # by sharing a namespace with it.
+    path "kv/data/dev/team-a-dev/app-c/*"     { capabilities = ["read", "list"] }
+    path "kv/metadata/dev/team-a-dev/app-c/*" { capabilities = ["read", "list"] }
+    # 2a. _shared/ READ — own k8s ns sub-prefix (all data-reading tiers). This is
+    # also how two apps in one namespace share deliberately: whatever is written
+    # here is readable by every tiered app in the namespace, and by any sibling
+    # namespace that subscribes to it.
     path "kv/data/dev/_shared/from-team-a-dev/*"     { capabilities = ["read", "list"] }
     path "kv/metadata/dev/_shared/from-team-a-dev/*" { capabilities = ["read", "list"] }
     # 2b. _shared/ WRITE scoped to own k8s ns sub-prefix.
@@ -1377,29 +1397,67 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
-  name: team-a-team-a-tools-app-b-admin
+  name: team-a-team-a-tools-app-b
   namespace: openbao-config-operator-system
 spec:
-  name: team-a-team-a-tools-app-b-admin
+  name: team-a-team-a-tools-app-b
   openbaoNamespace: team-a/
   policy: |
-    # 1. SA's own k8s namespace.
-    path "kv/data/dev/team-a-tools/*"     { capabilities = ["create", "read", "update", "delete", "list"] }
-    path "kv/metadata/dev/team-a-tools/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-    path "kv/delete/dev/team-a-tools/*"   { capabilities = ["update"] }
-    path "kv/undelete/dev/team-a-tools/*" { capabilities = ["update"] }
-    path "kv/destroy/dev/team-a-tools/*"  { capabilities = ["update"] }
-    # 2a. _shared/ READ — own k8s ns sub-prefix (all data-reading tiers).
+    # 1. The app's own secrets, at kv/data/<env>/<ns>/<app>/. The app defaults to
+    # the ServiceAccount name — the identity bao authenticated — and is unique
+    # within the namespace either by Kubernetes' own guarantee or by the render
+    # check behind `bao.stakater.com/app`. Scoping here rather than at the
+    # namespace stops one workload reading or overwriting another's secrets just
+    # by sharing a namespace with it.
+    path "kv/data/dev/team-a-tools/app-b/*"     { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
+    path "kv/metadata/dev/team-a-tools/app-b/*" { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
+    path "kv/delete/dev/team-a-tools/app-b/*"   { capabilities = ["update"] }
+    path "kv/undelete/dev/team-a-tools/app-b/*" { capabilities = ["update"] }
+    path "kv/destroy/dev/team-a-tools/app-b/*"  { capabilities = ["update"] }
+    # 2a. _shared/ READ — own k8s ns sub-prefix (all data-reading tiers). This is
+    # also how two apps in one namespace share deliberately: whatever is written
+    # here is readable by every tiered app in the namespace, and by any sibling
+    # namespace that subscribes to it.
     path "kv/data/dev/_shared/from-team-a-tools/*"     { capabilities = ["read", "list"] }
-    path "kv/metadata/dev/_shared/from-team-a-tools/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "kv/metadata/dev/_shared/from-team-a-tools/*" { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
     # 2b. _shared/ WRITE scoped to own k8s ns sub-prefix.
-    path "kv/data/dev/_shared/from-team-a-tools/*"     { capabilities = ["create", "read", "update", "delete", "list"] }
-    path "kv/metadata/dev/_shared/from-team-a-tools/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+    path "kv/data/dev/_shared/from-team-a-tools/*"     { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
+    path "kv/metadata/dev/_shared/from-team-a-tools/*" { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
     path "kv/delete/dev/_shared/from-team-a-tools/*"   { capabilities = ["update"] }
     path "kv/undelete/dev/_shared/from-team-a-tools/*" { capabilities = ["update"] }
     path "kv/destroy/dev/_shared/from-team-a-tools/*"  { capabilities = ["update"] }
+    # 3. Transit — three keys, mirroring the KV layout: the app's own key
+    # (private to it), the namespace key (shared with the apps beside it) and the
+    # tenant shared key. Bao uses POST on these endpoints (update).
+    path "transit/encrypt/team-a-tools-app-b-dev-5be355"  { capabilities = ["update"] }
+    path "transit/decrypt/team-a-tools-app-b-dev-5be355"  { capabilities = ["update"] }
+    path "transit/rewrap/team-a-tools-app-b-dev-5be355"   { capabilities = ["update"] }
+    path "transit/keys/team-a-tools-app-b-dev-5be355"        { capabilities = ["read", "list"] }
+    path "transit/keys/team-a-tools-app-b-dev-5be355/rotate" { capabilities = ["update"] }
+    path "transit/datakey/plaintext/team-a-tools-app-b-dev-5be355" { capabilities = ["update"] }
+    path "transit/datakey/wrapped/team-a-tools-app-b-dev-5be355"   { capabilities = ["update"] }
+    path "transit/sign/team-a-tools-app-b-dev-5be355"     { capabilities = ["update"] }
+    path "transit/verify/team-a-tools-app-b-dev-5be355"   { capabilities = ["update"] }
+    path "transit/encrypt/team-a-tools-dev"  { capabilities = ["update"] }
+    path "transit/decrypt/team-a-tools-dev"  { capabilities = ["update"] }
+    path "transit/rewrap/team-a-tools-dev"   { capabilities = ["update"] }
+    path "transit/keys/team-a-tools-dev"        { capabilities = ["read", "list"] }
+    path "transit/keys/team-a-tools-dev/rotate" { capabilities = ["update"] }
+    path "transit/datakey/plaintext/team-a-tools-dev" { capabilities = ["update"] }
+    path "transit/datakey/wrapped/team-a-tools-dev"   { capabilities = ["update"] }
+    path "transit/sign/team-a-tools-dev"     { capabilities = ["update"] }
+    path "transit/verify/team-a-tools-dev"   { capabilities = ["update"] }
+    path "transit/encrypt/team-a-shared-dev"  { capabilities = ["update"] }
+    path "transit/decrypt/team-a-shared-dev"  { capabilities = ["update"] }
+    path "transit/rewrap/team-a-shared-dev"   { capabilities = ["update"] }
+    path "transit/keys/team-a-shared-dev"        { capabilities = ["read", "list"] }
+    path "transit/keys/team-a-shared-dev/rotate" { capabilities = ["update"] }
+    path "transit/datakey/plaintext/team-a-shared-dev" { capabilities = ["update"] }
+    path "transit/datakey/wrapped/team-a-shared-dev"   { capabilities = ["update"] }
+    path "transit/sign/team-a-shared-dev"     { capabilities = ["update"] }
+    path "transit/verify/team-a-shared-dev"   { capabilities = ["update"] }
 ---
 # Source: openbao-config-mto/templates/10-cert-manager-issuer.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1410,7 +1468,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: ten-team-a-pki-team-a-dev
   namespace: openbao-config-operator-system
@@ -1432,7 +1490,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-kv
   namespace: openbao-config-operator-system
@@ -1450,7 +1508,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-pki
   namespace: openbao-config-operator-system
@@ -1468,7 +1526,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-transit
   namespace: openbao-config-operator-system
@@ -1486,7 +1544,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: transit-share-team-a-to-team-b
   namespace: openbao-config-operator-system
@@ -1505,7 +1563,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: transit-team-a-shared-dev
   namespace: openbao-config-operator-system
@@ -1524,13 +1582,70 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: transit-team-a-team-a-dev-dev
   namespace: openbao-config-operator-system
 spec:
   autoRotatePeriod: 2160h
   name: team-a-dev-dev
+  openbaoNamespace: team-a/
+  path: transit
+---
+# Source: openbao-config-mto/templates/02-transit-scaffolding.yaml
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  labels:
+    app.kubernetes.io/instance: openbao-config-mto
+    app.kubernetes.io/managed-by: helm-via-template-operator-v2
+    app.kubernetes.io/name: openbao-config-mto
+    app.kubernetes.io/version: 0.4.0
+    helm.sh/chart: openbao-config-mto-0.12.0
+    stakater.com/tenant: team-a
+  name: transit-team-a-team-a-dev-payments-dev-3f5614
+  namespace: openbao-config-operator-system
+spec:
+  autoRotatePeriod: 2160h
+  name: team-a-dev-payments-dev-3f5614
+  openbaoNamespace: team-a/
+  path: transit
+---
+# Source: openbao-config-mto/templates/02-transit-scaffolding.yaml
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  labels:
+    app.kubernetes.io/instance: openbao-config-mto
+    app.kubernetes.io/managed-by: helm-via-template-operator-v2
+    app.kubernetes.io/name: openbao-config-mto
+    app.kubernetes.io/version: 0.4.0
+    helm.sh/chart: openbao-config-mto-0.12.0
+    stakater.com/tenant: team-a
+  name: transit-team-a-team-a-tools-app-b-dev-5be355
+  namespace: openbao-config-operator-system
+spec:
+  autoRotatePeriod: 2160h
+  name: team-a-tools-app-b-dev-5be355
+  openbaoNamespace: team-a/
+  path: transit
+---
+# Source: openbao-config-mto/templates/02-transit-scaffolding.yaml
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  labels:
+    app.kubernetes.io/instance: openbao-config-mto
+    app.kubernetes.io/managed-by: helm-via-template-operator-v2
+    app.kubernetes.io/name: openbao-config-mto
+    app.kubernetes.io/version: 0.4.0
+    helm.sh/chart: openbao-config-mto-0.12.0
+    stakater.com/tenant: team-a
+  name: transit-team-a-team-a-tools-dev
+  namespace: openbao-config-operator-system
+spec:
+  autoRotatePeriod: 2160h
+  name: team-a-tools-dev
   openbaoNamespace: team-a/
   path: transit
 ---
@@ -1543,7 +1658,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   # Cluster-scoped; chart-authored so tenants cannot self-grant trust.
   name: team-a-trust
@@ -1575,7 +1690,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: team-a-pki-allowed-tenants
   namespace: openbao-config-operator-system
@@ -1594,7 +1709,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-ca-bundle
   namespace: team-a-dev
@@ -1613,7 +1728,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-ca-bundle
   namespace: team-a-dev
@@ -1627,9 +1742,10 @@ data:
   VAULT_IN_TEAM_B_NAMESPACE: shared/
   VAULT_IN_TEAM_B_PATH: kv/data/dev/from-team-b/to-team-a/
   VAULT_IN_TEAM_B_ROLE: share-team-a-team-a-dev-app-a-in-team-b
-  VAULT_K8S_ROLE: team-a-team-a-dev-app-a-editor
-  VAULT_KV_OWN_META_PATH: kv/metadata/dev/team-a-dev/
-  VAULT_KV_OWN_PATH: kv/data/dev/team-a-dev/
+  VAULT_K8S_ROLE: team-a-team-a-dev-app-a
+  VAULT_KV_APP: payments
+  VAULT_KV_APP_META_PATH: kv/metadata/dev/team-a-dev/payments/
+  VAULT_KV_APP_PATH: kv/data/dev/team-a-dev/payments/
   VAULT_KV_SHARED_OUT_PATH: kv/data/dev/_shared/from-team-a-dev/
   VAULT_NAMESPACE: team-a/
   VAULT_OUT_TEAM_B_NAMESPACE: shared/
@@ -1640,17 +1756,20 @@ data:
   VAULT_PKI_MOUNT: pki-int
   VAULT_PKI_ROLE: team-a-svc
   VAULT_PKI_SIGN_PATH: pki-int/sign/team-a-svc
+  VAULT_TRANSIT_APP_DECRYPT: transit/decrypt/team-a-dev-payments-dev-3f5614
+  VAULT_TRANSIT_APP_ENCRYPT: transit/encrypt/team-a-dev-payments-dev-3f5614
+  VAULT_TRANSIT_APP_KEY: team-a-dev-payments-dev-3f5614
   VAULT_TRANSIT_IN_TEAM_B_DECRYPT: transit/decrypt/from-team-b-to-team-a-dev
   VAULT_TRANSIT_IN_TEAM_B_NAMESPACE: shared/
   VAULT_TRANSIT_IN_TEAM_B_ROLE: share-transit-team-a-team-a-dev-app-a-in-team-b
   VAULT_TRANSIT_MOUNT: transit
+  VAULT_TRANSIT_NS_DECRYPT: transit/decrypt/team-a-dev-dev
+  VAULT_TRANSIT_NS_ENCRYPT: transit/encrypt/team-a-dev-dev
+  VAULT_TRANSIT_NS_KEY: team-a-dev-dev
   VAULT_TRANSIT_OUT_TEAM_B_DECRYPT: transit/decrypt/from-team-a-to-team-b-dev
   VAULT_TRANSIT_OUT_TEAM_B_ENCRYPT: transit/encrypt/from-team-a-to-team-b-dev
   VAULT_TRANSIT_OUT_TEAM_B_NAMESPACE: shared/
   VAULT_TRANSIT_OUT_TEAM_B_ROLE: share-transit-team-a-team-a-dev-app-a-out-team-b
-  VAULT_TRANSIT_OWN_DECRYPT: transit/decrypt/team-a-dev-dev
-  VAULT_TRANSIT_OWN_ENCRYPT: transit/encrypt/team-a-dev-dev
-  VAULT_TRANSIT_OWN_KEY: team-a-dev-dev
   VAULT_TRANSIT_SHARED_DECRYPT: transit/decrypt/team-a-shared-dev
   VAULT_TRANSIT_SHARED_ENCRYPT: transit/encrypt/team-a-shared-dev
   VAULT_TRANSIT_SHARED_KEY: team-a-shared-dev
@@ -1661,7 +1780,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-config-app-a
   namespace: team-a-dev
@@ -1671,9 +1790,10 @@ apiVersion: v1
 data:
   VAULT_ADDR: http://openbao.openbao.svc.cluster.local:8200
   VAULT_CACERT: /etc/bao/ca/ca.crt
-  VAULT_K8S_ROLE: team-a-team-a-dev-app-c-viewer
-  VAULT_KV_OWN_META_PATH: kv/metadata/dev/team-a-dev/
-  VAULT_KV_OWN_PATH: kv/data/dev/team-a-dev/
+  VAULT_K8S_ROLE: team-a-team-a-dev-app-c
+  VAULT_KV_APP: app-c
+  VAULT_KV_APP_META_PATH: kv/metadata/dev/team-a-dev/app-c/
+  VAULT_KV_APP_PATH: kv/data/dev/team-a-dev/app-c/
   VAULT_KV_SHARED_OUT_PATH: kv/data/dev/_shared/from-team-a-dev/
   VAULT_NAMESPACE: team-a/
 kind: ConfigMap
@@ -1683,7 +1803,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-config-app-c
   namespace: team-a-dev
@@ -1702,7 +1822,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-ca-bundle
   namespace: team-a-tools
@@ -1712,11 +1832,22 @@ apiVersion: v1
 data:
   VAULT_ADDR: http://openbao.openbao.svc.cluster.local:8200
   VAULT_CACERT: /etc/bao/ca/ca.crt
-  VAULT_K8S_ROLE: team-a-team-a-tools-app-b-admin
-  VAULT_KV_OWN_META_PATH: kv/metadata/dev/team-a-tools/
-  VAULT_KV_OWN_PATH: kv/data/dev/team-a-tools/
+  VAULT_K8S_ROLE: team-a-team-a-tools-app-b
+  VAULT_KV_APP: app-b
+  VAULT_KV_APP_META_PATH: kv/metadata/dev/team-a-tools/app-b/
+  VAULT_KV_APP_PATH: kv/data/dev/team-a-tools/app-b/
   VAULT_KV_SHARED_OUT_PATH: kv/data/dev/_shared/from-team-a-tools/
   VAULT_NAMESPACE: team-a/
+  VAULT_TRANSIT_APP_DECRYPT: transit/decrypt/team-a-tools-app-b-dev-5be355
+  VAULT_TRANSIT_APP_ENCRYPT: transit/encrypt/team-a-tools-app-b-dev-5be355
+  VAULT_TRANSIT_APP_KEY: team-a-tools-app-b-dev-5be355
+  VAULT_TRANSIT_MOUNT: transit
+  VAULT_TRANSIT_NS_DECRYPT: transit/decrypt/team-a-tools-dev
+  VAULT_TRANSIT_NS_ENCRYPT: transit/encrypt/team-a-tools-dev
+  VAULT_TRANSIT_NS_KEY: team-a-tools-dev
+  VAULT_TRANSIT_SHARED_DECRYPT: transit/decrypt/team-a-shared-dev
+  VAULT_TRANSIT_SHARED_ENCRYPT: transit/encrypt/team-a-shared-dev
+  VAULT_TRANSIT_SHARED_KEY: team-a-shared-dev
 kind: ConfigMap
 metadata:
   labels:
@@ -1724,7 +1855,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-config-app-b
   namespace: team-a-tools
@@ -1738,7 +1869,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.11.0
+    helm.sh/chart: openbao-config-mto-0.12.0
     stakater.com/tenant: team-a
   name: bao-cert-manager
   namespace: team-a-dev

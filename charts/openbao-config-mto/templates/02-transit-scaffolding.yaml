@@ -5,13 +5,15 @@ Section 2 — per-tenant transit secret engine (doc-aligned model).
 Emits:
   - OpenBaoSecretEngine of kind=transit at the configured mountPath.
   - ONE shared OpenBaoTransitKey <tenant>-shared-<env>, created up front.
+  - One per-app OpenBaoTransitKey <ns>-<app>-<env>-<hash> per ServiceAccount
+    that has transit granted, so no two apps share crypto material.
   - One per-namespace OpenBaoTransitKey <nsFull>-<env> for each workload
-    namespace that has at least one SA opting in via
-    bao.stakater.com/transit: "true" (created on demand).
+    namespace that has at least one such ServiceAccount — the key apps in one
+    namespace share when they want to (created on demand).
 
 Gated by transit.enabled. Every key inherits
-transit.defaultAutoRotatePeriod. Workload grants (own-namespace key +
-shared key) are issued in 04-sa-own-tenant.yaml.
+transit.defaultAutoRotatePeriod. Workload grants (all three keys) are issued in
+04-sa-own-tenant.yaml.
 */}}
 {{- if .Values.transit.enabled }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
@@ -46,14 +48,59 @@ spec:
   {{- if $rotate }}
   autoRotatePeriod: {{ $rotate | quote }}
   {{- end }}
-{{- /* Per-namespace keys: one per workload namespace that has an opted-in
-       SA. Deduped so multiple opted-in SAs in one namespace share a key. */ -}}
-{{- $optedNs := dict }}
+{{- /* Driven by the resolved facts, not the raw annotation: gating on the
+       annotation alone emitted keys for a ServiceAccount whose tier grants no
+       transit (viewer, audit-read) or whose annotations are rejected — keys
+       nothing can use, which then stay in bao because OpenBaoTransitKey is
+       orphan-by-design. Keyed by identity so two ServiceAccounts resolving to one
+       (namespace, app) emit a single CR, not the same object twice. */ -}}
+{{- $appClaims := include "openbao.appClaims" . | fromYaml }}
+{{- $tenantNamespaces := dict }}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
-{{- if eq (lower (toString (dig "metadata" "annotations" "bao.stakater.com/transit" "" $sa))) "true" }}
 {{- $ns := dig "metadata" "namespace" "" $sa }}
-{{- if $ns }}{{ $_ := set $optedNs $ns true }}{{ end }}
+{{- if $ns }}{{ $_ := set $tenantNamespaces $ns true }}{{ end }}
 {{- end }}
+{{- range $d := (ternary .Values.deployments (list) (kindIs "slice" .Values.deployments)) }}
+{{- $ns := dig "metadata" "namespace" "" $d }}
+{{- if $ns }}{{ $_ := set $tenantNamespaces $ns true }}{{ end }}
+{{- end }}
+{{- $optedNs := dict }}
+{{- $optedApps := dict }}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml }}
+{{- if and $f.transitOn (not $f.errors) $f.ns $f.app }}
+{{- $_ := set $optedNs $f.ns true }}
+{{- $_ := set $optedApps (printf "%s/%s" $f.ns $f.app) (dict "ns" $f.ns "app" $f.app) }}
+{{- end }}
+{{- end }}
+{{- /* The <hash> suffix is 24 bits — a truncated digest, not a guarantee. On a
+       collision two CRs would render under one name, apply last-wins, and two
+       apps would share crypto material with the grants agreeing, so no other
+       check could see it. The unambiguous pair is the map key here, so check. */ -}}
+{{- $byKeyName := dict }}
+{{- range $pair, $a := $optedApps }}
+{{- $kn := include "openbao.transitAppKeyName" (dict "ns" $a.ns "app" $a.app "env" $env) }}
+{{- if and (hasKey $byKeyName $kn) (ne (index $byKeyName $kn) $pair) }}
+{{- fail (printf "transit key name %q is claimed by two different (namespace, app) pairs: %s and %s. This is a hash collision in openbao.transitAppKeyName — rename one app so the two no longer collide, and report it" $kn (index $byKeyName $kn) $pair) }}
+{{- end }}
+{{- $_ := set $byKeyName $kn $pair }}
+{{- end }}
+{{- range $_, $a := $optedApps }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoTransitKey
+metadata:
+  name: {{ include "openbao.transitAppKeyCRName" (dict "tenant" $tenant "ns" $a.ns "app" $a.app "env" $env) }}
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  name: {{ include "openbao.transitAppKeyName" (dict "ns" $a.ns "app" $a.app "env" $env) }}
+  path: {{ $mount }}
+  openbaoNamespace: {{ $tenant }}/
+  {{- if $rotate }}
+  autoRotatePeriod: {{ $rotate | quote }}
+  {{- end }}
 {{- end }}
 {{- range $ns, $_ := $optedNs }}
 ---
