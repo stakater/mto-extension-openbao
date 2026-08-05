@@ -38,6 +38,13 @@
 #                    reap a slice's objects are granted regardless of any
 #                    toggle. Gating them alongside `create` orphans every
 #                    object the slice created when the toggle goes off.
+#  11b. rbacsplit  — OpenBao* CRs + child TIs: mutation verbs in a
+#                    namespaced Role, ClusterRole holds exactly `list`
+#                    (t-op-v2 orphan discovery). Complete atom sets pinned
+#                    by equality, incl. a case where operatorNamespace
+#                    differs from the release namespace.
+#  11c. rbacpremise — pins the premise itself: those kinds render only
+#                    into operatorNamespace and every Template targets it.
 #  12. toggletypo — a near-miss on an integration switch (yes / on / True / 1,
 #                    or "true" for the string-valued parent.eso) fails the
 #                    render instead of silently disabling the integration.
@@ -359,13 +366,19 @@ templateset_case() { # templateset_case <name> <eso> <cm> <ct> <expected...>
     || check "templateset:$name" 1 "parent emits TIs referencing absent Templates: $(echo "$missing" | tr '\n' ' ')"
 }
 
-rbac_rules() { # rbac_rules <eso> <certManager> <crossTenantPki> -> "group/resources -> verbs"
+# RBAC rules are compared as fully-exploded atoms — one line per (apiGroup,
+# resource, verb) — because authorization is the union of atoms, not rule
+# factoring: a multi-group/multi-resource rule yields the same atoms as
+# standalone rules, so no factoring hides a grant from exact-line asserts.
+RBAC_ATOMS_Q='.rules[] as $r | $r.apiGroups[] as $g | $r.resources[] as $res | $r.verbs[] as $v
+  | ($g + "/" + $res + " -> " + $v)'
+
+rbac_rules() { # rbac_rules <eso> <certManager> <crossTenantPki> -> "group/resource -> verb" atoms
   "$HELM" template boot "$BOOTSTRAP" -n "$NS" \
     --set-string "parent.eso=$1" \
     --set-string "parent.certManager.enabled=$2" \
     --set-string "crossTenantPki.enabled=$3" \
-    | "$YQ" 'select(.kind == "ClusterRole" and .metadata.name == "openbao-config-mto-manager")
-             | .rules[] | ((.apiGroups[0] // "core") + "/" + (.resources | join(",")) + " -> " + (.verbs | join(",")))' - \
+    | "$YQ" "select(.kind == \"ClusterRole\" and .metadata.name == \"openbao-config-mto-manager\") | $RBAC_ATOMS_Q" - \
     | sort -u
 }
 
@@ -373,9 +386,9 @@ rbac_rules() { # rbac_rules <eso> <certManager> <crossTenantPki> -> "group/resou
 # while that integration is switched on. Anything here that survives its toggle
 # being off lets an engine that renders arbitrary charts mint new Issuers,
 # Bundles, SecretStores, ServiceAccounts or RBAC cluster-wide.
-# Keys are "<apiGroup>/<resources> -> <verbs>"; the core group renders empty,
-# so its keys start with "/".
-OPTIONAL_CREATE_GRANTS='external-secrets.io/secretstores,externalsecrets -> create
+# Keys are atoms; the core group renders empty, so its keys start with "/".
+OPTIONAL_CREATE_GRANTS='external-secrets.io/secretstores -> create
+external-secrets.io/externalsecrets -> create
 cert-manager.io/issuers -> create
 trust.cert-manager.io/bundles -> create
 rbac.authorization.k8s.io/rolebindings -> create
@@ -391,19 +404,23 @@ rbac.authorization.k8s.io/rolebindings -> create
 # forever: TI stuck Terminating, child Template unable to finalize behind it,
 # and every object the slice created orphaned with a finalizer nothing will
 # remove. Recovery needs a hand-applied ClusterRole.
-TEARDOWN_GRANTS='external-secrets.io/secretstores,externalsecrets -> get,list,watch,update,patch,delete
-cert-manager.io/issuers -> get,list,watch,update,patch,delete
-trust.cert-manager.io/bundles -> get,list,watch,update,patch,delete
-rbac.authorization.k8s.io/roles,rolebindings -> get,list,watch,update,patch,delete
-/serviceaccounts -> update,patch,delete'
+TEARDOWN_GRANTS="$(
+  for gr in external-secrets.io/secretstores external-secrets.io/externalsecrets \
+            cert-manager.io/issuers trust.cert-manager.io/bundles \
+            rbac.authorization.k8s.io/roles rbac.authorization.k8s.io/rolebindings; do
+    for v in delete get list patch update watch; do echo "$gr -> $v"; done
+  done
+  for v in delete patch update; do echo "/serviceaccounts -> $v"; done
+)"
 
-grants_case() { # grants_case <test> <name> <eso> <cm> <ct> <present|absent> <grantlist>
+grants_case() { # grants_case <test> <name> <eso> <cm> <ct> <present|absent> <atomlist>
   local test="$1" name="$2" eso="$3" cm="$4" ct="$5" mode="$6" list="$7"
-  local got wrong=""
+  local got wrong="" n=0
   got="$(rbac_rules "$eso" "$cm" "$ct")"
   while IFS= read -r g; do
     [ -z "$g" ] && continue
-    if printf '%s\n' "$got" | grep -qF "$g"; then
+    n=$((n + 1))
+    if printf '%s\n' "$got" | grep -qxF "$g"; then
       [ "$mode" = absent ] && wrong="$wrong [granted:$g]"
     else
       [ "$mode" = present ] && wrong="$wrong [missing:$g]"
@@ -411,6 +428,8 @@ grants_case() { # grants_case <test> <name> <eso> <cm> <ct> <present|absent> <gr
   done <<EOF
 $list
 EOF
+  # An emptied atom list iterates zero times and would pass vacuously.
+  [ "$n" -ge 2 ] || wrong="$wrong [atom list has $n entries — mangled?]"
   [ -z "$wrong" ] \
     && check "$test:$name" 0 \
     || check "$test:$name" 1 "expected $mode, but:$wrong"
@@ -421,6 +440,113 @@ grants_case rbacscope all-on  enabled  true  true  present "$OPTIONAL_CREATE_GRA
 
 grants_case rbacteardown all-off disabled false false present "$TEARDOWN_GRANTS"
 grants_case rbacteardown all-on  enabled  true  true  present "$TEARDOWN_GRANTS"
+
+# 11b. rbacsplit — the OpenBao* CRs and child TemplateInstances render only
+# into operatorNamespace: the ClusterRole holds exactly `list` on those two
+# apiGroups (t-op-v2's orphan discovery lists rendered GVKs cluster-wide;
+# without it TI teardown wedges) and a namespaced Role holds every other
+# verb. Complete atom sets are pinned by equality: extra rules, wildcards,
+# and multi-group rules all produce extra atoms and fail, on the Role too
+# (operatorNamespace holds the token-reviewer Secret).
+MOVED_GROUPS_RE='^(security\.mto\.stakater\.com|templates\.v2\.stakater\.com)/'
+OPNS_KINDS='openbaonamespaces openbaosecretengines openbaopolicies openbaoauthmethods openbaokubernetesauthengineconfigs openbaokubernetesauthroles openbaojwtoidcauthengineconfigs openbaojwtoidcauthengineroles openbaotransitkeys openbaopkisecretengineconfigs openbaopkisecretengineroles'
+EXPECTED_CR_MOVED="$(
+  { for k in $OPNS_KINDS; do echo "security.mto.stakater.com/$k -> list"; done
+    echo "templates.v2.stakater.com/templateinstances -> list"; } | sort
+)"
+EXPECTED_ROLE_RULES="$(
+  { for k in $OPNS_KINDS; do
+      for v in create delete get list patch update watch; do echo "security.mto.stakater.com/$k -> $v"; done
+    done
+    for v in create delete get list patch update watch; do echo "templates.v2.stakater.com/templateinstances -> $v"; done; } | sort
+)"
+
+# Guard against a vacuous pass: every assertion below compares against these
+# atom sets (11 CR kinds + templateinstances = 12 list atoms; the same 12
+# kinds x 7 verbs = 84 Role atoms), so an accidental emptying of either
+# constant must itself fail.
+[ "$(printf '%s\n' "$EXPECTED_CR_MOVED" | grep -c .)" -eq 12 ] \
+  && [ "$(printf '%s\n' "$EXPECTED_ROLE_RULES" | grep -c .)" -eq 84 ] \
+  && check "rbacsplit:selfcheck" 0 \
+  || check "rbacsplit:selfcheck" 1 "expected atom sets must be 12 and 84 lines"
+
+split_case() { # split_case <name> <operatorNamespace> <release-ns> [helm value args...]
+  local name="$1" opns="$2" rns="$3"; shift 3
+  local render got wrong=""
+  render="$("$HELM" template boot "$BOOTSTRAP" -n "$rns" "$@")"
+
+  got="$(printf '%s\n' "$render" \
+    | "$YQ" "select(.kind == \"ClusterRole\" and .metadata.name == \"openbao-config-mto-manager\") | $RBAC_ATOMS_Q" - \
+    | sort -u | grep -E "$MOVED_GROUPS_RE" || true)"
+  [ "$got" = "$EXPECTED_CR_MOVED" ] \
+    || wrong="$wrong [clusterrole atoms on moved groups: got ($(printf '%s' "$got" | tr '\n' ';'))]"
+
+  # The Role is selected by name AND namespace: a Role rendered into any other
+  # namespace is unreachable from the RoleBinding (roleRef resolves in the
+  # binding's own namespace) and grants nothing.
+  got="$(printf '%s\n' "$render" \
+    | opns="$opns" "$YQ" "select(.kind == \"Role\" and .metadata.name == \"openbao-config-mto-manager\" and .metadata.namespace == env(opns)) | $RBAC_ATOMS_Q" - \
+    | sort -u)"
+  [ "$got" = "$EXPECTED_ROLE_RULES" ] \
+    || wrong="$wrong [role in $opns: got ($(printf '%s' "$got" | tr '\n' ';'))]"
+
+  got="$(printf '%s\n' "$render" \
+    | opns="$opns" "$YQ" 'select(.kind == "RoleBinding" and .metadata.name == "openbao-config-mto-manager" and .metadata.namespace == env(opns))
+             | .roleRef.kind + "/" + .roleRef.name + " <- " + .subjects[0].kind + ":" + .subjects[0].namespace + "/" + .subjects[0].name' -)"
+  [ "$got" = "Role/openbao-config-mto-manager <- ServiceAccount:stakater-template-operator/template-operator-template-operator-v2" ] \
+    || wrong="$wrong [rolebinding in $opns: got ($got)]"
+
+  [ -z "$wrong" ] \
+    && check "rbacsplit:$name" 0 \
+    || check "rbacsplit:$name" 1 "$wrong"
+}
+
+split_case all-off "$NS" "$NS" --set-string parent.eso=disabled --set-string parent.certManager.enabled=false --set-string crossTenantPki.enabled=false
+split_case all-on  "$NS" "$NS" --set-string parent.eso=enabled  --set-string parent.certManager.enabled=true  --set-string crossTenantPki.enabled=true
+# operatorNamespace must place the pair, not the release namespace. The two
+# default to the same string, so only a render where they differ can tell a
+# correct reference from {{ .Release.Namespace }} standing in for the value.
+split_case ns-override zz-operator-ns zz-release-ns --set-string operatorNamespace=zz-operator-ns
+
+# The Role/RoleBinding pair renders byte-identically with every optional
+# integration off and with all of them on: the pair carries teardown verbs, so
+# no toggle may remove or reshape it. This asserts invariance and non-emptiness
+# only — namespace, subject, and rule content are asserted by split_case.
+role_pair_docs() { # role_pair_docs <eso> <certManager> <crossTenantPki>
+  "$HELM" template boot "$BOOTSTRAP" -n "$NS" \
+    --set-string "parent.eso=$1" \
+    --set-string "parent.certManager.enabled=$2" \
+    --set-string "crossTenantPki.enabled=$3" \
+    | "$YQ" ea 'select((.kind == "Role" or .kind == "RoleBinding") and .metadata.name == "openbao-config-mto-manager")' -
+}
+if [ "$(role_pair_docs disabled false false)" = "$(role_pair_docs enabled true true)" ] \
+   && [ -n "$(role_pair_docs disabled false false)" ]; then
+  check "rbacsplit:toggle-invariant" 0
+else
+  check "rbacsplit:toggle-invariant" 1 "Role/RoleBinding differ across toggle sets (or render empty)"
+fi
+
+# 11c. rbacpremise — the premise the split stands on: the OpenBao* CRs render
+# only into operatorNamespace, and every installed Template pins its render
+# target there. A chart change rendering one CR into a tenant namespace makes
+# the Role insufficient without touching any RBAC object, so this reads the
+# render targets themselves — with operatorNamespace overridden away from the
+# release namespace so the release namespace cannot stand in.
+premise_crs="$("$HELM" template "$RELEASE" "$CHART" -n zz-release-ns -f "$FIXTURES/values-full.yaml" --set-string operatorNamespace=zz-operator-ns \
+  | "$YQ" ea '[select(.apiVersion == "security.mto.stakater.com/v1alpha1") | .metadata.namespace] | unique | join(",")' -)"
+premise_cr_count="$("$HELM" template "$RELEASE" "$CHART" -n zz-release-ns -f "$FIXTURES/values-full.yaml" --set-string operatorNamespace=zz-operator-ns \
+  | "$YQ" ea '[select(.apiVersion == "security.mto.stakater.com/v1alpha1")] | length' -)"
+[ "$premise_crs" = "zz-operator-ns" ] && [ "$premise_cr_count" -ge 5 ] \
+  && check "rbacpremise:tenant-chart" 0 \
+  || check "rbacpremise:tenant-chart" 1 "OpenBao CR namespaces [$premise_crs] (count $premise_cr_count), want only zz-operator-ns"
+
+premise_tpl="$("$HELM" template boot "$BOOTSTRAP" -n zz-release-ns --set-string operatorNamespace=zz-operator-ns \
+  | "$YQ" ea '[select(.kind == "Template") | .spec.targetNamespaces.explicit.allow.literal[]] | unique | join(",")' -)"
+premise_tpl_count="$("$HELM" template boot "$BOOTSTRAP" -n zz-release-ns --set-string operatorNamespace=zz-operator-ns \
+  | "$YQ" ea '[select(.kind == "Template")] | length' -)"
+[ "$premise_tpl" = "zz-operator-ns" ] && [ "$premise_tpl_count" -ge 2 ] \
+  && check "rbacpremise:template-targets" 0 \
+  || check "rbacpremise:template-targets" 1 "Template targetNamespaces [$premise_tpl] (count $premise_tpl_count), want only zz-operator-ns"
 
 # 12. toggletypo — near-misses are rejected, canonical forms are not
 boot_render() { # boot_render <set-string args...>
