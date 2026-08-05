@@ -54,32 +54,48 @@ serviceAccounts:
   - metadata: { name: imp-bad, namespace: team-a-prod, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: editor, bao.stakater.com/kv-import-tenant: "team-bb" } }
   # correct, and in another namespace
   - metadata: { name: good-sa, namespace: team-a-prod, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: editor } }
+  # dotted ServiceAccount name — legal in Kubernetes, rejected by G16 because
+  # every chart-reserved name suffix is dot-separated
+  - metadata: { name: g.dotted, namespace: team-a-prod, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: editor, bao.stakater.com/app: payments } }
+  # target for the hostile-input Deployments below — keeps good-sa's index entry stable
+  - metadata: { name: hostile-sa, namespace: team-a-prod, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: editor, bao.stakater.com/app: "no" } }
 deployments:
   # two Deployments, one ServiceAccount, identical ask -> ONE ExternalSecret
-  - metadata: { name: d-dedupe-a, namespace: team-a-prod, annotations: { bao.stakater.com/secret.db: postgres } }
+  - metadata: { name: d-dedupe-a, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.db: postgres } }
     spec: { template: { spec: { serviceAccountName: good-sa } } }
-  - metadata: { name: d-dedupe-b, namespace: team-a-prod, annotations: { bao.stakater.com/secret.db: postgres } }
+  - metadata: { name: d-dedupe-b, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.db: postgres } }
     spec: { template: { spec: { serviceAccountName: good-sa } } }
   # same name, different ask -> rejected on both
-  - metadata: { name: d-clash-a, namespace: team-a-prod, annotations: { bao.stakater.com/secret.cfg: one } }
+  - metadata: { name: d-clash-a, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.cfg: one } }
     spec: { template: { spec: { serviceAccountName: good-sa } } }
-  - metadata: { name: d-clash-b, namespace: team-a-prod, annotations: { bao.stakater.com/secret.cfg: two } }
+  - metadata: { name: d-clash-b, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.cfg: two } }
     spec: { template: { spec: { serviceAccountName: good-sa } } }
   # annotated but no serviceAccountName
-  - metadata: { name: d-no-sa, namespace: team-a-prod, annotations: { bao.stakater.com/secret.x: y } }
+  - metadata: { name: d-no-sa, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.x: y } }
     spec: { template: { spec: {} } }
   # ServiceAccount-only annotation placed on a Deployment
   - metadata: { name: d-misplaced, namespace: team-a-prod, annotations: { bao.stakater.com/app: payments } }
     spec: { template: { spec: { serviceAccountName: good-sa } } }
   # reads a sibling namespace's _shared without its SA subscribing -> would 403 forever
-  - metadata: { name: d-sub-nogrant, namespace: team-a-prod, annotations: { bao.stakater.com/subscribe.x: "team-a-dev/leaf" } }
+  - metadata: { name: d-sub-nogrant, namespace: team-a-prod, annotations: { bao.stakater.com/kv-subscribe.x: "team-a-dev/leaf" } }
     spec: { template: { spec: { serviceAccountName: sub-missing } } }
   # same shape, but the SA does subscribe -> must render (positive control)
-  - metadata: { name: d-sub-ok, namespace: team-a-prod, annotations: { bao.stakater.com/subscribe.y: "team-a-dev/leaf" } }
+  - metadata: { name: d-sub-ok, namespace: team-a-prod, annotations: { bao.stakater.com/kv-subscribe.y: "team-a-dev/leaf" } }
     spec: { template: { spec: { serviceAccountName: sub-ok } } }
   # subscribing to its OWN namespace needs no annotation -> must render
-  - metadata: { name: d-sub-own, namespace: team-a-prod, annotations: { bao.stakater.com/subscribe.z: "team-a-prod/leaf" } }
+  - metadata: { name: d-sub-own, namespace: team-a-prod, annotations: { bao.stakater.com/kv-subscribe.z: "team-a-prod/leaf" } }
     spec: { template: { spec: { serviceAccountName: good-sa } } }
   # imports from an off-roster tenant -> reported, not silently dropped
-  - metadata: { name: d-imp-bad, namespace: team-a-prod, annotations: { bao.stakater.com/import.p: "team-bb/leaf" } }
+  - metadata: { name: d-imp-bad, namespace: team-a-prod, annotations: { bao.stakater.com/kv-import.p: "team-bb/leaf" } }
     spec: { template: { spec: { serviceAccountName: imp-bad } } }
+  # pre-rename spelling -> told the new key, not just "unknown"
+  - metadata: { name: d-oldkey, namespace: team-a-prod, annotations: { bao.stakater.com/secret.db: postgres } }
+    spec: { template: { spec: { serviceAccountName: good-sa } } }
+  # hostile values — each must land in an error ConfigMap, never in a rendered
+  # spec, and must not be able to forge fields anywhere (incl. the error CM)
+  - metadata: { name: d-evil-key, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.ok: "leaf#bad\nspec: forged" } }
+    spec: { template: { spec: { serviceAccountName: hostile-sa } } }
+  - metadata: { name: d-evil-leaf, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.trav: "../../team-a-dev/other/creds" } }
+    spec: { template: { spec: { serviceAccountName: hostile-sa } } }
+  - metadata: { name: d-evil-name, namespace: team-a-prod, annotations: { bao.stakater.com/kv-secret.My_Secret: "x" } }
+    spec: { template: { spec: { serviceAccountName: hostile-sa } } }

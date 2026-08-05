@@ -658,8 +658,8 @@ transit caps, which is why S26 is a rejection rather than a silent no-op.
 
 # Misconfiguration — what the user sees
 
-A mistake attributable to one object renders `bao-config-<sa>-error` (or
-`bao-config-deploy-<name>-error`) into **that object's namespace** and nothing
+A mistake attributable to one object renders `bao-config-<sa>.error` (or
+`bao-config-<name>.deploy-error`) into **that object's namespace** and nothing
 else for it. The render does not fail: one TemplateInstance renders every
 namespace a tenant owns, so `fail` would produce zero objects for the whole
 tenant and freeze every unrelated namespace. `fail` is kept only for problems
@@ -686,13 +686,13 @@ missing `configMapRef`, and the error ConfigMap beside it says why.
 | M13 | `transit: "ture"` | `…/transit must be "true" or "false", got "ture"` |
 | M14 | `app` on a **Deployment** | `…/app is read on the ServiceAccount, not on a Deployment — move it to ServiceAccount "api-sa". On a Deployment it has no effect` |
 | M15 | annotated Deployment, no `serviceAccountName` | `requires spec.template.spec.serviceAccountName to be set: OpenBao authenticates the workload's ServiceAccount …` |
-| M16 | `secret.<x>` whose SA does not exist | `names ServiceAccount "nope-sa", which does not exist in namespace … — no SecretStore is rendered for it` |
-| M17 | `secret.<x>` whose SA has `kv` off | `needs KV access, but ServiceAccount "notkv-sa" does not set …/kv: "true"` |
+| M16 | `kv-secret.<x>` whose SA does not exist | `names ServiceAccount "nope-sa", which does not exist in namespace … — no SecretStore is rendered for it` |
+| M17 | `kv-secret.<x>` whose SA has `kv` off | `needs KV access, but ServiceAccount "notkv-sa" does not set …/kv: "true"` |
 | M18 | two Deployments, same Secret name, different values | `Deployments api, api2 all render ExternalSecret "api-sa-db-creds" … but ask for different secrets … Rename the annotation suffix on all but one` |
-| M19 | `secrets.db` (typo in the key) | `unknown annotation "…/secrets.db" — a Deployment accepts only …/secret.<name>, …/subscribe.<name> and …/import.<name>` |
+| M19 | `secrets.db` (typo in the key) | `unknown annotation "…/secrets.db" — a Deployment accepts only …/kv-secret.<name>, …/kv-subscribe.<name> and …/kv-import.<name>` |
 | M21 | `app` set with no engine enabled | `…/app is set but no engine is enabled, so no app identity is registered — it only names the prefix a …/kv or …/transit grant would use` |
-| M22 | `subscribe.<x>: <other-ns>/…` whose SA lacks `kv-subscribe-ns: <other-ns>` | `reads namespace "team-a-dev", but ServiceAccount "sub-missing" does not list it in …/kv-subscribe-ns — the policy read grant it needs is never rendered, so this ExternalSecret would fail to sync indefinitely` |
-| M23 | `import.<x>` naming a tenant outside `knownTenants` | `imports from tenant "team-bb", which is not in the tenant roster — nothing is rendered for it. If that tenant does not exist yet this resolves itself once it does; if it should exist already, check the spelling` |
+| M22 | `kv-subscribe.<x>: <other-ns>/…` whose SA lacks `kv-subscribe-ns: <other-ns>` | `reads namespace "team-a-dev", but ServiceAccount "sub-missing" does not list it in …/kv-subscribe-ns — the policy read grant it needs is never rendered, so this ExternalSecret would fail to sync indefinitely` |
+| M23 | `kv-import.<x>` naming a tenant outside `knownTenants` | `imports from tenant "team-bb", which is not in the tenant roster — nothing is rendered for it. If that tenant does not exist yet this resolves itself once it does; if it should exist already, check the spelling` |
 | M24 | a Deployment asking for a secret while `eso: disabled` | `requested but External Secrets Operator is disabled for this whole install (eso=disabled) … Either ask the platform to enable ESO, or read the secret from OpenBao directly` |
 
 Two things M12 and M13 exist to catch that the others cannot: an unrecognised
@@ -713,7 +713,7 @@ Why        a service and its migration job asking for the same secret is normal.
 
 ```text
 Setup      broken SA in team-a-dev, correct SA in team-a-prod, one tenant
-Observed   team-a-dev: bao-config-<sa>-error only, and zero bao objects for it
+Observed   team-a-dev: bao-config-<sa>.error only, and zero bao objects for it
            team-a-prod: full object set, working throughout
 ```
 
@@ -871,7 +871,7 @@ enforced platform-side. A values knob would close it.
 **An off-roster peer is now reported on the consuming Deployment (M23) but is
 still silent on the ServiceAccount side.** `kv-export-tenant: team-bb` renders no
 share Policy or Role and says nothing, because those templates skip the peer
-before any error channel exists for them. The Deployment-side `import.<name>`
+before any error channel exists for them. The Deployment-side `kv-import.<name>`
 path does report it. Closing the ServiceAccount side means giving
 `04-sa-share-*.yaml` and `04-sa-transit-share-*.yaml` the same error-ConfigMap
 treatment.

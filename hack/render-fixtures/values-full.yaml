@@ -72,16 +72,16 @@ serviceAccounts:
       namespace: team-a-dev
 
 deployments:
-  # Exercises secret.<name> (with and without #key), subscribe.<name>, and
-  # import.<name> ExternalSecret flavors.
+  # Exercises kv-secret.<name> (with and without #key), kv-subscribe.<name>,
+  # and kv-import.<name> ExternalSecret flavors.
   - metadata:
       name: web
       namespace: team-a-dev
       annotations:
-        bao.stakater.com/secret.web-db: "db-creds#password"
-        bao.stakater.com/secret.web-cfg: "app-config"
-        bao.stakater.com/subscribe.tools-shared: "team-a-tools/shared-item"
-        bao.stakater.com/import.partner-data: "team-b/exported-item"
+        bao.stakater.com/kv-secret.web-db: "db-creds#password"
+        bao.stakater.com/kv-secret.web-cfg: "app-config"
+        bao.stakater.com/kv-subscribe.tools-shared: "team-a-tools/shared-item"
+        bao.stakater.com/kv-import.partner-data: "team-b/exported-item"
     spec:
       template:
         spec:

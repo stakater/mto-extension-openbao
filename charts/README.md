@@ -201,28 +201,47 @@ Throughout this guide the examples use two tenants — **`team-a`** and **`team-
 
 A workload opts in by adding annotations. The chart reads them and creates the matching OpenBao policy, login role, a `bao-config-<sa>` ConfigMap, and (if ESO is on) `SecretStore` / `ExternalSecret` resources.
 
+**How the names are formed.** Every key follows one grammar, so you can predict a name instead of looking it up:
+
+- `bao.stakater.com/<engine>` — opt-in boolean (`kv`, `transit`, `pki`).
+- `bao.stakater.com/<engine>-<verb>-<scope>` — a sharing **grant**, always on the ServiceAccount. Verbs: `export`/`import` when data crosses tenants, `subscribe` for intra-tenant reads. Values are comma-separated peer lists.
+- `bao.stakater.com/<engine>-<request>.<name>` — a **consumption** request, always on the Deployment; `<name>` names the Kubernetes Secret it produces.
+- `tier` and `app` are the two engine-less keys: they qualify the identity, not an engine.
+
+Grants live on the ServiceAccount (the identity OpenBao authenticates); consumption lives on the Deployment (the workload). A grant key on a Deployment — or vice versa — is reported as an error next to the workload.
+
+> **This vocabulary is stable.** New keys may be added; existing keys will not be renamed. The same promise covers the `VAULT_*` names in `bao-config-<sa>` and the field names in `bao-apps`.
+
 **Annotations on the `ServiceAccount`:**
 
 | Annotation | Feature | What it does |
 |---|---|---|
-| `bao.stakater.com/tier` | KV | **Required.** `viewer` / `editor` / `admin` / `audit-read`. Sets the access level for KV, Transit, and PKI. |
-| `bao.stakater.com/subscribe-to-ns` | KV | Read secrets shared by other namespaces in the same tenant (comma-separated list). |
+| `bao.stakater.com/kv` | KV | `"true"` → read/write the app's own KV prefix at the tier below. |
+| `bao.stakater.com/transit` | Transit | `"true"` → use the app's own key, the namespace key, and the tenant's shared key. |
+| `bao.stakater.com/pki` | PKI | `"true"` → issue certificates directly from OpenBao. |
+| `bao.stakater.com/tier` | all | **Required alongside any engine.** `viewer` / `editor` / `admin` / `audit-read`. One level for every engine enabled above. |
+| `bao.stakater.com/app` | KV, Transit | Optional. Names the app that owns this ServiceAccount's secrets and key; defaults to the ServiceAccount name. Lowercase letters, digits, hyphens; unique within the namespace. |
+| `bao.stakater.com/kv-subscribe-ns` | KV | Read secrets shared by other namespaces in the same tenant (comma-separated list). |
 | `bao.stakater.com/kv-export-tenant` | KV | Share secrets out to other tenants (comma-separated list). |
 | `bao.stakater.com/kv-import-tenant` | KV | Read secrets shared in by other tenants (comma-separated list). |
-| `bao.stakater.com/transit` | Transit | `"true"` → use the namespace's own key and the tenant's shared key. |
 | `bao.stakater.com/transit-export-tenant` | Transit | Share an encryption key out to other tenants (list). |
 | `bao.stakater.com/transit-import-tenant` | Transit | Use an encryption key shared in by other tenants (list). |
-| `bao.stakater.com/pki` | PKI | `"true"` → issue certificates directly from OpenBao. |
-| `bao.stakater.com/pki-allow-tenant` | PKI | Accept these other tenants as clients (list). Trusts their CA. |
-| `bao.stakater.com/pki-trust-tenant` | PKI | Trust these other tenants' certificates, without accepting them as clients (list). |
+| `bao.stakater.com/pki-allow-tenant` | PKI | Accept these other tenants as inbound mTLS clients (list). Implies trusting their CA. |
+| `bao.stakater.com/pki-trust-tenant` | PKI | Trust these other tenants' server certificates outbound only, without accepting them as clients (list). |
 
-**Annotations on the `Deployment`** (each one creates a Kubernetes Secret through ESO):
+> **Why `allow`/`trust` and not `export`/`import`?** PKI trust is not data flow. Both directions ingest the peer's CA — the difference is whether it lands in your server-side client trust (accepting them *inbound*: `allow`) or only in your outbound bundle (calling them: `trust`), so data-flow verbs would mislead.
 
-| Annotation | Reads from |
-|---|---|
-| `bao.stakater.com/secret.<name>` | Your own namespace |
-| `bao.stakater.com/subscribe.<name>` | A sibling namespace's shared folder |
-| `bao.stakater.com/import.<name>` | Another tenant's shared space |
+**Annotations on the `Deployment`** (each one creates a Kubernetes Secret through ESO, named `<sa>-<name>`):
+
+| Annotation | Reads from | Pairs with (on the ServiceAccount) |
+|---|---|---|
+| `bao.stakater.com/kv-secret.<name>` | Your own app's prefix | `kv` |
+| `bao.stakater.com/kv-subscribe.<name>` | A sibling namespace's shared folder | `kv-subscribe-ns` |
+| `bao.stakater.com/kv-import.<name>` | Another tenant's shared space | `kv-import-tenant` |
+
+**One app = one ServiceAccount.** The app identity is 1:1 with the ServiceAccount OpenBao authenticates. Several Deployments or Jobs of one app share a single ServiceAccount (identical secret requests are deduplicated); two *different* apps that need the same value share it through the namespace's shared folder (`_shared/from-<ns>/`). Two ServiceAccounts resolving to one app name are rejected on both sides. OpenBao-enabled ServiceAccount *names* must themselves be dot-free lowercase RFC 1123 labels (letters, digits, hyphens): the chart embeds the name in generated object names whose reserved suffixes are dot-separated.
+
+Everything the chart renders for an app into its namespace — `bao-config-<sa>`, the SecretStores, the ExternalSecrets — carries a `bao.stakater.com/app` label, so `kubectl get cm,secretstore,externalsecret -l bao.stakater.com/app=payments` collects one app's plumbing in one command.
 
 Each feature section below explains these in full, with examples.
 
@@ -277,13 +296,13 @@ curl -s --request POST \
   --header "X-Vault-Token: ${VAULT_TOKEN}" \
   --header "X-Vault-Namespace: ${VAULT_NAMESPACE}" \
   --data '{"data":{"username":"app","password":"s3cret"}}' \
-  "${VAULT_ADDR}/v1/${VAULT_KV_OWN_PATH}app/postgres"
+  "${VAULT_ADDR}/v1/${VAULT_KV_APP_PATH}postgres"
 
 # 3. Read it back.
 curl -s \
   --header "X-Vault-Token: ${VAULT_TOKEN}" \
   --header "X-Vault-Namespace: ${VAULT_NAMESPACE}" \
-  "${VAULT_ADDR}/v1/${VAULT_KV_OWN_PATH}app/postgres" | jq '.data.data'
+  "${VAULT_ADDR}/v1/${VAULT_KV_APP_PATH}postgres" | jq '.data.data'
 ```
 
 ### The same thing with the `bao` CLI
@@ -298,27 +317,49 @@ export VAULT_TOKEN="$(bao write -field=token auth/kubernetes/login \
 
 # 2. Write a secret (KV v2 nests the values under "data").
 echo '{"data":{"username":"app","password":"s3cret"}}' \
-  | bao write "${VAULT_KV_OWN_PATH}app/postgres" -
+  | bao write "${VAULT_KV_APP_PATH}postgres" -
 
 # 3. Read it back — the same path the ConfigMap gives you.
-bao read "${VAULT_KV_OWN_PATH}app/postgres"
+bao read "${VAULT_KV_APP_PATH}postgres"
 ```
 
-> The `bao kv get`/`bao kv put` shortcuts also work, but they take the path **without** `/data/` (e.g. `bao kv get -mount=kv dev/team-a-api/app/postgres`). The `VAULT_KV_OWN_PATH` variable is the raw-API form (`kv/data/...`), which `bao read`/`bao write` use directly.
+> The `bao kv get`/`bao kv put` shortcuts also work, but they take the path **without** `/data/` (e.g. `bao kv get -mount=kv dev/team-a-api/web/postgres`). The `VAULT_KV_APP_PATH` variable is the raw-API form (`kv/data/...`), which `bao read`/`bao write` use directly. The same applies in the OpenBao web UI: open the `kv` mount and browse `dev/team-a-api/web/` — no `/data/` segment.
 
 ### What's in the ConfigMap
 
-These keys are always present. Sharing, Transit, and PKI add more (shown in each feature section).
+The first four rows are always present (`VAULT_CACERT` only when the install ships a CA bundle); the four KV rows appear when `kv` is enabled. Sharing, Transit, and PKI add more (shown in each feature section).
 
 | Key | Example | Meaning |
 |---|---|---|
 | `VAULT_ADDR` | `http://openbao.openbao:8200` | OpenBao server URL |
+| `VAULT_CACERT` | `/etc/bao/ca/ca.crt` | CA file path (only when the install ships a CA bundle) |
 | `VAULT_NAMESPACE` | `team-a/` | the tenant's OpenBao namespace |
-| `VAULT_K8S_ROLE` | `team-a-team-a-api-web-editor` | the login role for this ServiceAccount |
-| `VAULT_KV_OWN_PATH` | `kv/data/dev/team-a-api/` | your own secrets live here |
-| `VAULT_KV_OWN_META_PATH` | `kv/metadata/dev/team-a-api/` | metadata for your own secrets |
+| `VAULT_K8S_ROLE` | `team-a-team-a-api-web` | the login role for this ServiceAccount |
+| `VAULT_KV_APP` | `web` | the app that owns this ServiceAccount's secrets |
+| `VAULT_KV_APP_PATH` | `kv/data/dev/team-a-api/web/` | the app's own secrets live here |
+| `VAULT_KV_APP_META_PATH` | `kv/metadata/dev/team-a-api/web/` | metadata for the app's own secrets |
+| `VAULT_KV_SHARED_OUT_PATH` | `kv/data/dev/_shared/from-team-a-api/` | the namespace's shared folder (write with `editor`+) |
 
 > **Tip:** don't hardcode these values — read them from the ConfigMap. The names follow the chart's conventions and can change between tenants.
+
+### Finding an app's path — the `bao-apps` directory
+
+Someone has to put the first secret *into* OpenBao — a teammate with SSO access, or a pipeline. They need to know where. Every namespace with at least one OpenBao-enabled ServiceAccount gets a ConfigMap named `bao-apps` that answers it in one command:
+
+```console
+$ kubectl get cm bao-apps -n team-a-api -o jsonpath='{.data.web}'
+serviceAccount: "web"
+tier: "editor"
+engines: kv
+kvPath: kv/data/dev/team-a-api/web/
+requestedSecrets: "postgres"
+```
+
+One entry per app, keyed by app name. `serviceAccount`, `tier` and `engines` are always present; `kvPath` and `requestedSecrets` appear when `kv` is on, `transitKey` when transit is on — a PKI-only app has just the first three. `requestedSecrets` lists the leaves the app's Deployments currently *request* via `kv-secret.*` annotations; a request is listed even while its Deployment has a reported error, so treat it as intent, not as proof an ExternalSecret rendered. The `_namespace` entry carries the shared-folder path (when the namespace has a kv app) and the namespace transit key (when it has a transit app); a namespace with neither — PKI-only, say — has no `_namespace` entry at all. An app whose annotations are invalid appears under `<serviceaccount>.error`, pointing at its error ConfigMap. The `_format` key versions this layout (`v1`); the field names and these presence rules are covered by the stability promise above.
+
+Paths in `bao-apps` are API data paths. In the OpenBao web UI, open the `kv` mount and browse `<env>/<namespace>/<app>/` — the `/data/` segment is an API artifact.
+
+The index is a signpost, never an input: the chart derives it from the same facts as the policies, nothing reads it back, and editing it changes no access. If you run ArgoCD or Flux in your namespaces, exclude the chart-rendered `bao-*` ConfigMaps (`bao-apps`, `bao-config-*`, `bao-ca-bundle`) from pruning.
 
 ---
 
@@ -337,16 +378,16 @@ untouched, and everything heals on its own once ESO is installed.
 **What the chart creates.** For each ServiceAccount you give a tier:
 
 - a `SecretStore` named `<sa>-bao` that logs into OpenBao with the same role as the workload;
-- for each cross-tenant import, an extra `SecretStore` named `<sa>-share-<peer>-bao`;
+- for each cross-tenant import, an extra `SecretStore` named `<sa>.share-<peer>-bao`;
 - one `ExternalSecret` for each Deployment annotation.
 
 **How to use it.** Add an annotation to the `Deployment`. The value is `<reference>[#<field>]`:
 
 | Annotation | Reads from | Through store |
 |---|---|---|
-| `bao.stakater.com/secret.<name>: <leaf>[#<field>]` | your own namespace | `<sa>-bao` |
-| `bao.stakater.com/subscribe.<name>: <writer-ns>/<leaf>[#<field>]` | a sibling namespace's shared folder | `<sa>-bao` |
-| `bao.stakater.com/import.<name>: <peer>/<leaf>[#<field>]` | another tenant's shared space | `<sa>-share-<peer>-bao` |
+| `bao.stakater.com/kv-secret.<name>: <leaf>[#<field>]` | your own app's prefix | `<sa>-bao` |
+| `bao.stakater.com/kv-subscribe.<name>: <writer-ns>/<leaf>[#<field>]` | a sibling namespace's shared folder | `<sa>-bao` |
+| `bao.stakater.com/kv-import.<name>: <peer>/<leaf>[#<field>]` | another tenant's shared space | `<sa>.share-<peer>-bao` |
 
 - **With `#<field>`** → only that one field is copied into the Secret.
 - **Without `#<field>`** → the whole secret is copied (every field becomes a key).
@@ -360,8 +401,8 @@ metadata:
   name: web
   namespace: team-a-api
   annotations:
-    bao.stakater.com/secret.db-creds: app/postgres        # the whole secret
-    bao.stakater.com/secret.api-key:  app/external#token  # just the "token" field
+    bao.stakater.com/kv-secret.db-creds: postgres        # the whole secret
+    bao.stakater.com/kv-secret.api-key:  external#token  # just the "token" field
 spec:
   template:
     spec:
@@ -371,7 +412,7 @@ spec:
           image: my/web:1.0
           envFrom:
             - secretRef:
-                name: db-creds   # the Kubernetes Secret ESO creates
+                name: web-db-creds   # the Kubernetes Secret ESO creates, named <sa>-<name>
 ```
 
 You write only the annotation. The chart generates the `ExternalSecret` for you:
@@ -380,7 +421,7 @@ You write only the annotation. The chart generates the `ExternalSecret` for you:
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: db-creds
+  name: web-db-creds
   namespace: team-a-api
 spec:
   refreshInterval: 1h            # from externalSecretRefreshInterval
@@ -388,11 +429,11 @@ spec:
     name: web-bao
     kind: SecretStore
   target:
-    name: db-creds
+    name: web-db-creds
     creationPolicy: Owner
   dataFrom:
     - extract:
-        key: dev/team-a-api/app/postgres
+        key: dev/team-a-api/web/postgres
 ```
 
 **Refresh.** ESO re-reads on `externalSecretRefreshInterval` (default `1h`). Every refresh is an OpenBao login, so don't set it too low.
@@ -416,7 +457,7 @@ spec:
 
 ### Use it in your own namespace
 
-Add a tier to the ServiceAccount:
+Enable KV and set a tier on the ServiceAccount:
 
 ```yaml
 # ServiceAccount for team-a's web app
@@ -424,13 +465,14 @@ metadata:
   name: web
   namespace: team-a-api
   annotations:
+    bao.stakater.com/kv: "true"
     bao.stakater.com/tier: editor
 ```
 
-The chart creates a policy and a login role scoped to `kv/data/dev/team-a-api/*`, plus the `bao-config-web` ConfigMap.
+The chart creates a policy and a login role scoped to the app's own prefix, `kv/data/dev/team-a-api/web/*`, plus the `bao-config-web` ConfigMap. The last path segment is the **app** — the ServiceAccount name, unless `bao.stakater.com/app` overrides it. Scoping to the app (not the namespace) is what stops two workloads in one namespace reading each other's secrets; to share deliberately inside the namespace, use its shared folder (next section).
 
-> **Needs:** nothing extra to call OpenBao directly. ESO if you use the `secret.<name>` Deployment annotation.
-> **Consume:** read/write `VAULT_KV_OWN_PATH` — see [Connecting a workload](#connecting-a-workload-to-openbao) — or have it delivered as a Secret with [ESO](#delivering-secrets-with-external-secrets-operator-eso).
+> **Needs:** nothing extra to call OpenBao directly. ESO if you use the `kv-secret.<name>` Deployment annotation.
+> **Consume:** read/write `VAULT_KV_APP_PATH` — see [Connecting a workload](#connecting-a-workload-to-openbao) — or have it delivered as a Secret with [ESO](#delivering-secrets-with-external-secrets-operator-eso).
 
 ### Share inside a tenant (namespace → namespace)
 
@@ -463,7 +505,7 @@ metadata:
   namespace: team-a-worker
   annotations:
     bao.stakater.com/tier: viewer
-    bao.stakater.com/subscribe-to-ns: team-a-api   # comma-separated for several
+    bao.stakater.com/kv-subscribe-ns: team-a-api   # comma-separated for several
 ```
 
 The subscriber's ConfigMap gains `VAULT_FROM_TEAM_A_API_PATH` (= `kv/data/dev/_shared/from-team-a-api/`); it reads `${VAULT_FROM_TEAM_A_API_PATH}svc-token`.
@@ -479,7 +521,7 @@ What each tier may do with a shared folder it can reach:
 
 Writing is always to your **own** folder; subscribing only ever grants **read**. So no namespace can write into another's folder — the direction is fixed.
 
-> **Needs:** nothing extra to use OpenBao directly. ESO if you use the Deployment annotation `bao.stakater.com/subscribe.<name>: team-a-api/<leaf>`.
+> **Needs:** nothing extra to use OpenBao directly. ESO if you use the Deployment annotation `bao.stakater.com/kv-subscribe.<name>: team-a-api/<leaf>`.
 > **Note:** you can only subscribe to namespaces in your own tenant. Naming an outside namespace stops the render with an error.
 
 ### Share across tenants (tenant → tenant)
@@ -512,11 +554,11 @@ echo '{"data":{"api-key":"xyz"}}' | bao write "${VAULT_OUT_TEAM_B_PATH}creds" -
 bao.stakater.com/kv-import-tenant: team-a
 ```
 
-This creates a read-only policy + role (`share-team-b-<ns>-<sa>-in-team-a`) in the shared space, plus an ESO `SecretStore` named `<sa>-share-team-a-bao`. The reader logs into `shared/` with its IN role and reads `${VAULT_IN_TEAM_A_PATH}creds`, or has it delivered as a Kubernetes Secret:
+This creates a read-only policy + role (`share-team-b-<ns>-<sa>-in-team-a`) in the shared space, plus an ESO `SecretStore` named `<sa>.share-team-a-bao`. The reader logs into `shared/` with its IN role and reads `${VAULT_IN_TEAM_A_PATH}creds`, or has it delivered as a Kubernetes Secret:
 
 ```yaml
 # team-b's Deployment
-bao.stakater.com/import.partner-key: team-a/creds   # → Secret via the share-in SecretStore
+bao.stakater.com/kv-import.partner-key: team-a/creds   # → Secret via the share-in SecretStore
 ```
 
 The two sides are independent: `team-a` exposing to `team-b` grants nothing until `team-b` also imports from `team-a`. Remove either side to cut the link.
@@ -530,7 +572,7 @@ The two sides are independent: `team-a` exposing to `team-b` grants nothing unti
 
 **What it is.** Transit is "encryption as a service." A workload sends data to OpenBao and gets ciphertext back (and the reverse). The keys never leave OpenBao.
 
-**Turn it on & what you need.** On by default (`transit.enabled`). Each tenant gets a `transit` engine, one **shared key** (`team-a-shared-dev`) created up front, and one **per-namespace key** (`team-a-api-dev`) for each namespace that opts in. All keys rotate automatically (default every 90 days).
+**Turn it on & what you need.** On by default (`transit.enabled`). Each tenant gets a `transit` engine and one **shared key** created up front; each namespace that opts in gets a **namespace key**, and each opted-in app gets its **own key** on top. All keys rotate automatically (default every 90 days).
 > **Needs:** nothing beyond OpenBao. There is no ESO path — Transit is an operation, not a stored value.
 
 ### Access levels (tiers)
@@ -551,21 +593,30 @@ metadata:
     bao.stakater.com/transit: "true"
 ```
 
-This grants encrypt/decrypt/rewrap on **two** keys: the namespace's own key and the tenant's shared key.
+This grants encrypt/decrypt/rewrap on **three** keys: the app's own key (private to this app), the namespace key (shared by every opted-in app in the namespace), and the tenant's shared key (shared across the tenant).
 
-**Consume:** the ConfigMap gains `VAULT_TRANSIT_OWN_ENCRYPT`, `VAULT_TRANSIT_OWN_DECRYPT`, `VAULT_TRANSIT_SHARED_ENCRYPT`, `VAULT_TRANSIT_SHARED_DECRYPT`. POST your data to those paths after logging in:
+**Consume:** the ConfigMap gains, for each of the three keys, the key name and its encrypt/decrypt endpoints, plus the mount:
+
+| Key | Variables |
+|---|---|
+| app (private) | `VAULT_TRANSIT_APP_KEY`, `VAULT_TRANSIT_APP_ENCRYPT`, `VAULT_TRANSIT_APP_DECRYPT` |
+| namespace | `VAULT_TRANSIT_NS_KEY`, `VAULT_TRANSIT_NS_ENCRYPT`, `VAULT_TRANSIT_NS_DECRYPT` |
+| tenant-shared | `VAULT_TRANSIT_SHARED_KEY`, `VAULT_TRANSIT_SHARED_ENCRYPT`, `VAULT_TRANSIT_SHARED_DECRYPT` |
+| (mount) | `VAULT_TRANSIT_MOUNT` |
+
+POST your data to an encrypt/decrypt path after logging in:
 
 ```bash
 curl -s --request POST \
   --header "X-Vault-Token: ${VAULT_TOKEN}" \
   --header "X-Vault-Namespace: ${VAULT_NAMESPACE}" \
   --data '{"plaintext":"'"$(echo -n 'hello' | base64)"'"}' \
-  "${VAULT_ADDR}/v1/${VAULT_TRANSIT_OWN_ENCRYPT}"
+  "${VAULT_ADDR}/v1/${VAULT_TRANSIT_APP_ENCRYPT}"
 ```
 
 ### Share inside a tenant (namespace → namespace)
 
-There's no producer/subscriber split here — Transit's shared key is symmetric, and **every** namespace that opts in with `transit: "true"` is granted the same key, `team-a-shared-dev`. So any opted-in namespace can encrypt, and any other can decrypt. (Each namespace also keeps its own key, `<ns>-dev`, that only it can use.)
+There's no producer/subscriber split here — Transit's shared key is symmetric, and **every** app that opts in with `transit: "true"` is granted the same tenant key. So any opted-in workload can encrypt, and any other can decrypt. (Each namespace also keeps a namespace key its own apps share, and each app keeps a private key nothing else can use.)
 
 Both namespaces opt in the same way — no extra annotation:
 
@@ -575,7 +626,7 @@ bao.stakater.com/tier: editor
 bao.stakater.com/transit: "true"
 ```
 
-Each pod logs into its own tenant (`team-a/`, where the shared key lives) and uses the `VAULT_TRANSIT_SHARED_*` paths from its ConfigMap — the same key name on both sides:
+Each pod logs into its own tenant (`team-a/`, where the shared key lives) and uses `VAULT_TRANSIT_SHARED_ENCRYPT` / `VAULT_TRANSIT_SHARED_DECRYPT` from its ConfigMap — the same key name on both sides:
 
 ```bash
 # in team-a-api's pod — encrypt
@@ -700,7 +751,7 @@ check to fail.
 - `VAULT_PKI_SIGN_PATH` (`pki/sign/<role>`) — **you generate the private key**, send only a certificate signing request (CSR), and OpenBao returns just the signed certificate. The key never leaves the pod. **Prefer this.**
 - `VAULT_PKI_ISSUE_PATH` (`pki/issue/<role>`) — **OpenBao generates the private key** and returns it together with the certificate. Convenient, but the private key travels over the network and ends up wherever the response goes.
 
-(`VAULT_PKI_CA_PATH` returns the CA chain for verifying what you get back.)
+(`VAULT_PKI_CA_PATH` returns the CA chain for verifying what you get back; `VAULT_PKI_MOUNT` and `VAULT_PKI_ROLE` name the mount and the primary role the paths above are built from.)
 
 **Recommended — sign your own CSR (key stays in the pod):**
 

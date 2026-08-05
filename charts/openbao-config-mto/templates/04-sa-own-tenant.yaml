@@ -7,8 +7,11 @@ Section 4 (own-tenant) — per annotated ServiceAccount:
 
 A ServiceAccount carrying no `bao.stakater.com/` annotation renders nothing. One
 carrying an annotation the chart cannot honour renders a single ConfigMap
-`bao-config-<sa>-error` describing the problem, and nothing else — see
-`openbao.saFacts`. Every SA in .Values.serviceAccounts is, by construction, in a
+`bao-config-<sa>.error` describing the problem, and nothing else — see
+`openbao.saFacts`. Rendered names reserve dot-separated
+suffixes (`.error`, `.deploy-error`, `.share-<peer>-bao`) and G16 keeps
+OpenBao-enabled ServiceAccount names dot-free, so no two rendered ConfigMap or
+SecretStore names can collide. Role and policy names are not covered by this. Every SA in .Values.serviceAccounts is, by construction, in a
 k8s namespace owned by .Values.tenant: the child TI's single objectFieldRef LIST
 is scoped via namespaceSelector matchLabels: { <tenantLabelKey>: <tenant> }.
 
@@ -53,6 +56,34 @@ Access is opt-in per engine, and a tier says how much:
 {{- if $ns }}{{ $_ := set $tenantNamespaces $ns true }}{{ end }}
 {{- end }}
 {{- $appClaims := include "openbao.appClaims" . | fromYaml }}
+{{- /* Own-app leaves requested via kv-secret.<name>, keyed <ns>/<sa>. The
+       #<key> fragment names a key inside the leaf, not a path. Informational
+       only — the authoritative grant set is saFacts. */ -}}
+{{- $secretLeaves := dict }}
+{{- range $d := (ternary .Values.deployments (list) (kindIs "slice" .Values.deployments)) }}
+{{- $dNs := dig "metadata" "namespace" "" $d }}
+{{- $dSa := dig "spec" "template" "spec" "serviceAccountName" "" $d }}
+{{- if and $dNs $dSa }}
+{{- range $key, $rawVal := (dig "metadata" "annotations" (dict) $d) }}
+{{- if hasPrefix "bao.stakater.com/kv-secret." $key }}
+{{- $k := printf "%s/%s" $dNs $dSa }}
+{{- $leaf := first (splitList "#" (toString $rawVal)) }}
+{{- /* Same shape rule 05 enforces: a hostile value must not forge sibling
+       fields in the entry block or name a path outside the app prefix. */ -}}
+{{- if and $leaf (regexMatch "^[A-Za-z0-9_-]([A-Za-z0-9._/-]*[A-Za-z0-9_-])?$" $leaf) (not (contains ".." $leaf)) (not (contains "//" $leaf)) }}
+{{- $_ := set $secretLeaves $k (append (index $secretLeaves $k | default (list)) $leaf) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* Index accumulators: healthy entries keyed by resolved app, error entries
+       by ServiceAccount name (the resolved app may be the invalid part). */ -}}
+{{- $idxHealthy := dict }}
+{{- $idxErrs := dict }}
+{{- $idxHasKv := dict }}
+{{- $idxHasTransit := dict }}
+{{- $caBundleDone := dict }}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
 {{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml }}
 {{- $saName := $f.name }}
@@ -71,12 +102,35 @@ Access is opt-in per engine, and a tier says how much:
 {{- $nsKey := include "openbao.transitNsKeyName" (dict "ns" $saNs "env" $env) }}
 {{- $sharedKey := include "openbao.transitSharedKeyName" (dict "tenant" $tenant "env" $env) }}
 {{- if and $f.errors $saName $saNs }}
+{{- $m := index $idxErrs $saNs | default (dict) }}
+{{- $_ := set $m $saName (printf "error: OpenBao annotations rejected — see ConfigMap bao-config-%s.error in this namespace" $saName) }}
+{{- $_ := set $idxErrs $saNs $m }}
 {{- if $renderCore }}
 ---
-{{ include "openbao.errorConfigMap" (dict "name" (printf "bao-config-%s-error" $saName) "ns" $saNs "labels" $labels "subject" (printf "ServiceAccount %s/%s" $saNs $saName) "errors" $f.errors) }}
+{{ include "openbao.errorConfigMap" (dict "name" (printf "bao-config-%s.error" $saName) "ns" $saNs "labels" $labels "subject" (printf "ServiceAccount %s/%s" $saNs $saName) "errors" $f.errors) }}
 {{- end }}
 {{- else if and $saName $saNs (or $f.kvOn $f.transitOn $f.pkiOn) }}
 {{- $roleName := include "openbao.roleName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName) }}
+{{- $engines := list }}
+{{- if $f.kvOn }}{{- $engines = append $engines "kv" }}{{- end }}
+{{- if $f.transitOn }}{{- $engines = append $engines "transit" }}{{- end }}
+{{- if $f.pkiOn }}{{- $engines = append $engines "pki" }}{{- end }}
+{{- $entry := printf "serviceAccount: %q\ntier: %q\nengines: %s" $saName $tier (join ", " $engines) }}
+{{- if $f.kvOn }}
+{{- $entry = printf "%s\nkvPath: kv/data/%s/%s/%s/" $entry $env $saNs $app }}
+{{- $leaves := index $secretLeaves (printf "%s/%s" $saNs $saName) }}
+{{- if $leaves }}
+{{- $entry = printf "%s\nrequestedSecrets: %q" $entry (join ", " (uniq (sortAlpha $leaves))) }}
+{{- end }}
+{{- end }}
+{{- if $f.transitOn }}
+{{- $entry = printf "%s\ntransitKey: %s" $entry $appKey }}
+{{- end }}
+{{- $m := index $idxHealthy $saNs | default (dict) }}
+{{- $_ := set $m $app $entry }}
+{{- $_ := set $idxHealthy $saNs $m }}
+{{- if $f.kvOn }}{{- $_ := set $idxHasKv $saNs true }}{{- end }}
+{{- if $f.transitOn }}{{- $_ := set $idxHasTransit $saNs true }}{{- end }}
 {{- if $renderCore }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -220,6 +274,7 @@ metadata:
   namespace: {{ $saNs }}
   labels:
     {{- $labels | nindent 4 }}
+    bao.stakater.com/app: {{ $app | quote }}
 data:
   VAULT_ADDR: {{ $.Values.baoServer }}
   {{- if $.Values.baoCABundle }}
@@ -231,7 +286,7 @@ data:
   {{- /* Named APP, not OWN: the prefix narrowed from a namespace to one app, so a
          consumer still reading the old name would assume a wider path than it is
          granted. Renaming makes that a startup failure instead. */}}
-  VAULT_KV_APP: {{ $app }}
+  VAULT_KV_APP: {{ $app | quote }}
   VAULT_KV_APP_PATH: kv/data/{{ $env }}/{{ $saNs }}/{{ $app }}/
   VAULT_KV_APP_META_PATH: kv/metadata/{{ $env }}/{{ $saNs }}/{{ $app }}/
   VAULT_KV_SHARED_OUT_PATH: kv/data/{{ $env }}/_shared/from-{{ $saNs }}/
@@ -314,12 +369,13 @@ data:
   VAULT_PKI_ISSUE_PATH: {{ $pkiMount }}/issue/{{ $primaryRole }}
   VAULT_PKI_SIGN_PATH:  {{ $pkiMount }}/sign/{{ $primaryRole }}
   {{- end }}
-{{- if $.Values.baoCABundle }}
+{{- if and $.Values.baoCABundle (not (hasKey $caBundleDone $saNs)) }}
+{{- $_ := set $caBundleDone $saNs true }}
 ---
 {{- /* A CA bundle is a public certificate, so it ships as a ConfigMap — the
        same shape as kube-root-ca.crt and as the trust-manager Bundle target in
        11-pki-cross-tenant-trust.yaml. Keeping it out of a Secret is what lets
-       the bootstrap ClusterRole omit Secret write access. */ -}}
+       the bootstrap ClusterRole omit Secret write access. One per namespace. */ -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -341,6 +397,7 @@ metadata:
   namespace: {{ $saNs }}
   labels:
     {{- $labels | nindent 4 }}
+    bao.stakater.com/app: {{ $app | quote }}
 spec:
   provider:
     vault:
@@ -358,6 +415,49 @@ spec:
           serviceAccountRef:
             name: {{ $saName }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{- /* One per workload namespace with an annotated ServiceAccount: the
+       app -> path directory a seeder reads instead of hopping Deployment ->
+       serviceAccountName -> bao-config-<sa>. A signpost, never an input —
+       editing it changes no access. */ -}}
+{{- if $renderCore }}
+{{- $idxNs := dict }}
+{{- range $ns, $_x := $idxHealthy }}{{- $_ := set $idxNs $ns true }}{{- end }}
+{{- range $ns, $_x := $idxErrs }}{{- $_ := set $idxNs $ns true }}{{- end }}
+{{- range $ns, $_x := $idxNs }}
+{{- $healthy := index $idxHealthy $ns | default (dict) }}
+{{- $errsIdx := index $idxErrs $ns | default (dict) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bao-apps
+  namespace: {{ $ns }}
+  labels:
+    {{- $labels | nindent 4 }}
+data:
+  _format: "v1"
+  _usage: "One entry per app that uses OpenBao in this namespace. Paths are API data paths; in the OpenBao UI open the kv mount and browse <env>/<namespace>/<app>/. The bao-config-<serviceaccount> ConfigMap holds the full environment for one app."
+  {{- if or (hasKey $idxHasKv $ns) (hasKey $idxHasTransit $ns) }}
+  _namespace: |
+    {{- if hasKey $idxHasKv $ns }}
+    sharedOutPath: kv/data/{{ $env }}/_shared/from-{{ $ns }}/
+    {{- end }}
+    {{- if hasKey $idxHasTransit $ns }}
+    transitNsKey: {{ include "openbao.transitNsKeyName" (dict "ns" $ns "env" $env) }}
+    {{- end }}
+  {{- end }}
+  {{- range $appName, $entry := $healthy }}
+  {{ $appName | quote }}: |
+    {{- $entry | nindent 4 }}
+  {{- end }}
+  {{- /* Always .error-suffixed: app names cannot contain dots (G5), so these
+         keys never collide with a healthy entry. */ -}}
+  {{- range $errSa, $entry := $errsIdx }}
+  {{ printf "%s.error" $errSa | quote }}: |
+    {{- $entry | nindent 4 }}
+  {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

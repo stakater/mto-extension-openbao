@@ -100,6 +100,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 fail=0
+# Skips are printed, never silent — a vanishing check reads as a passing one.
+note_skip() { echo "SKIP  $1${2:+ — $2}"; }
 check() { # check <name> <ok:0|1> [detail]
   if [ "$2" -eq 0 ]; then
     echo "PASS  $1"
@@ -645,7 +647,7 @@ fi
 # 21. guards — a misconfigured ServiceAccount is reported next to itself and does
 # NOT stop the rest of the tenant rendering. One TemplateInstance renders every
 # namespace a tenant owns, so a fail() would freeze unrelated namespaces; the
-# chart emits bao-config-<sa>-error instead. Each broken SA must get exactly one
+# chart emits bao-config-<sa>.error instead. Each broken SA must get exactly one
 # error ConfigMap and no policy, and the valid SA in another namespace must still
 # get its full object set.
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-guards.yaml" --set component=all > "$WORK/guards.yaml" 2>"$WORK/guards.err" \
@@ -656,7 +658,7 @@ if [ "$guards_rendered" -ne 0 ]; then
 else
   broken="g-tier-only g-no-tier g-bad-tier g-empty-caps g-injection g-wildcard g-reserved g-claimed g-claimer g-orphan-share default g-foreign-ns g-unknown-key g-bad-bool"
   for sa in $broken; do
-    n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$sa-error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+    n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$sa.error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
     [ "$n" -eq 1 ] || guards_detail="$guards_detail [no error ConfigMap for $sa]"
     p="$("$YQ" ea -N "select(.kind == \"OpenBaoPolicy\" and .metadata.name == \"team-a-team-a-dev-$sa\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
     [ "$p" -eq 0 ] || guards_detail="$guards_detail [$sa was granted a policy despite being rejected]"
@@ -685,7 +687,7 @@ dedupe="$("$YQ" ea -N 'select(.kind == "ExternalSecret" and .metadata.name == "g
 clash="$("$YQ" ea -N 'select(.kind == "ExternalSecret" and .metadata.name == "good-sa-cfg") | .metadata.name' "$WORK/guards.yaml" | { grep -c . || true; })"
 [ "$clash" -eq 0 ] || es_detail="$es_detail [conflicting asks still rendered an ExternalSecret]"
 for d in d-clash-a d-clash-b d-no-sa d-misplaced; do
-  n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-deploy-$d-error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
+  n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$d.deploy-error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
   [ "$n" -eq 1 ] || es_detail="$es_detail [no error ConfigMap for Deployment $d]"
 done
 [ -z "$es_detail" ] && check esdedupe 0 || check esdedupe 1 "$es_detail"
@@ -714,13 +716,13 @@ fi
 uniqueids_detail=""
 for c in all $SLICES; do
   render "$c" "$FIXTURES/values-full.yaml" > "$WORK/uid-$c.yaml" 2>/dev/null || continue
-  dupes="$("$YQ" ea -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-$c.yaml" \
+  dupes="$("$YQ" e -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-$c.yaml" \
     | { grep -v '^null' || true; } | sort | uniq -d | tr '\n' ' ')"
   [ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [$c: $dupes]"
 done
 # the guards fixture too — it renders the error-ConfigMap paths
 render all "$FIXTURES/values-guards.yaml" > "$WORK/uid-guards.yaml" 2>/dev/null
-dupes="$("$YQ" ea -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-guards.yaml" \
+dupes="$("$YQ" e -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-guards.yaml" \
   | { grep -v '^null' || true; } | sort | uniq -d | tr '\n' ' ')"
 [ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [guards: $dupes]"
 [ -z "$uniqueids_detail" ] && check uniqueids 0 || check uniqueids 1 "duplicate object identity within a slice:$uniqueids_detail"
@@ -732,7 +734,7 @@ dupes="$("$YQ" ea -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metada
 # so the check cannot pass by rejecting everything.
 grantmatch_detail=""
 for d in d-sub-nogrant d-imp-bad; do
-  n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-deploy-$d-error\") | .metadata.name" "$WORK/uid-guards.yaml" | { grep -c . || true; })"
+  n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$d.deploy-error\") | .metadata.name" "$WORK/uid-guards.yaml" | { grep -c . || true; })"
   [ "$n" -eq 1 ] || grantmatch_detail="$grantmatch_detail [no error ConfigMap for $d]"
 done
 for es in sub-ok-y good-sa-z; do
@@ -740,7 +742,7 @@ for es in sub-ok-y good-sa-z; do
   [ "$n" -eq 1 ] || grantmatch_detail="$grantmatch_detail [positive control $es did not render]"
 done
 # an app annotation with no engine registers nothing and must say so
-n="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-g-app-only-error") | .metadata.name' "$WORK/uid-guards.yaml" | { grep -c . || true; })"
+n="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-g-app-only.error") | .metadata.name' "$WORK/uid-guards.yaml" | { grep -c . || true; })"
 [ "$n" -eq 1 ] || grantmatch_detail="$grantmatch_detail [app-without-engine not reported]"
 [ -z "$grantmatch_detail" ] && check grantmatch 0 || check grantmatch 1 "$grantmatch_detail"
 
@@ -753,6 +755,127 @@ if grep -q "External Secrets Operator is disabled for this whole install" <<<"$e
   check esooff 0
 else
   check esooff 1 "eso=disabled must still report Deployments that request secrets"
+fi
+
+# 27. cohesion — the annotation-vocabulary contract. (a) A pre-rename Deployment
+# key is told its NEW name, not just "unknown" — the rename is only cheap while
+# every stale user gets pointed at the fix. (b) A dotted ServiceAccount name is
+# rejected: every chart-reserved object-name suffix is dot-separated (.error,
+# .deploy-error, .share-<peer>-bao), so dot-free workload names are what makes
+# rendered names collision-free by construction. (c) bao-apps — the per-namespace
+# app->path directory — renders from CORE only, keyed by resolved app name, and
+# carries the secrets: leaves a seeder needs.
+cohesion_detail=""
+oldkey_msg="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-d-oldkey.deploy-error") | .data.ERROR' "$WORK/uid-guards.yaml")"
+grep -q "was renamed to bao.stakater.com/kv-secret.db" <<<"$oldkey_msg" || cohesion_detail="$cohesion_detail [old spelling not told its new name]"
+dotted="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-g.dotted.error") | .data.ERROR' "$WORK/uid-guards.yaml")"
+grep -q "Rename the ServiceAccount" <<<"$dotted" || cohesion_detail="$cohesion_detail [dotted ServiceAccount name not rejected by G16]"
+apps_core="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-dev") | .data.payments' "$WORK/uid-all.yaml")"
+grep -q "kvPath: kv/data/dev/team-a-dev/payments/" <<<"$apps_core" || cohesion_detail="$cohesion_detail [bao-apps payments entry missing its kvPath]"
+grep -q 'requestedSecrets: "app-config, db-creds"' <<<"$apps_core" || cohesion_detail="$cohesion_detail [bao-apps payments entry missing its requestedSecrets leaves]"
+apps_eso="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps") | .metadata.name' "$WORK/uid-eso.yaml" | { grep -c . || true; })"
+[ "$apps_eso" -eq 0 ] || cohesion_detail="$cohesion_detail [bao-apps leaked into the eso slice]"
+# an errored SA still appears in the index, as a pointer to its error ConfigMap
+apps_err="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-dev") | .data["g-tier-only.error"]' "$WORK/uid-guards.yaml")"
+grep -q "bao-config-g-tier-only.error" <<<"$apps_err" || cohesion_detail="$cohesion_detail [errored SA has no pointer entry in bao-apps]"
+# two Deployments sharing one SA and asking for the same leaf -> the leaf listed
+# ONCE; the clash pair's leaves (one, two) still appear — both are genuinely
+# requested and path-valid, the clash is about the Secret NAME and is reported
+# on the Deployments themselves
+apps_dedupe="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-prod") | .data.good-sa' "$WORK/uid-guards.yaml")"
+grep -q '^requestedSecrets: "one, postgres, two"$' <<<"$apps_dedupe" || cohesion_detail="$cohesion_detail [requestedSecrets leaves wrong — want deduped sorted 'one, postgres, two']"
+[ -z "$cohesion_detail" ] && check cohesion 0 || check cohesion 1 "$cohesion_detail"
+
+# 28. anndrift — charts/README.md and the templates must document the SAME
+# annotation key set, both directions. The names have drifted twice already.
+# ServiceAccount keys come from openbao.saAnnotationKeys; Deployment families
+# are extracted from 05's hasPrefix checks, not hardcoded here — a template
+# rename with a stale README is the drift this exists to catch. Every command
+# substitution tolerates zero matches: under set -e a bare grep would kill the
+# script and silently skip later checks.
+README="$REPO_ROOT/charts/README.md"
+anndrift_detail=""
+sa_keys="$(awk '/define "openbao.saAnnotationKeys"/,/toYaml \$keys/' "$CHART/templates/_helpers.tpl" | { grep -oE '"[a-z0-9-]+"' || true; } | tr -d '"' | sort -u)"
+[ -n "$sa_keys" ] || anndrift_detail=" [could not extract openbao.saAnnotationKeys from _helpers.tpl]"
+dep_families="$({ grep -oE 'hasPrefix "(kv-[a-z0-9-]+)\.' "$CHART/templates/05-deployment-externalsecrets.yaml" || true; } | sed -E 's/hasPrefix "//; s/\.$//' | sort -u)"
+[ -n "$dep_families" ] || anndrift_detail="$anndrift_detail [could not extract Deployment key families from 05]"
+for k in $sa_keys; do
+  # anchored: bare `kv` must not be satisfied by `kv-export-tenant`
+  grep -qE "bao\.stakater\.com/$k([^a-z0-9.-]|\$)" "$README" || anndrift_detail="$anndrift_detail [template reads $k, README does not document it]"
+done
+for fam in $dep_families; do
+  grep -q "bao\.stakater\.com/$fam\." "$README" || anndrift_detail="$anndrift_detail [template reads $fam.<name>, README does not document it]"
+done
+docd="$({ grep -oE 'bao\.stakater\.com/[a-z0-9.-]*[a-z0-9]' "$README" || true; } | sed 's|bao\.stakater\.com/||' | sort -u)"
+for k in $docd; do
+  base="${k%%.*}"
+  if grep -qx "$base" <<<"$dep_families"; then
+    continue  # a dotted family, with or without an example suffix
+  fi
+  grep -qx "$k" <<<"$sa_keys" || anndrift_detail="$anndrift_detail [README documents $k, no template reads it]"
+done
+[ -z "$anndrift_detail" ] && check anndrift 0 || check anndrift 1 "$anndrift_detail"
+
+# 29. vardrift — same contract for the VAULT_* names the ConfigMaps publish, so
+# nobody codes against a name that no longer renders. Rendered names come from
+# the golden; dynamic per-peer families collapse to their prefix on both sides.
+# VAULT_TOKEN is doc-only: the CLI examples use it, no ConfigMap renders it.
+normalize_vars() {
+  sed -E 's/^(VAULT_TRANSIT_IN_|VAULT_TRANSIT_OUT_|VAULT_FROM_|VAULT_IN_|VAULT_OUT_).*/\1/' | sort -u
+}
+vardrift_detail=""
+rendered="$({ grep -oE '^\s+VAULT_[A-Z0-9_]+' "$FIXTURES/golden-all.yaml" || true; } | tr -d ' :' | normalize_vars)"
+documented="$({ grep -oE 'VAULT_[A-Z0-9_]+' "$README" || true; } | normalize_vars | { grep -v '^VAULT_TOKEN$' || true; })"
+[ -n "$rendered" ] || vardrift_detail=" [no VAULT_ names found in the golden — extraction broken]"
+for v in $rendered; do
+  grep -qx "$v" <<<"$documented" || vardrift_detail="$vardrift_detail [rendered $v not documented in README]"
+done
+for v in $documented; do
+  grep -qx "$v" <<<"$rendered" || vardrift_detail="$vardrift_detail [README documents $v, nothing renders it]"
+done
+[ -z "$vardrift_detail" ] && check vardrift 0 || check vardrift 1 "$vardrift_detail"
+
+# 31. hostileinputs — annotation VALUES are the only free-form user strings the
+# chart interpolates. Each must become an error ConfigMap, never reach a
+# rendered spec, and never forge fields — including inside the error ConfigMap
+# reporting it (a raw newline once produced a top-level `spec:` there).
+hostile_detail=""
+for d in d-evil-key d-evil-leaf d-evil-name; do
+  n="$("$YQ" e -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$d.deploy-error\") | .metadata.name" "$WORK/uid-guards.yaml" | { grep -c . || true; })"
+  [ "$n" -eq 1 ] || hostile_detail="$hostile_detail [no error ConfigMap for $d]"
+done
+es_evil="$("$YQ" e -N 'select(.kind == "ExternalSecret") | .spec.dataFrom[0].extract.key // .spec.data[0].remoteRef.key' "$WORK/uid-guards.yaml" | { grep -c '\.\.' || true; })"
+[ "$es_evil" -eq 0 ] || hostile_detail="$hostile_detail [a traversal path reached an ExternalSecret spec]"
+forged="$("$YQ" e -N 'select(.kind == "ConfigMap") | keys | sort | join(",")' "$WORK/uid-guards.yaml" | { grep -v '^apiVersion,data,kind,metadata$' || true; } | tr '\n' ' ')"
+[ -z "$forged" ] || hostile_detail="$hostile_detail [a ConfigMap grew unexpected top-level fields: $forged]"
+[ -z "$hostile_detail" ] && check hostileinputs 0 || check hostileinputs 1 "$hostile_detail"
+
+# 32. apiserver — decode every object through sigs.k8s.io/yaml (the apiserver's
+# own path: YAML 1.1 via go-yaml v2) and run apimachinery's validators over
+# names, labels and ConfigMap keys. yq cannot stand in: go-yaml v3 keeps `no` a
+# string while the apiserver decodes it as a boolean, so an unquoted app name
+# `no` fails a real apply yet passes every yq assertion.
+if command -v go >/dev/null 2>&1; then
+  apiserver_detail=""
+  for fx in values-full values-guards; do
+    render all "$FIXTURES/$fx.yaml" > "$WORK/api-$fx.yaml" 2>/dev/null
+    if ! out="$(cd "$REPO_ROOT" && GOFLAGS=-mod=mod go run ./hack/render-validate "$WORK/api-$fx.yaml" 2>&1)"; then
+      apiserver_detail="$apiserver_detail [$fx: $(printf '%s' "$out" | sed -n '2,3p' | tr '\n' ' ')]"
+    fi
+  done
+  [ -z "$apiserver_detail" ] && check apiserver 0 || check apiserver 1 "$apiserver_detail"
+else
+  note_skip apiserver "go toolchain not found"
+fi
+
+# 30. nullinputs — the parent passes serviceAccounts/deployments straight from
+# LIST resolutions that can be null; every consumer must ternary-guard. A crash
+# here fails the whole tenant.
+if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set serviceAccounts=null --set deployments=null > /dev/null 2>"$WORK/null.err"; then
+  check nullinputs 0
+else
+  check nullinputs 1 "null serviceAccounts/deployments crashed the render: $(head -1 "$WORK/null.err")"
 fi
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
