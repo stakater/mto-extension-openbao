@@ -18,6 +18,7 @@ metadata:
     {{- $labels | nindent 4 }}
 spec:
   name: {{ $name }}
+  deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoSecretEngine
@@ -30,6 +31,7 @@ spec:
   path: kv
   openbaoNamespace: {{ $name }}/
   kvV2: {}
+  deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoAuthMethod
@@ -42,6 +44,7 @@ spec:
   path: kubernetes
   type: kubernetes
   openbaoNamespace: {{ $name }}/
+  deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoKubernetesAuthEngineConfig

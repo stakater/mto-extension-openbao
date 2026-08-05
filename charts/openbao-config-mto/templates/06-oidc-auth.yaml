@@ -38,6 +38,7 @@ spec:
   path: oidc
   type: oidc
   openbaoNamespace: {{ $name }}/
+  deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoJWTOIDCAuthEngineConfig
