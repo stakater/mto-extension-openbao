@@ -258,7 +258,7 @@ LONG_TENANT="$(printf 'a%.0s' $(seq 1 40))"
 if render_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set-string "tenant=$LONG_TENANT" --set component=certManager 2>&1)"; then
   check namebudget-over 1 "40-char tenant with component=certManager rendered instead of failing"
 else
-  echo "$render_out" | grep -q "label values cap at 63" \
+  grep -q "label values cap at 63" <<<"$render_out" \
     && check namebudget-over 0 \
     || check namebudget-over 1 "failed without the budget message: $(echo "$render_out" | head -2 | tr '\n' ' ')"
 fi
@@ -340,7 +340,7 @@ grants_case() { # grants_case <test> <name> <eso> <cm> <ct> <present|absent> <gr
   got="$(rbac_rules "$eso" "$cm" "$ct")"
   while IFS= read -r g; do
     [ -z "$g" ] && continue
-    if printf '%s\n' "$got" | grep -qF "$g"; then
+    if grep -qF "$g" <<<"$got"; then
       [ "$mode" = absent ] && wrong="$wrong [granted:$g]"
     else
       [ "$mode" = present ] && wrong="$wrong [missing:$g]"
@@ -423,7 +423,7 @@ fi
 cp -R "$BOOTSTRAP" "$WORK/boot-noschema"
 rm -f "$WORK/boot-noschema/values.schema.json"
 helper_err="$("$HELM" template boot "$WORK/boot-noschema" --set-string parent.certManager.enabled=yes 2>&1 || true)"
-if printf '%s\n' "$helper_err" | grep -q 'parent.certManager.enabled must be a boolean'; then
+if grep -q 'parent.certManager.enabled must be a boolean' <<<"$helper_err"; then
   check togglehelper 0
 else
   check togglehelper 1 "schema-less render did not hit the _helpers.tpl guard: $(printf '%s' "$helper_err" | head -2 | tr '\n' ' ' | cut -c1-100)"
@@ -438,7 +438,7 @@ sub_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from
 own_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-dev/' | grep -c 'create' || true)"
 if [ -z "$sub_line" ]; then
   check subread 1 "no subscribed-namespace metadata rule found — fixture drifted"
-elif printf '%s\n' "$sub_line" | grep -qE '"(create|update|delete)"'; then
+elif grep -qE '"(create|update|delete)"' <<<"$sub_line"; then
   check subread 1 "subscription grants write on the producer's metadata: $(printf '%s' "$sub_line" | tr -s ' ')"
 elif [ "$own_line" -eq 0 ]; then
   check subread 1 "own-namespace metadata lost its write caps — test would pass vacuously"
@@ -498,10 +498,10 @@ done
 
 while IFS='|' read -r fname jpath; do
   [ -n "$fname" ] || continue
-  printf '%s\n' "$jpath" | grep -qE '^\{[^{}]*\}$' \
+  grep -qE '^\{[^{}]*\}$' <<<"$jpath" \
     || outputs_detail="$outputs_detail [$fname jsonPath is not a single {...}: $jpath]"
   case " $SCALAR_OK " in *" $fname "*) continue ;; esac
-  printf '%s\n' "$jpath" | grep -qE '\*|\.\.|\[\?' \
+  grep -qE '\*|\.\.|\[\?' <<<"$jpath" \
     || outputs_detail="$outputs_detail [$fname is a scalar path: $jpath]"
 done <<EOF
 $("$YQ" ea -N 'select(.kind == "Template") | .spec.outputs[]?.fields[]? | .name + "|" + .jsonPath' "$WORK/boot-templates.yaml")
@@ -616,7 +616,7 @@ done
 # nothing would go red.
 removedvalue_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" \
   -f "$FIXTURES/values-full.yaml" --set defaultCapability=none 2>&1 || true)"
-if printf '%s' "$removedvalue_out" | grep -q "defaultCapability was removed"; then
+if grep -q "defaultCapability was removed" <<<"$removedvalue_out"; then
   check removedvalue 0
 else
   check removedvalue 1 "setting defaultCapability must fail the render with a migration message"
@@ -665,7 +665,7 @@ n="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-
 # this report has to come from the core slice or it cannot exist at all.
 esooff_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-guards.yaml" \
   --set component=core --set eso=disabled 2>&1 || true)"
-if printf '%s' "$esooff_out" | grep -q "External Secrets Operator is disabled for this whole install"; then
+if grep -q "External Secrets Operator is disabled for this whole install" <<<"$esooff_out"; then
   check esooff 0
 else
   check esooff 1 "eso=disabled must still report Deployments that request secrets"
