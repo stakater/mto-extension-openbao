@@ -13,6 +13,13 @@ Usage:  {{ if include "openbao.componentEnabled" (dict "component" "eso" "ctx" $
 {{- if not (has .ctx.Values.component $valid) -}}
 {{- fail (printf "unknown component %q — must be one of: %s" .ctx.Values.component (join ", " $valid)) -}}
 {{- end -}}
+{{- /* Helm ignores unknown values silently, so a values file still setting the
+       removed `defaultCapability` would lose every grant it believes it makes.
+       Checked here because every template calls this first; the file named in the
+       error is incidental. */ -}}
+{{- if hasKey .ctx.Values "defaultCapability" -}}
+{{- fail "defaultCapability was removed: OpenBao access is now opt-in per engine. Annotate each ServiceAccount with bao.stakater.com/kv, /transit or /pki set to \"true\" plus bao.stakater.com/tier, and delete defaultCapability from your values" -}}
+{{- end -}}
 {{- /* A sliced render only happens under the bootstrap's per-tenant
        TemplateInstance convention (openbao-config-mto-<tenant>[.suffix]),
        and template-operator-v2 stamps that TI name as a label value on every
@@ -52,11 +59,18 @@ rejection that blocks the whole tenant. Returns the name unchanged on success.
 {{- end -}}
 
 {{/*
-Per-SA own-tenant role/policy name: <tenant>-<saNs>-<sa>-<tier>.
-Usage:  {{ include "openbao.roleName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName "tier" $tier) }}
+Per-SA own-tenant role/policy name: <tenant>-<saNs>-<sa>.
+
+The tier is deliberately not part of it: (tenant, namespace, serviceAccount) is
+already unique, so a tier suffix only makes a mutable attribute part of the
+object's identity. A tier edit would then be a rename, and a rename deletes the
+old policy — which strips live tokens at once and leaves the workload's cached
+VAULT_K8S_ROLE naming a role that no longer exists.
+
+Usage:  {{ include "openbao.roleName" (dict "tenant" $tenant "saNs" $saNs "saName" $saName) }}
 */}}
 {{- define "openbao.roleName" -}}
-{{- include "openbao.assertName" (printf "%s-%s-%s-%s" .tenant .saNs .saName .tier) -}}
+{{- include "openbao.assertName" (printf "%s-%s-%s" .tenant .saNs .saName) -}}
 {{- end -}}
 
 {{/*
@@ -179,6 +193,26 @@ operator namespace across all tenants, hence the tenant prefix).
 {{- end -}}
 
 {{/*
+Per-app transit key NAME: <ns>-<app>-<env>-<hash>.
+
+Key names are flat strings and every part may contain hyphens, so joining is
+ambiguous: (ns team-a-dev, app app-a) and (ns team-a, app dev-app-a) both glue to
+"team-a-dev-app-a-dev". The suffix is computed from the parts BEFORE joining.
+Usage: {{ include "openbao.transitAppKeyName" (dict "ns" $saNs "app" $app "env" $env) }}
+*/}}
+{{- define "openbao.transitAppKeyName" -}}
+{{- $h := printf "%s/%s/%s" .ns .app .env | sha256sum | trunc 6 -}}
+{{- printf "%s-%s-%s-%s" .ns .app .env $h -}}
+{{- end -}}
+
+{{/*
+Per-app transit key CR name: transit-<tenant>-<ns>-<app>-<env>-<hash>.
+*/}}
+{{- define "openbao.transitAppKeyCRName" -}}
+{{- include "openbao.assertName" (printf "transit-%s-%s" .tenant (include "openbao.transitAppKeyName" (dict "ns" .ns "app" .app "env" .env))) -}}
+{{- end -}}
+
+{{/*
 Per-tenant PKI role CR name: pki-<tenant>-<roleName>.
 */}}
 {{- define "openbao.pkiRoleName" -}}
@@ -291,6 +325,273 @@ app.kubernetes.io/managed-by: helm-via-template-operator-v2
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{ .Values.tenantLabelKey }}: {{ required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- end -}}
+
+{{/*
+The complete set of `bao.stakater.com/` keys this chart reads on a ServiceAccount,
+so an unrecognised one can be reported rather than ignored: the templates look up
+the keys they expect, so without a closed-world list a typo grants nothing and
+says nothing.
+
+A new annotation must be added here too, or it is rejected as unknown — loud, and
+the safe direction to fail.
+*/}}
+{{- define "openbao.saAnnotationKeys" -}}
+{{- $keys := list
+      "kv" "transit" "pki"
+      "tier" "app"
+      "kv-subscribe-ns" "kv-export-tenant" "kv-import-tenant"
+      "transit-export-tenant" "transit-import-tenant"
+      "pki-allow-tenant" "pki-trust-tenant" -}}
+{{- toYaml $keys -}}
+{{- end -}}
+
+{{/*
+Resolves and validates every `bao.stakater.com/` annotation on one
+ServiceAccount, returning a YAML dict the caller parses with `fromYaml`. One
+helper, so validation and the values used to render cannot drift apart.
+
+Returns: name, ns, app, tier, kvOn, transitOn, pkiOn, caps, transitCaps, and
+`errors`. A non-empty `errors` means the caller renders the error ConfigMap and
+nothing else for this ServiceAccount.
+
+Reporting per ServiceAccount rather than failing: one TemplateInstance renders
+every namespace a tenant owns, so `fail` produces zero objects for the tenant and
+freezes unrelated namespaces. `fail` is kept for problems that cannot be
+attributed to one ServiceAccount.
+
+Usage:
+  {{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tns "appClaims" $claims) | fromYaml }}
+*/}}
+{{- define "openbao.saFacts" -}}
+{{- /* Both maps are required. Defaulting them would leave the app-collision and
+       foreign-namespace checks inert for a caller that forgot to thread them —
+       validation that appears to run and does not. An empty dict is legitimate;
+       an absent key is a wiring bug. */ -}}
+{{- if not (hasKey . "appClaims") -}}
+{{- fail "openbao.saFacts requires an appClaims argument (see openbao.appClaims); omitting it would silently disable the app-collision check" -}}
+{{- end -}}
+{{- if not (hasKey . "tenantNamespaces") -}}
+{{- fail "openbao.saFacts requires a tenantNamespaces argument (see openbao.tenantNamespaces); omitting it would silently disable the foreign-namespace check" -}}
+{{- end -}}
+{{- $sa := .sa -}}
+{{- $v := .ctx.Values -}}
+{{- $p := "bao.stakater.com/" -}}
+{{- $known := include "openbao.saAnnotationKeys" . | fromYamlArray -}}
+{{- $name := dig "metadata" "name" "" $sa -}}
+{{- $ns := dig "metadata" "namespace" "" $sa -}}
+{{- $ann := dig "metadata" "annotations" (dict) $sa -}}
+{{- $errs := list -}}
+
+{{- /* G13 — unknown key, checked first: a misspelled key means nothing read below
+       reflects what the user meant. Only our own prefix is considered. */ -}}
+{{- range $k, $_ := $ann -}}
+{{- if hasPrefix $p $k -}}
+{{- if not (has (trimPrefix $p $k) $known) -}}
+{{- $errs = append $errs (printf "unknown annotation %q — this chart reads none of that name, so it has no effect. Valid keys: %s" $k (join ", " (sortAlpha $known))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* G14 — a misspelled boolean would leave its engine off while the
+       mutual-requirement checks stay quiet, another engine being legitimately on. */ -}}
+{{- $raw := dict -}}
+{{- range $e := list "kv" "transit" "pki" -}}
+{{- $val := lower (trim (toString (dig "metadata" "annotations" (printf "%s%s" $p $e) "" $sa))) -}}
+{{- $_ := set $raw $e $val -}}
+{{- if and $val (not (has $val (list "true" "false"))) -}}
+{{- $errs = append $errs (printf "%s%s must be \"true\" or \"false\", got %q" $p $e $val) -}}
+{{- end -}}
+{{- end -}}
+{{- $kvOn := eq (get $raw "kv") "true" -}}
+{{- $transitReq := eq (get $raw "transit") "true" -}}
+{{- $pkiReq := eq (get $raw "pki") "true" -}}
+{{- $anyEngine := or $kvOn $transitReq $pkiReq -}}
+
+{{- $tier := trim (toString (dig "metadata" "annotations" (printf "%stier" $p) "" $sa)) -}}
+{{- $app := trim (toString (dig "metadata" "annotations" (printf "%sapp" $p) "" $sa)) -}}
+{{- if not $app -}}{{- $app = $name -}}{{- end -}}
+
+{{- /* G8 — every pod that omits serviceAccountName runs as `default`, so granting
+       it hands one identity and one prefix to all of them, while the rendered
+       policy still looks correctly scoped. */ -}}
+{{- if and (eq $name "default") $anyEngine -}}
+{{- $errs = append $errs (printf "the `default` ServiceAccount cannot be granted OpenBao access: every pod that omits serviceAccountName runs as `default`, so they would all share one identity and the prefix kv/data/%s/%s/default/. Give each workload its own ServiceAccount and annotate that instead" $v.env $ns) -}}
+{{- end -}}
+
+{{- /* G1/G2 — an engine without a tier grants nothing, and a tier without an
+       engine grants nothing. Both are silent misconfigurations otherwise. */ -}}
+{{- if and $tier (not $anyEngine) -}}
+{{- $errs = append $errs (printf "%stier is set to %q but no engine is enabled, so nothing is granted. Add %skv, %stransit or %spki set to \"true\"" $p $tier $p $p $p) -}}
+{{- end -}}
+{{- if and $anyEngine (not $tier) -}}
+{{- $errs = append $errs (printf "an engine is enabled but %stier is not set, so no capabilities can be granted. Set a tier: %s" $p (join ", " (keys $v.tierCaps | sortAlpha))) -}}
+{{- end -}}
+{{- /* G1b — `app` only names the prefix an engine grant would use, so on its own
+       it registers nothing the user believes it has. */ -}}
+{{- if and (dig "metadata" "annotations" (printf "%sapp" $p) "" $sa) (not $anyEngine) -}}
+{{- $errs = append $errs (printf "%sapp is set but no engine is enabled, so no app identity is registered — it only names the prefix a %skv or %stransit grant would use. Add an engine, or remove the annotation" $p $p $p) -}}
+{{- end -}}
+
+{{- /* G3 — an unknown tier makes the capability lookup nil, which would skip
+       the ServiceAccount with no signal. */ -}}
+{{- if and $tier (not (hasKey $v.tierCaps $tier)) -}}
+{{- $errs = append $errs (printf "%stier %q is not a known tier. Valid tiers: %s" $p $tier (join ", " (keys $v.tierCaps | sortAlpha))) -}}
+{{- end -}}
+{{- $caps := "" -}}
+{{- $transitCaps := "" -}}
+{{- if hasKey $v.tierCaps $tier -}}
+{{- $caps = index $v.tierCaps $tier -}}
+{{- $transitCaps = index $v.transit.tierCaps $tier -}}
+{{- end -}}
+
+{{- /* An engine switched off chart-wide can never be granted, so opting in is
+       a request that silently returns nothing. */ -}}
+{{- if and $transitReq (not $v.transit.enabled) -}}
+{{- $errs = append $errs (printf "%stransit is enabled on this ServiceAccount but the transit engine is disabled for the whole install (transit.enabled=false)" $p) -}}
+{{- end -}}
+{{- if and $pkiReq (not $v.pki.enabled) -}}
+{{- $errs = append $errs (printf "%spki is enabled on this ServiceAccount but the PKI engine is disabled for the whole install (pki.enabled=false)" $p) -}}
+{{- end -}}
+{{- if and $pkiReq $v.pki.enabled (not $v.pki.roles) -}}
+{{- $errs = append $errs (printf "%spki is enabled but pki.roles is empty — define at least one role under pki.roles" $p) -}}
+{{- end -}}
+
+{{- /* G4 — a tier that grants an enabled engine nothing. transit needs writes, so
+       its viewer and audit-read capability sets are empty. */ -}}
+{{- if and $transitReq $tier (hasKey $v.tierCaps $tier) (or (not $transitCaps) (eq $transitCaps "[]")) -}}
+{{- $errs = append $errs (printf "%stransit is enabled but tier %q grants no transit capabilities (transit needs write access; use editor or admin)" $p $tier) -}}
+{{- end -}}
+{{- if and $kvOn $tier (hasKey $v.tierCaps $tier) (or (not $caps) (eq $caps "[]")) -}}
+{{- $errs = append $errs (printf "%skv is enabled but tier %q grants no KV capabilities" $p $tier) -}}
+{{- end -}}
+
+{{- /* G5 — the app name becomes a path segment inside an HCL policy body and a
+       segment of a transit key name. Unvalidated it is not a name but a policy
+       the tenant writes: a value containing a quote and a brace closes our
+       `path "..."` block and opens another one, and `+` is bao's
+       single-segment wildcard, which would match every app in the namespace.
+       Underscore-prefixed names are reserved for chart-owned prefixes such as
+       `_shared`. */ -}}
+{{- if $anyEngine -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $app) -}}
+{{- $errs = append $errs (printf "%sapp %q is not a valid app name — it must match ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ (lowercase letters, digits and hyphens; no leading or trailing hyphen). It is used as a path segment in the OpenBao policy and as part of the transit key name" $p $app) -}}
+{{- else if gt (len $app) 63 -}}
+{{- $errs = append $errs (printf "%sapp %q is %d characters; keep it to 63 or fewer" $p $app (len $app)) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* G6 — two ServiceAccounts resolving to one app share a prefix and a key.
+       Compared on RESOLVED names, so an SA that declared no `app` still defends
+       its own name against another claiming it. */ -}}
+{{- $claim := index .appClaims (printf "%s/%s" $ns $app) -}}
+{{- if and $anyEngine $claim (gt (len $claim) 1) -}}
+{{- $errs = append $errs (printf "app %q in namespace %s is claimed by more than one ServiceAccount (%s). Each app owns its own secret prefix and transit key, so the name must be unique within the namespace — change %sapp on all but one" $app $ns (join ", " $claim) $p) -}}
+{{- end -}}
+
+{{- /* G7 — a sharing annotation whose engine is off grants nothing. */ -}}
+{{- range $k := list "kv-subscribe-ns" "kv-export-tenant" "kv-import-tenant" -}}
+{{- if and (dig "metadata" "annotations" (printf "%s%s" $p $k) "" $sa) (not $kvOn) -}}
+{{- $errs = append $errs (printf "%s%s is set but %skv is not \"true\", so it grants nothing" $p $k $p) -}}
+{{- end -}}
+{{- end -}}
+{{- range $k := list "transit-export-tenant" "transit-import-tenant" -}}
+{{- if and (dig "metadata" "annotations" (printf "%s%s" $p $k) "" $sa) (not $transitReq) -}}
+{{- $errs = append $errs (printf "%s%s is set but %stransit is not \"true\", so it grants nothing" $p $k $p) -}}
+{{- end -}}
+{{- end -}}
+{{- range $k := list "pki-allow-tenant" "pki-trust-tenant" -}}
+{{- if and (dig "metadata" "annotations" (printf "%s%s" $p $k) "" $sa) (not $pkiReq) -}}
+{{- $errs = append $errs (printf "%s%s is set but %spki is not \"true\", so it grants nothing" $p $k $p) -}}
+{{- end -}}
+{{- end -}}
+
+{{- /* G9 — a namespace outside the tenant grants read on a prefix nothing writes
+       to: a dead grant. */ -}}
+{{- range $subNs := splitList "," (dig "metadata" "annotations" (printf "%skv-subscribe-ns" $p) "" $sa) -}}
+{{- $subNs = trim $subNs -}}
+{{- if and $subNs (not (hasKey $.tenantNamespaces $subNs)) -}}
+{{- $errs = append $errs (printf "%skv-subscribe-ns references namespace %q, which is not a namespace of tenant %q (tenant owns: %s)" $p $subNs $v.tenant (join ", " (keys $.tenantNamespaces | sortAlpha))) -}}
+{{- end -}}
+{{- end -}}
+
+{{- $out := dict
+      "name" $name "ns" $ns "app" $app "tier" $tier
+      "kvOn" $kvOn
+      "transitOn" (and $transitReq $v.transit.enabled)
+      "pkiOn" (and $pkiReq $v.pki.enabled)
+      "caps" $caps "transitCaps" $transitCaps
+      "errors" $errs -}}
+{{- toYaml $out -}}
+{{- end -}}
+
+{{/*
+Builds the (namespace, resolved app) claim map used by G6: "<ns>/<app>" -> sorted
+ServiceAccount names resolving to it. Only ServiceAccounts that enable an engine
+claim an app, so plumbing accounts such as `builder` never collide. Sorted so the
+message is stable whatever order the parent lists ServiceAccounts in.
+Usage (root context): {{ include "openbao.appClaims" . }} -> YAML dict
+*/}}
+{{- define "openbao.appClaims" -}}
+{{- $p := "bao.stakater.com/" -}}
+{{- $claims := dict -}}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) -}}
+{{- $name := dig "metadata" "name" "" $sa -}}
+{{- $ns := dig "metadata" "namespace" "" $sa -}}
+{{- $on := false -}}
+{{- range $e := list "kv" "transit" "pki" -}}
+{{- if eq (lower (trim (toString (dig "metadata" "annotations" (printf "%s%s" $p $e) "" $sa)))) "true" -}}{{- $on = true -}}{{- end -}}
+{{- end -}}
+{{- if and $on $name $ns -}}
+{{- $app := trim (toString (dig "metadata" "annotations" (printf "%sapp" $p) "" $sa)) -}}
+{{- if not $app -}}{{- $app = $name -}}{{- end -}}
+{{- $k := printf "%s/%s" $ns $app -}}
+{{- $_ := set $claims $k (append (index $claims $k | default (list)) $name | sortAlpha) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $claims -}}
+{{- end -}}
+
+{{/*
+Reports a misconfiguration next to the object that carries it. No
+`bao-config-<sa>` is rendered for a ServiceAccount with errors, so the pod fails
+to start on the missing `configMapRef` and this object, beside it in the same
+namespace, says why. Fixing the annotation replaces it with the real ConfigMap.
+Usage: {{ include "openbao.errorConfigMap" (dict "name" $n "ns" $ns "labels" $labels "subject" $s "errors" $errs) }}
+*/}}
+{{- define "openbao.errorConfigMap" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .name }}
+  namespace: {{ .ns }}
+  labels:
+    {{- .labels | nindent 4 }}
+data:
+  ERROR: |
+    OpenBao access has NOT been configured for {{ .subject }}.
+    {{- range $i, $e := .errors }}
+    {{ add1 $i }}. {{ $e }}
+    {{- end }}
+{{- end -}}
+
+{{/*
+Set of every k8s namespace this tenant owns, from the ServiceAccount and
+Deployment lists the child TI resolves through its namespaceSelector. Used to
+reject intra-tenant references pointing outside the tenant.
+Usage (root context): {{ include "openbao.tenantNamespaces" . | fromYaml }}
+*/}}
+{{- define "openbao.tenantNamespaces" -}}
+{{- $ns := dict -}}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) -}}
+{{- $n := dig "metadata" "namespace" "" $sa -}}
+{{- if $n }}{{- $_ := set $ns $n true -}}{{- end -}}
+{{- end -}}
+{{- range $d := (ternary .Values.deployments (list) (kindIs "slice" .Values.deployments)) -}}
+{{- $n := dig "metadata" "namespace" "" $d -}}
+{{- if $n }}{{- $_ := set $ns $n true -}}{{- end -}}
+{{- end -}}
+{{- toYaml $ns -}}
 {{- end -}}
 
 {{/*

@@ -23,11 +23,18 @@ Gated by transit.enabled (shares meaningless without the engine).
 {{- $rotate := .Values.transit.defaultAutoRotatePeriod }}
 {{- $labels := include "openbao.labels" . }}
 {{- $seenPair := dict }}
+{{- $tenantNamespaces := include "openbao.tenantNamespaces" . | fromYaml }}
+{{- $appClaims := include "openbao.appClaims" . | fromYaml }}
 {{- /* Pass 1: dedupe the (writer-tenant, peer) set across all SAs and
        emit one OpenBaoTransitKey per pair. */ -}}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml }}
 {{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
-{{- if $exposeRaw }}
+{{- /* Gated on the resolved facts, not the annotation: a key emitted for a
+       ServiceAccount whose transit grant never materialises is a key nothing
+       can use, and OpenBaoTransitKey is orphan-by-design so it then stays in
+       bao permanently. */ -}}
+{{- if and $exposeRaw $f.transitOn (not $f.errors) }}
 {{- range $peer := splitList "," $exposeRaw }}
 {{- $peer = trim $peer }}
 {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}
@@ -58,11 +65,11 @@ spec:
 {{- end }}
 {{- /* Pass 2: per-SA Policy + Role for the writer side. */ -}}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
-{{- $tier := dig "metadata" "annotations" "bao.stakater.com/tier" "" $sa }}
-{{- $saName := dig "metadata" "name" "" $sa }}
-{{- $saNs := dig "metadata" "namespace" "" $sa }}
+{{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml }}
+{{- $saName := $f.name }}
+{{- $saNs := $f.ns }}
 {{- $exposeRaw := dig "metadata" "annotations" "bao.stakater.com/transit-export-tenant" "" $sa }}
-{{- if and $tier $saName $saNs $exposeRaw }}
+{{- if and $f.transitOn (not $f.errors) $saName $saNs $exposeRaw }}
 {{- range $peer := splitList "," $exposeRaw }}
 {{- $peer = trim $peer }}
 {{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) }}

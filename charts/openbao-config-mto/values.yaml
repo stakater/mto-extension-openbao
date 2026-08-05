@@ -6,7 +6,7 @@
 #   - identity:        tenant, tenantLabelKey, sharedTenant.*
 #   - addressing:      baoServer, baoCABundle, kubernetesHost, operatorNamespace
 #   - engines:         kv tier caps, transit.*, pki.*
-#   - workload tokens: token.*, defaultCapability
+#   - workload tokens: token.*
 #   - human SSO:       sso.* (incl. ssoToken.* for tighter human-session TTLs)
 #
 # Production deployment guidance lives in README.md → "Going to prod".
@@ -85,21 +85,22 @@ sharedTenant:
 # ─── Tier capabilities (KV) ──────────────────────────────────────────
 # audit-read   list-only on metadata, no data reads — for compliance probes
 # viewer       read + list on KV
-# editor       create/read/update/list
+# editor       create/read/update/patch/list
 # admin        editor + delete (data) + later destroy (versions)
 # super-admin  reserved for tier-aware sso policies — workload SAs never
 #              receive super-admin; see sso.tiers
+#
+# `patch` makes a partial update atomic; without it the merge-patch endpoint 403s
+# and clients fall back to read-modify-write, losing one of two concurrent
+# updates. Granted only to tiers that already hold `update`. Lands on the app
+# prefix, the namespace `_shared/` write area, and the SSO grants; subscriptions
+# use a separate read-only list.
 tierCaps:
   audit-read: '["list"]'
   viewer:     '["read", "list"]'
-  editor:     '["create", "read", "update", "list"]'
-  admin:      '["create", "read", "update", "delete", "list"]'
+  editor:     '["create", "read", "update", "patch", "list"]'
+  admin:      '["create", "read", "update", "patch", "delete", "list"]'
 
-# Tier to apply when a workload's ServiceAccount has no
-# `bao.stakater.com/tier` annotation.
-#   viewer | editor | admin | audit-read — SA gets that tier's policy.
-#   none — SA is skipped (no role rendered); workloads must opt in.
-defaultCapability: none
 
 # Workload token defaults stamped onto every OpenBaoKubernetesAuthRole.
 token:
@@ -135,10 +136,13 @@ deployments: []
 # ─── Transit ─────────────────────────────────────────────────────────
 # Doc-aligned model: per-tenant transit mount with
 #   - one shared key  <tenant>-shared-<env>  created at startup
-#   - one key per workload namespace  <nsFull>-<env>  created on demand when
-#     an SA in that namespace opts in via bao.stakater.com/transit: "true"
-# An opted-in SA (editor/admin tier) gets encrypt/decrypt/rewrap on its own
-# namespace key and the tenant shared key.
+#   - one key per app  <ns>-<app>-<env>-<hash>  private to that app
+#   - one key per workload namespace  <nsFull>-<env>  the key apps sitting in
+#     one namespace share when they want to
+# The per-app and per-namespace keys are created on demand for a ServiceAccount
+# that opts in via bao.stakater.com/transit: "true" AND carries a tier granting
+# transit (editor or admin). Encrypt with the app key unless another workload has
+# to decrypt the result.
 transit:
   enabled: true
   mountPath: transit

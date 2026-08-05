@@ -30,12 +30,17 @@ self-grant trust.
 {{- /* Aggregate opted-in peers across every SA. */ -}}
 {{- $trustPeers := dict }}
 {{- $allowPeers := dict }}
+{{- $tenantNamespaces := include "openbao.tenantNamespaces" . | fromYaml }}
+{{- $appClaims := include "openbao.appClaims" . | fromYaml }}
 {{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
+{{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml }}
+{{- if and $f.pkiOn (not $f.errors) }}
 {{- range $p := splitList "," (dig "metadata" "annotations" "bao.stakater.com/pki-trust-tenant" "" $sa) }}
 {{- $p = trim $p }}{{- if $p }}{{ $_ := set $trustPeers $p true }}{{ end }}
 {{- end }}
 {{- range $p := splitList "," (dig "metadata" "annotations" "bao.stakater.com/pki-allow-tenant" "" $sa) }}
 {{- $p = trim $p }}{{- if $p }}{{ $_ := set $trustPeers $p true }}{{ $_ := set $allowPeers $p true }}{{ end }}
+{{- end }}
 {{- end }}
 {{- end }}
 ---

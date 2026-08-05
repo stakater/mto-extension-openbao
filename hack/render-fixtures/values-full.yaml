@@ -1,5 +1,6 @@
 # Render-test fixture: every feature toggle on, every per-SA / per-Deployment
-# annotation path exercised. Used by hack/chart-render-tests.sh to compare
+# annotation path exercised, all of it valid — misconfiguration cases live in
+# values-guards.yaml. Used by hack/chart-render-tests.sh to compare
 # component slices against the full render. Tenant team-a owns namespaces
 # team-a-dev and team-a-tools; team-b is a known peer for every share flavor.
 tenant: team-a
@@ -36,8 +37,10 @@ serviceAccounts:
       name: app-a
       namespace: team-a-dev
       annotations:
+        bao.stakater.com/kv: "true"
         bao.stakater.com/tier: editor
-        bao.stakater.com/subscribe-to-ns: team-a-tools
+        bao.stakater.com/app: payments
+        bao.stakater.com/kv-subscribe-ns: team-a-tools
         bao.stakater.com/kv-export-tenant: team-b
         bao.stakater.com/kv-import-tenant: team-b
         bao.stakater.com/transit: "true"
@@ -47,19 +50,23 @@ serviceAccounts:
         bao.stakater.com/pki-allow-tenant: team-b
         bao.stakater.com/pki-trust-tenant: team-b
   # Second tier + second namespace (makes team-a-tools an owned namespace so
-  # app-a's subscribe-to-ns target is valid).
+  # app-a's kv-subscribe-ns target is valid).
   - metadata:
       name: app-b
       namespace: team-a-tools
       annotations:
+        bao.stakater.com/kv: "true"
+        bao.stakater.com/transit: "true"
         bao.stakater.com/tier: admin
-  # Read-only tier.
+  # Read-only tier. No app annotation, so its app is its own name.
   - metadata:
       name: app-c
       namespace: team-a-dev
       annotations:
+        bao.stakater.com/kv: "true"
         bao.stakater.com/tier: viewer
-  # No tier annotation → skipped (defaultCapability: none).
+  # No bao annotation at all → nothing rendered, no error. Also stands in for
+  # the plumbing accounts every namespace carries (builder, deployer, default).
   - metadata:
       name: plain-sa
       namespace: team-a-dev
