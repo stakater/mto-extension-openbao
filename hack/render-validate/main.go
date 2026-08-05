@@ -48,12 +48,14 @@ func main() {
 		if probe.Kind == "ConfigMap" {
 			var cm corev1.ConfigMap
 			if err := yaml.Unmarshal([]byte(d), &cm); err != nil {
-				problems = append(problems, fmt.Sprintf("doc %d (ConfigMap): TYPED DECODE FAILED (apiserver would reject): %v", i, err))
+				problems = append(problems, fmt.Sprintf(
+					"doc %d (ConfigMap): TYPED DECODE FAILED (apiserver would reject): %v", i, err))
 				continue
 			}
 			for k := range cm.Data {
 				if msgs := validation.IsConfigMapKey(k); len(msgs) > 0 {
-					problems = append(problems, fmt.Sprintf("%s/%s: invalid data key %q: %s", cm.Namespace, cm.Name, k, strings.Join(msgs, "; ")))
+					problems = append(problems, fmt.Sprintf("%s/%s: invalid data key %q: %s",
+						cm.Namespace, cm.Name, k, strings.Join(msgs, "; ")))
 				}
 			}
 		}
@@ -65,11 +67,13 @@ func main() {
 		}
 		name, ns := u.GetName(), u.GetNamespace()
 		if msgs := validation.IsDNS1123Subdomain(name); len(msgs) > 0 {
-			problems = append(problems, fmt.Sprintf("%s %s/%s: invalid metadata.name: %s", probe.Kind, ns, name, strings.Join(msgs, "; ")))
+			problems = append(problems, fmt.Sprintf("%s %s/%s: invalid metadata.name: %s",
+				probe.Kind, ns, name, strings.Join(msgs, "; ")))
 		}
 		if ns != "" {
 			if msgs := validation.IsDNS1123Label(ns); len(msgs) > 0 {
-				problems = append(problems, fmt.Sprintf("%s %s/%s: invalid namespace: %s", probe.Kind, ns, name, strings.Join(msgs, "; ")))
+				problems = append(problems, fmt.Sprintf("%s %s/%s: invalid namespace: %s",
+					probe.Kind, ns, name, strings.Join(msgs, "; ")))
 			}
 		}
 		// metadata.labels typed as map[string]interface{} in unstructured:
@@ -85,15 +89,20 @@ func main() {
 					for k, v := range m {
 						sv, ok := v.(string)
 						if !ok {
-							problems = append(problems, fmt.Sprintf("%s %s/%s: metadata.%s[%q] decoded as %T (%v), not string — YAML coercion; apiserver rejects", probe.Kind, ns, name, field, k, v, v))
+							problems = append(problems, fmt.Sprintf(
+								"%s %s/%s: metadata.%s[%q] decoded as %T (%v), not string — YAML coercion; apiserver rejects",
+								probe.Kind, ns, name, field, k, v, v))
 							continue
 						}
 						if msgs := validation.IsQualifiedName(k); len(msgs) > 0 {
-							problems = append(problems, fmt.Sprintf("%s %s/%s: invalid %s key %q: %s", probe.Kind, ns, name, field, k, strings.Join(msgs, "; ")))
+							problems = append(problems, fmt.Sprintf("%s %s/%s: invalid %s key %q: %s",
+								probe.Kind, ns, name, field, k, strings.Join(msgs, "; ")))
 						}
 						if field == "labels" {
 							if msgs := validation.IsValidLabelValue(sv); len(msgs) > 0 {
-								problems = append(problems, fmt.Sprintf("%s %s/%s: invalid label value %q for %q: %s", probe.Kind, ns, name, sv, k, strings.Join(msgs, "; ")))
+								problems = append(problems, fmt.Sprintf(
+									"%s %s/%s: invalid label value %q for %q: %s",
+									probe.Kind, ns, name, sv, k, strings.Join(msgs, "; ")))
 							}
 						}
 					}
