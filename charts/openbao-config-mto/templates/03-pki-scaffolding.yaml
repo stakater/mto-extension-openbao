@@ -75,6 +75,7 @@ spec:
   path: {{ $mount }}
   openbaoNamespace: {{ $tenant }}/
   pki: {}
+  deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPKISecretEngineConfig
@@ -137,6 +138,7 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
+  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
   name: {{ $roleName }}
   path: {{ $mount }}
   openbaoNamespace: {{ $tenant }}/

@@ -125,6 +125,7 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
+  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
   name: {{ $authRoleName }}
   openbaoNamespace: {{ $tenant }}/
   policy: |
@@ -144,6 +145,7 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
+  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
   name: {{ $authRoleName }}
   path: kubernetes
   openbaoNamespace: {{ $tenant }}/

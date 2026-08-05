@@ -7,20 +7,39 @@
     "boolish": {
       "description": "true or false, as a YAML boolean or as the quoted string \"true\"/\"false\". Anything else (yes, on, off, 1, 0, True, TRUE) is rejected, because it would be read as \"not enabled\" without warning.",
       "oneOf": [
-        { "type": "boolean" },
-        { "type": "string", "enum": ["true", "false"] }
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        }
       ]
     }
   },
   "properties": {
-    "operatorNamespace": { "type": "string", "minLength": 1 },
+    "operatorNamespace": {
+      "type": "string",
+      "minLength": 1
+    },
     "crossTenantPki": {
       "type": "object",
-      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+      "properties": {
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        }
+      }
     },
     "platformPki": {
       "type": "object",
-      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+      "properties": {
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        }
+      }
     },
     "parent": {
       "type": "object",
@@ -28,15 +47,26 @@
         "eso": {
           "description": "A string, not a boolean: \"enabled\" or \"disabled\". true/false/yes/on are rejected.",
           "type": "string",
-          "enum": ["enabled", "disabled"]
+          "enum": [
+            "enabled",
+            "disabled"
+          ]
         },
         "certManager": {
           "type": "object",
-          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+          "properties": {
+            "enabled": {
+              "$ref": "#/definitions/boolish"
+            }
+          }
         },
         "sso": {
           "type": "object",
-          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+          "properties": {
+            "enabled": {
+              "$ref": "#/definitions/boolish"
+            }
+          }
         }
       }
     },
@@ -46,11 +76,35 @@
         "mode": {
           "description": "Drift protection. Unquoted on/yes/off parse as YAML booleans and are rejected -- quote the value.",
           "type": "string",
-          "enum": ["off", "revert", "strict"]
+          "enum": [
+            "off",
+            "revert",
+            "strict"
+          ]
         },
         "ignoreFields": {
-          "type": ["array", "null"],
-          "items": { "type": "string" }
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "safety": {
+      "description": "Deletion-policy posture for the platform-PKI CRs and (via the child Templates) every per-tenant CR. Cluster-global.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deletionProtection": {
+          "$ref": "#/definitions/boolish",
+          "description": "true (default): retained on CR delete/rename; false: destroyed."
+        },
+        "grantDeletionProtection": {
+          "$ref": "#/definitions/boolish",
+          "description": "false (default): grants deleted on CR delete (revocation); true: grants retained."
         }
       }
     }

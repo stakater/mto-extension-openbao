@@ -71,6 +71,12 @@ spec:
       value: {{ $.Values.parent.sharedTenantName | quote }}
     - name: tenantLabelKey
       value: {{ $.Values.parent.tenantLabelKey | quote }}
+    # Deletion-policy posture, normalized to "true"/"false" strings; the
+    # valuesTemplate below re-materializes them as YAML booleans.
+    - name: safetyDeletionProtection
+      value: {{ include "openbao-config-mto-bootstrap.safetyDeletionProtection" $ | quote }}
+    - name: safetyGrantDeletionProtection
+      value: {{ include "openbao-config-mto-bootstrap.safetyGrantDeletionProtection" $ | quote }}
     # Roster of all real tenant names (CSV). Stamped per-child by the parent
     # gotemplate; the chart skips cross-tenant shares whose peer isn't listed.
     - name: knownTenants
@@ -305,6 +311,9 @@ spec:
       operatorNamespace: {{ $.Values.operatorNamespace }}
       tokenReviewerSecretName: bao-token-reviewer
       tenantLabelKey: {{ `{{ .parameters.tenantLabelKey }}` }}
+      safety:
+        deletionProtection: {{ `{{ .parameters.safetyDeletionProtection }}` }}
+        grantDeletionProtection: {{ `{{ .parameters.safetyGrantDeletionProtection }}` }}
       knownTenants: {{ `{{ .parameters.knownTenants | quote }}` }}
       pki:
         hierarchy:

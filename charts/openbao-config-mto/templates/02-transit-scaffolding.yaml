@@ -31,6 +31,7 @@ spec:
   path: {{ $mount }}
   openbaoNamespace: {{ $tenant }}/
   transit: {}
+  deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoTransitKey

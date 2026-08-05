@@ -27,6 +27,7 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
+  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
   name: {{ $shareOutName }}
   openbaoNamespace: {{ $shared }}/
   policy: |
@@ -41,6 +42,7 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
+  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
   name: {{ $shareOutName }}
   path: kubernetes
   openbaoNamespace: {{ $shared }}/
