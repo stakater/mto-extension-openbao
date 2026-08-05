@@ -35,6 +35,7 @@ Each application then opts in to what it needs by adding a few annotations to it
 - [Which auth methods the charts set up](#which-auth-methods-the-charts-set-up)
 - [Checking health](#checking-health)
 - [Drift protection](#drift-protection)
+- [Deletion policy (safety guardrails)](#deletion-policy-safety-guardrails)
 - [Configuration](#configuration)
 - [Going to production](#going-to-production)
 
@@ -979,10 +980,68 @@ kubectl -n <workload-ns> patch secret bao-ca-bundle --type=merge \
 
 ---
 
+## Deletion policy (safety guardrails)
+
+Deleting an `OpenBao*` CR does not destroy data by default. Two cluster-global
+values (in the bootstrap chart, plumbed to every tenant render) set the posture:
+
+```yaml
+safety:
+  deletionProtection: true        # mounts, auth mounts, bao namespaces → Retain
+  grantDeletionProtection: false  # policies, roles, groups, aliases   → Delete
+```
+
+| | CR deleted / renamed | Default |
+|---|---|---|
+| **Data-bearing** (`OpenBaoSecretEngine`, `OpenBaoNamespace`, `OpenBaoAuthMethod`) | `Retain`: the bao object and everything stored under it survives as a logged orphan (+ a `BaoObjectOrphaned` Event). Re-applying an identical CR adopts it. | protected |
+| **Grants** (policies, auth/PKI roles, groups, aliases) | `Delete`: removing the CR revokes the access it granted — offboarding a tenant or removing an opt-in annotation closes the login door. | revokes |
+
+Consequences worth knowing:
+
+- **Deleting an MTO Tenant does not destroy its OpenBao data.** The tenant's
+  bao namespace, KV data, transit keys and PKI CA are retained; its policies
+  and login roles are removed (access is revoked). The data is recoverable by
+  re-creating the Tenant (identical CRs adopt the retained objects) — or
+  removable by a bao admin.
+- **A values edit that moves a mount path keeps the old mount.**
+  The rename is treated as retain-and-recreate; the old mount (for PKI: the CA
+  and its private key) stays in bao.
+- **Flipping `safety.deletionProtection: false` re-arms destructive teardown
+  for every tenant at once.** Prefer the per-tenant flow below.
+
+**Decommissioning one tenant's data for real.** The rendered CRs are
+drift-protected — the shipped default is `sync.mode: revert`, which reverts a
+manual `deletionPolicy` patch within its watch window (and `strict` rejects
+the patch outright). Don't fight the sync. Delete the Tenant first, then
+remove the retained data as a bao admin:
+
+```bash
+kubectl delete tenant <tenant>   # CRs are reaped; the bao namespace and data are retained
+# then, with a bao-admin token — this cascades through everything inside:
+bao namespace delete <tenant>
+```
+
+The `spec.deletionPolicy: Delete` flip on an individual CR is the supported
+teardown path only where sync enforcement is off (`sync.mode: off`) or for
+CRs you applied by hand, outside t-op-v2.
+
+**Upgrade notes.**
+
+- Before this feature, CR deletion always destroyed the bao object. If you
+  relied on that (throwaway clusters, CI), set `safety.deletionProtection:
+  false` to restore it. Grant behaviour is unchanged by default.
+- **Order matters:** the protection lives in the operator, not the CRD. With
+  new CRDs but an old operator image, `kubectl get` shows
+  `deletionPolicy: Retain` while the running code ignores it and destroys on
+  delete. Upgrade the operator image before or together with the CRDs.
+
+---
+
 ## Configuration
 
 - Cluster-wide defaults: [`openbao-config-mto-bootstrap/values.yaml`](openbao-config-mto-bootstrap/values.yaml) (under `parent.*`, `platformPki.*`, and `sync.*` — see [Drift protection](#drift-protection)).
 - Per-tenant engine settings: [`openbao-config-mto/values.yaml`](openbao-config-mto/values.yaml) (KV tiers, `transit.*`, `pki.*`, `sso.*`).
+- Deletion-policy posture: `safety.*` in both charts — see [Deletion policy](#deletion-policy-safety-guardrails).
 
 Both files have comments on every setting.
 

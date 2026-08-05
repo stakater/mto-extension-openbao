@@ -593,3 +593,48 @@ Usage (root context): {{ include "openbao.tenantNamespaces" . | fromYaml }}
 {{- end -}}
 {{- toYaml $ns -}}
 {{- end -}}
+
+{{/*
+deletionPolicy for data-bearing kinds, from safety.deletionProtection:
+true (default) -> Retain, false -> Delete. Boolish values accepted;
+absent/null falls to Retain (the safe direction); anything else fails
+the render — the guard survives --skip-schema-validation, and a typo
+must never silently change the posture. Call with $ inside ranges.
+*/}}
+{{- define "openbao.deletionPolicy" -}}
+{{- $safety := .Values.safety | default dict -}}
+{{- /* hasKey first: sprig get returns "" (not nil) for a missing key,
+       which would otherwise hit the loud-fail path below. */ -}}
+{{- if or (not (hasKey $safety "deletionProtection")) (kindIs "invalid" (get $safety "deletionProtection")) -}}
+{{- "Retain" -}}
+{{- else -}}
+{{- $raw := get $safety "deletionProtection" -}}
+{{- $s := toString $raw -}}
+{{- if not (has $s (list "true" "false")) -}}
+{{- fail (printf "safety.deletionProtection must be a boolean true or false — got %q. Quoted \"true\"/\"false\" also work; anything else (yes, on, 1, True) is rejected so a typo cannot silently change the deletion posture." $s) -}}
+{{- end -}}
+{{- ternary "Delete" "Retain" (eq $s "false") -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+deletionPolicy for grant kinds, from safety.grantDeletionProtection:
+false (default) -> Delete, true -> Retain. Same guard as above with the
+opposite safe direction: absent/null falls to Delete so revocation
+never silently stops. Call with $ inside ranges.
+*/}}
+{{- define "openbao.grantDeletionPolicy" -}}
+{{- $safety := .Values.safety | default dict -}}
+{{- /* hasKey first: sprig get returns "" (not nil) for a missing key,
+       which would otherwise hit the loud-fail path below. */ -}}
+{{- if or (not (hasKey $safety "grantDeletionProtection")) (kindIs "invalid" (get $safety "grantDeletionProtection")) -}}
+{{- "Delete" -}}
+{{- else -}}
+{{- $raw := get $safety "grantDeletionProtection" -}}
+{{- $s := toString $raw -}}
+{{- if not (has $s (list "true" "false")) -}}
+{{- fail (printf "safety.grantDeletionProtection must be a boolean true or false — got %q. Quoted \"true\"/\"false\" also work; anything else (yes, on, 1, True) is rejected so a typo cannot silently change the revocation posture." $s) -}}
+{{- end -}}
+{{- ternary "Retain" "Delete" (eq $s "true") -}}
+{{- end -}}
+{{- end -}}

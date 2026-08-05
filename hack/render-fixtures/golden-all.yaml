@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-svc
   namespace: team-a-dev
@@ -33,7 +33,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-a-partner-data
   namespace: team-a-dev
@@ -58,7 +58,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-a-tools-shared
   namespace: team-a-dev
@@ -83,7 +83,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-a-web-cfg
   namespace: team-a-dev
@@ -108,7 +108,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-a-web-db
   namespace: team-a-dev
@@ -135,7 +135,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-a-bao
   namespace: team-a-dev
@@ -163,7 +163,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-a-share-team-b-bao
   namespace: team-a-dev
@@ -191,7 +191,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-c-bao
   namespace: team-a-dev
@@ -219,7 +219,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: app-b-bao
   namespace: team-a-tools
@@ -247,7 +247,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-team-a
   namespace: monitoring
@@ -296,7 +296,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-bao-egress
   namespace: team-a-dev
@@ -319,7 +319,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-default-deny
   namespace: team-a-dev
@@ -366,7 +366,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-bao-egress
   namespace: team-a-tools
@@ -389,7 +389,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: openbao-config-mto-default-deny
   namespace: team-a-tools
@@ -436,7 +436,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-cert-manager-token-create
   namespace: team-a-dev
@@ -458,7 +458,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-cert-manager-token-create
   namespace: team-a-dev
@@ -481,11 +481,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-kubernetes
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Retain
   openbaoNamespace: team-a/
   path: kubernetes
   type: kubernetes
@@ -499,11 +500,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-oidc
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Retain
   openbaoNamespace: team-a/
   path: oidc
   type: oidc
@@ -517,7 +519,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-oidc-config
   namespace: openbao-config-operator-system
@@ -539,7 +541,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-admin
   namespace: openbao-config-operator-system
@@ -551,6 +553,7 @@ spec:
   boundClaims:
     groups:
       - team-a-admins
+  deletionPolicy: Delete
   groupsClaim: groups
   name: sso-team-a-admin
   oidcScopes:
@@ -575,7 +578,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-audit-read
   namespace: openbao-config-operator-system
@@ -587,6 +590,7 @@ spec:
   boundClaims:
     groups:
       - team-a-audit-reads
+  deletionPolicy: Delete
   groupsClaim: groups
   name: sso-team-a-audit-read
   oidcScopes:
@@ -611,7 +615,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-editor
   namespace: openbao-config-operator-system
@@ -623,6 +627,7 @@ spec:
   boundClaims:
     groups:
       - team-a-editors
+  deletionPolicy: Delete
   groupsClaim: groups
   name: sso-team-a-editor
   oidcScopes:
@@ -647,7 +652,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-super-admin
   namespace: openbao-config-operator-system
@@ -659,6 +664,7 @@ spec:
   boundClaims:
     groups:
       - team-a-super-admins
+  deletionPolicy: Delete
   groupsClaim: groups
   name: sso-team-a-super-admin
   oidcScopes:
@@ -683,7 +689,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-viewer
   namespace: openbao-config-operator-system
@@ -695,6 +701,7 @@ spec:
   boundClaims:
     groups:
       - team-a-viewers
+  deletionPolicy: Delete
   groupsClaim: groups
   name: sso-team-a-viewer
   oidcScopes:
@@ -719,7 +726,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-kubernetes-config
   namespace: openbao-config-operator-system
@@ -742,11 +749,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-team-a-team-a-dev-app-a-in-team-b
   openbaoNamespace: shared/
   path: kubernetes
@@ -769,11 +777,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-team-a-team-a-dev-app-a-out-team-b
   openbaoNamespace: shared/
   path: kubernetes
@@ -796,11 +805,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-transit-team-a-team-a-dev-app-a-in-team-b
   openbaoNamespace: shared/
   path: kubernetes
@@ -823,11 +833,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-transit-team-a-team-a-dev-app-a-out-team-b
   openbaoNamespace: shared/
   path: kubernetes
@@ -850,11 +861,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-team-a-dev-app-a
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: team-a-team-a-dev-app-a
   openbaoNamespace: team-a/
   path: kubernetes
@@ -877,11 +889,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-team-a-dev-app-c
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: team-a-team-a-dev-app-c
   openbaoNamespace: team-a/
   path: kubernetes
@@ -904,11 +917,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-team-a-tools-app-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: team-a-team-a-tools-app-b
   openbaoNamespace: team-a/
   path: kubernetes
@@ -931,11 +945,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: ten-team-a-pki-team-a-dev
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: ten-team-a-pki-team-a-dev
   openbaoNamespace: team-a/
   path: kubernetes
@@ -958,11 +973,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Retain
   name: team-a
 ---
 # Source: openbao-config-mto/templates/03-pki-scaffolding.yaml
@@ -974,7 +990,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   # Name kept as <tenant>-pki-root across both modes so the bootstrap's
   # caSerialNumber output keeps tracking it; in hierarchy mode the bao type
@@ -1008,7 +1024,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: pki-team-a-svc
   namespace: openbao-config-operator-system
@@ -1018,6 +1034,7 @@ spec:
     - team-a-dev.svc.cluster.local
     - team-a-tools.svc.cluster.local
   clientFlag: true
+  deletionPolicy: Delete
   enforceHostnames: true
   maxTtl: 720h
   name: team-a-svc
@@ -1035,11 +1052,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-team-a-team-a-dev-app-a-in-team-b
   openbaoNamespace: shared/
   policy: |
@@ -1055,11 +1073,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-team-a-team-a-dev-app-a-out-team-b
   openbaoNamespace: shared/
   policy: |
@@ -1075,11 +1094,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-in-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-transit-team-a-team-a-dev-app-a-in-team-b
   openbaoNamespace: shared/
   policy: |
@@ -1096,11 +1116,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: share-transit-team-a-team-a-dev-app-a-out-team-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: share-transit-team-a-team-a-dev-app-a-out-team-b
   openbaoNamespace: shared/
   policy: |
@@ -1118,11 +1139,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-admin
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: sso-team-a-admin
   openbaoNamespace: team-a/
   policy: |
@@ -1158,11 +1180,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-audit-read
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: sso-team-a-audit-read
   openbaoNamespace: team-a/
   policy: |
@@ -1190,11 +1213,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-editor
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: sso-team-a-editor
   openbaoNamespace: team-a/
   policy: |
@@ -1229,11 +1253,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-super-admin
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: sso-team-a-super-admin
   openbaoNamespace: team-a/
   policy: |
@@ -1271,11 +1296,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: sso-team-a-viewer
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: sso-team-a-viewer
   openbaoNamespace: team-a/
   policy: |
@@ -1305,11 +1331,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-team-a-dev-app-a
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: team-a-team-a-dev-app-a
   openbaoNamespace: team-a/
   policy: |
@@ -1364,11 +1391,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-team-a-dev-app-c
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: team-a-team-a-dev-app-c
   openbaoNamespace: team-a/
   policy: |
@@ -1397,11 +1425,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-team-a-tools-app-b
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: team-a-team-a-tools-app-b
   openbaoNamespace: team-a/
   policy: |
@@ -1468,11 +1497,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: ten-team-a-pki-team-a-dev
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Delete
   name: ten-team-a-pki-team-a-dev
   openbaoNamespace: team-a/
   policy: |
@@ -1490,11 +1520,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-kv
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Retain
   kvV2: {}
   openbaoNamespace: team-a/
   path: kv
@@ -1508,11 +1539,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-pki
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Retain
   openbaoNamespace: team-a/
   path: pki-int
   pki: {}
@@ -1526,11 +1558,12 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-transit
   namespace: openbao-config-operator-system
 spec:
+  deletionPolicy: Retain
   openbaoNamespace: team-a/
   path: transit
   transit: {}
@@ -1544,7 +1577,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: transit-share-team-a-to-team-b
   namespace: openbao-config-operator-system
@@ -1563,7 +1596,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: transit-team-a-shared-dev
   namespace: openbao-config-operator-system
@@ -1582,7 +1615,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: transit-team-a-team-a-dev-dev
   namespace: openbao-config-operator-system
@@ -1601,7 +1634,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: transit-team-a-team-a-dev-payments-dev-3f5614
   namespace: openbao-config-operator-system
@@ -1620,7 +1653,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: transit-team-a-team-a-tools-app-b-dev-5be355
   namespace: openbao-config-operator-system
@@ -1639,7 +1672,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: transit-team-a-team-a-tools-dev
   namespace: openbao-config-operator-system
@@ -1658,7 +1691,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   # Cluster-scoped; chart-authored so tenants cannot self-grant trust.
   name: team-a-trust
@@ -1690,7 +1723,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: team-a-pki-allowed-tenants
   namespace: openbao-config-operator-system
@@ -1709,7 +1742,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-ca-bundle
   namespace: team-a-dev
@@ -1728,7 +1761,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-ca-bundle
   namespace: team-a-dev
@@ -1780,7 +1813,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-config-app-a
   namespace: team-a-dev
@@ -1803,7 +1836,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-config-app-c
   namespace: team-a-dev
@@ -1822,7 +1855,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-ca-bundle
   namespace: team-a-tools
@@ -1855,7 +1888,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-config-app-b
   namespace: team-a-tools
@@ -1869,7 +1902,7 @@ metadata:
     app.kubernetes.io/managed-by: helm-via-template-operator-v2
     app.kubernetes.io/name: openbao-config-mto
     app.kubernetes.io/version: 0.4.0
-    helm.sh/chart: openbao-config-mto-0.12.0
+    helm.sh/chart: openbao-config-mto-0.14.0
     stakater.com/tenant: team-a
   name: bao-cert-manager
   namespace: team-a-dev

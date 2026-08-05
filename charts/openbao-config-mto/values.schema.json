@@ -7,8 +7,16 @@
     "boolish": {
       "description": "true or false, as a YAML boolean or as the quoted string \"true\"/\"false\". yes, on, off, 1, 0, True and TRUE are rejected, because they would be read as \"not enabled\" without warning.",
       "oneOf": [
-        { "type": "boolean" },
-        { "type": "string", "enum": ["true", "false"] }
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ]
+        }
       ]
     }
   },
@@ -17,41 +25,89 @@
     "eso": {
       "description": "A string, not a boolean: \"enabled\" or \"disabled\".",
       "type": "string",
-      "enum": ["enabled", "disabled"]
+      "enum": [
+        "enabled",
+        "disabled"
+      ]
     },
     "pki": {
       "type": "object",
       "properties": {
-        "enabled": { "$ref": "#/definitions/boolish" },
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        },
         "hierarchy": {
           "type": "object",
-          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+          "properties": {
+            "enabled": {
+              "$ref": "#/definitions/boolish"
+            }
+          }
         },
         "crossTenant": {
           "type": "object",
-          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+          "properties": {
+            "enabled": {
+              "$ref": "#/definitions/boolish"
+            }
+          }
         },
         "certManager": {
           "type": "object",
-          "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+          "properties": {
+            "enabled": {
+              "$ref": "#/definitions/boolish"
+            }
+          }
         }
       }
     },
     "transit": {
       "type": "object",
-      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+      "properties": {
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        }
+      }
     },
     "sso": {
       "type": "object",
-      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+      "properties": {
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        }
+      }
     },
     "networkPolicy": {
       "type": "object",
-      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+      "properties": {
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        }
+      }
     },
     "monitoring": {
       "type": "object",
-      "properties": { "enabled": { "$ref": "#/definitions/boolish" } }
+      "properties": {
+        "enabled": {
+          "$ref": "#/definitions/boolish"
+        }
+      }
+    },
+    "safety": {
+      "description": "Deletion-policy guardrails: non-destructive deletion by default. Cluster-global: t-op-v2 renders every tenant with the same values.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deletionProtection": {
+          "description": "true (default): mounts, auth mounts and bao namespaces are retained in OpenBao when their CR is deleted or renamed. false: CR deletion destroys the bao object and the data under it. Only an exact false disables protection.",
+          "$ref": "#/definitions/boolish"
+        },
+        "grantDeletionProtection": {
+          "description": "false (default): deleting a policy/role/group/alias CR deletes the bao object, so offboarding revokes access. true: grants are retained through CR deletion and render churn, at the cost of leaked grants on offboarding. Only an exact true enables retention.",
+          "$ref": "#/definitions/boolish"
+        }
+      }
     }
   }
 }

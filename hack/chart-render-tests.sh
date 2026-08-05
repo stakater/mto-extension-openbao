@@ -64,6 +64,16 @@
 #                    sets delete_version_after/max_versions and delete removes
 #                    every version, so a subscriber carrying its own tier caps
 #                    here can destroy secrets it should only read.
+#  17. sharedpolicy — the parent gotemplate's shared-tenant data CRs carry a
+#                    deletionPolicy driven by safetyDeletionProtection; only an
+#                    exact "false" flips to Delete.
+#  18. deletionflip — the tenant chart's two safety knobs flip exactly their
+#                    own kind group (data vs grants).
+#  19. tenantguard — the tenant chart's safety helpers fail loudly on garbage
+#                    without the schema, and a null safety block falls to the
+#                    safe defaults.
+#  20. platformpki — the bootstrap chart's own platform-PKI CRs follow
+#                    safety.deletionProtection in both postures.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -204,6 +214,7 @@ parameters:
   externalSecretRefreshInterval: "1h"
   certManagerEnabled: "false"
   crossTenantPkiEnabled: "false"
+  safetyDeletionProtection: "true"
   tenants:
     - metadata:
         name: team-a
@@ -250,6 +261,58 @@ emission_case trust-only disabled false true \
   "openbao-config-mto-team-a.trust->openbao-config-mto-trust"
 emission_case all-off disabled false false \
   "openbao-config-mto-team-a->openbao-config-mto"
+
+# 17. sharedpolicy — the parent gotemplate's shared-tenant data-bearing CRs
+# (OpenBaoNamespace, both OpenBaoSecretEngines, OpenBaoAuthMethod) carry a
+# deletionPolicy driven by the safetyDeletionProtection parameter. Only an
+# exact "false" flips to Delete; anything else — including garbage from a
+# mis-plumbed parameter — fails toward Retain, because the shared namespace
+# holds every tenant's shared KV/transit data. A kind missing the field
+# would surface as a "null" in the unique-value set and fail the check.
+shared_policy() { # <safetyParam> -> comma-joined unique deletionPolicy values
+  "$HELM" template shim "$WORK/shim" --set-string "parameters.safetyDeletionProtection=$1" \
+    | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine" or .kind == "OpenBaoAuthMethod") | .spec.deletionPolicy' - \
+    | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//'
+}
+sp_ok=0; sp_detail=""
+for pair in "true:Retain" "false:Delete" "garbage:Retain"; do
+  param="${pair%%:*}"; want="${pair##*:}"
+  got="$(shared_policy "$param")"
+  [ "$got" = "$want" ] || { sp_ok=1; sp_detail="$sp_detail [$param->$got want=$want]"; }
+done
+[ "$sp_ok" -eq 0 ] && check sharedpolicy 0 || check sharedpolicy 1 "$sp_detail"
+
+# 19. tenantguard — the tenant chart's safety helpers survive a schema-less
+# render (SDK paths, --skip-schema-validation): garbage fails loudly with the
+# helper's own message, and a null safety block falls to the safe defaults
+# (data Retain, grants Delete) instead of nil-pointering.
+cp -R "$CHART" "$WORK/tenant-noschema"
+rm -f "$WORK/tenant-noschema/values.schema.json"
+tg_ok=0; tg_detail=""
+if "$HELM" template x "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+    --set-string safety.deletionProtection=yes >/dev/null 2>"$WORK/tg-err.txt"; then
+  tg_ok=1; tg_detail="$tg_detail [garbage accepted without schema]"
+elif ! grep -q "safety.deletionProtection must be a boolean" "$WORK/tg-err.txt"; then
+  tg_ok=1; tg_detail="$tg_detail [failed without the helper message]"
+fi
+printf 'safety: null\n' > "$WORK/tg-null.yaml"
+tg_null="$("$HELM" template x "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  -f "$WORK/tg-null.yaml" 2>/dev/null \
+  | "$YQ" ea -N 'select(.kind == "OpenBaoSecretEngine" or .kind == "OpenBaoNamespace" or .kind == "OpenBaoAuthMethod") | .spec.deletionPolicy' - \
+  | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+[ "$tg_null" = "Retain" ] || { tg_ok=1; tg_detail="$tg_detail [null-block data policy=$tg_null want=Retain]"; }
+[ "$tg_ok" -eq 0 ] && check tenantguard 0 || check tenantguard 1 "$tg_detail"
+
+# 20. platformpki — the bootstrap chart's own data-bearing CRs (the platform
+# PKI OpenBaoNamespace + OpenBaoSecretEngine) follow safety.deletionProtection.
+# Guards the ternary wiring in 50-platform-pki.yaml, which no other case
+# renders.
+pp_ok=0; pp_detail=""
+pp_def="$("$HELM" template boot "$BOOTSTRAP" 2>/dev/null | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine") | .spec.deletionPolicy' - | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+[ "$pp_def" = "Retain" ] || { pp_ok=1; pp_detail="$pp_detail [default=$pp_def want=Retain]"; }
+pp_off="$("$HELM" template boot "$BOOTSTRAP" --set safety.deletionProtection=false 2>/dev/null | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine") | .spec.deletionPolicy' - | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+[ "$pp_off" = "Delete" ] || { pp_ok=1; pp_detail="$pp_detail [flipped=$pp_off want=Delete]"; }
+[ "$pp_ok" -eq 0 ] && check platformpki 0 || check platformpki 1 "$pp_detail"
 
 # 8. namebudget — sliced renders enforce the TI-name-as-label 63-char cap.
 # A 40-char tenant fits core (19+40=59) but not .certmanager (19+40+12=71);
@@ -369,6 +432,7 @@ for kv in \
   "parent.certManager.enabled=True" "parent.certManager.enabled=1" \
   "crossTenantPki.enabled=yes" "crossTenantPki.enabled=TRUE" \
   "parent.eso=enabledd" "parent.eso=true" "parent.eso=Enabled" \
+  "safety.deletionProtection=yes" "safety.grantDeletionProtection=1" \
   "sync.mode=on"; do
   if boot_render --set-string "$kv" >/dev/null 2>&1; then
     typo_ok=1; typo_detail="$typo_detail [accepted:$kv]"
@@ -377,6 +441,7 @@ done
 # and the canonical forms must still work, or the check passes vacuously
 for kv in "parent.certManager.enabled=true" "parent.certManager.enabled=false" \
           "crossTenantPki.enabled=true" "parent.eso=enabled" "parent.eso=disabled" \
+          "safety.deletionProtection=false" "safety.grantDeletionProtection=true" \
           "sync.mode=revert" "sync.mode=off"; do
   if ! boot_render --set-string "$kv" >/dev/null 2>&1; then
     typo_ok=1; typo_detail="$typo_detail [rejected-valid:$kv]"
@@ -393,8 +458,10 @@ norm_out="$(boot_render --set-string parent.certManager.enabled=true \
                         --set-string crossTenantPki.enabled=false \
                         --set-string parent.eso=enabled \
                         --set-string parent.sso.enabled=false \
+                        --set-string safety.deletionProtection=false \
+                        --set-string safety.grantDeletionProtection=true \
                         --set-string platformPki.enabled=true)"
-for pair in "certManagerEnabled:true" "crossTenantPkiEnabled:false" "eso:enabled" "ssoEnabled:false" "pkiHierarchyEnabled:true"; do
+for pair in "certManagerEnabled:true" "crossTenantPkiEnabled:false" "eso:enabled" "ssoEnabled:false" "pkiHierarchyEnabled:true" "safetyDeletionProtection:false" "safetyGrantDeletionProtection:true"; do
   pname="${pair%%:*}"; want="${pair##*:}"
   got="$(printf '%s\n' "$norm_out" | "$YQ" ea -N "select(.kind == \"Template\") | .spec.parameters[] | select(.name == \"$pname\") | .value" - | sort -u | tr '\n' ',' | sed 's/,$//')"
   [ "$got" = "$want" ] || { norm_ok=1; norm_detail="$norm_detail [$pname=$got want=$want]"; }
@@ -409,7 +476,7 @@ mkdir -p "$WORK/boot-noguard/templates"
 cp "$BOOTSTRAP/Chart.yaml" "$BOOTSTRAP/values.yaml" "$BOOTSTRAP/values.schema.json" "$WORK/boot-noguard/"
 printf '# intentionally empty\n' > "$WORK/boot-noguard/templates/noop.yaml"
 schema_ok=0; schema_detail=""
-for kv in "parent.certManager.enabled=yes" "crossTenantPki.enabled=True" "parent.eso=enabledd"; do
+for kv in "parent.certManager.enabled=yes" "crossTenantPki.enabled=True" "parent.eso=enabledd" "safety.deletionProtection=yes"; do
   if "$HELM" template boot "$WORK/boot-noguard" --set-string "$kv" >/dev/null 2>&1; then
     schema_ok=1; schema_detail="$schema_detail [schema accepted:$kv]"
   fi
@@ -428,6 +495,23 @@ if grep -q 'parent.certManager.enabled must be a boolean' <<<"$helper_err"; then
 else
   check togglehelper 1 "schema-less render did not hit the _helpers.tpl guard: $(printf '%s' "$helper_err" | head -2 | tr '\n' ' ' | cut -c1-100)"
 fi
+
+# 18. deletionflip — the two safety knobs flip exactly their own kind
+# group: data-bearing kinds (SecretEngine, Namespace, AuthMethod) follow
+# safety.deletionProtection, grant kinds follow safety.grantDeletionProtection.
+# The DEFAULT posture (data Retain, grants Delete) is pinned by the golden;
+# this guards the flipped wiring, which the golden never exercises.
+flip_out="$("$HELM" template openbao-config-mto "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set safety.deletionProtection=false --set safety.grantDeletionProtection=true)"
+flip_ok=0; flip_detail=""
+flip_data="$(printf '%s\n' "$flip_out" | "$YQ" ea -N 'select(.kind == "OpenBaoSecretEngine" or .kind == "OpenBaoNamespace" or .kind == "OpenBaoAuthMethod") | .spec.deletionPolicy' - | sort -u | grep -v '^Delete$' || true)"
+# The selector lists every grant kind, including ones neither chart renders
+# yet (cert/JWT roles, groups, aliases, identity-token roles) — deliberate,
+# so the check picks them up the day a template starts emitting them.
+flip_grant="$(printf '%s\n' "$flip_out" | "$YQ" ea -N 'select(.kind == "OpenBaoPolicy" or .kind == "OpenBaoKubernetesAuthRole" or .kind == "OpenBaoCertAuthEngineRole" or .kind == "OpenBaoJWTOIDCAuthEngineRole" or .kind == "OpenBaoPKISecretEngineRole" or .kind == "OpenBaoGroup" or .kind == "OpenBaoGroupAlias" or .kind == "OpenBaoIdentityTokenRole") | .spec.deletionPolicy' - | sort -u | grep -v '^Retain$' || true)"
+[ -n "$flip_data" ] && { flip_ok=1; flip_detail="$flip_detail [data-kind got: $(printf '%s' "$flip_data" | tr '\n' ',')]"; }
+[ -n "$flip_grant" ] && { flip_ok=1; flip_detail="$flip_detail [grant-kind got: $(printf '%s' "$flip_grant" | tr '\n' ',')]"; }
+[ "$flip_ok" -eq 0 ] && check deletionflip 0 || check deletionflip 1 "$flip_detail"
 
 # 12. subread — subscriptions must be read-only on the producer's prefix.
 # values-full.yaml has team-a-dev/app-a subscribing to team-a-tools. Its policy

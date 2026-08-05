@@ -10,6 +10,19 @@
 # install namespace.
 operatorNamespace: openbao-config-operator-system
 
+# Deletion-policy posture for everything this integration renders — the
+# platform-PKI CRs here AND (via the child Templates) every per-tenant CR.
+safety:
+  # true (default): mounts, auth mounts and bao namespaces get
+  # deletionPolicy=Retain — CR deletion/rename orphans the bao object and
+  # its data (logged + Event). false: CR deletion destroys it; a namespace
+  # delete cascades through everything inside.
+  deletionProtection: true
+  # false (default): grants get deletionPolicy=Delete — deleting the CR
+  # revokes the access. true: grants survive CR deletion and render churn,
+  # at the cost of leaked grants on offboarding that nothing tracks.
+  grantDeletionProtection: false
+
 # t-op-v2 install identity. The ClusterRoles in this chart bind to the
 # t-op-v2 controller's ServiceAccount; defaults match the upstream
 # template-operator-v2 helm release. Override if your t-op-v2 release
@@ -24,7 +37,7 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.12.0
+  version: 0.14.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.

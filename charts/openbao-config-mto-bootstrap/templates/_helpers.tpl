@@ -111,3 +111,34 @@ sync:
 {{- end }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Safety knobs normalized to "true"/"false" via boolValue. Absent/null
+falls to each knob's safe direction (protection ON, grant retention
+OFF), mirroring the operator's zero-value handling.
+*/}}
+{{- define "openbao-config-mto-bootstrap.safetyDeletionProtection" -}}
+{{- $safety := .Values.safety | default dict -}}
+{{- /* hasKey first: sprig get returns "" (not nil) for a missing key. */ -}}
+{{- if or (not (hasKey $safety "deletionProtection")) (kindIs "invalid" (get $safety "deletionProtection")) -}}true{{- else -}}
+{{- $raw := get $safety "deletionProtection" -}}
+{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "safety.deletionProtection" "value" $raw) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "openbao-config-mto-bootstrap.safetyGrantDeletionProtection" -}}
+{{- $safety := .Values.safety | default dict -}}
+{{- /* hasKey first: sprig get returns "" (not nil) for a missing key. */ -}}
+{{- if or (not (hasKey $safety "grantDeletionProtection")) (kindIs "invalid" (get $safety "grantDeletionProtection")) -}}false{{- else -}}
+{{- $raw := get $safety "grantDeletionProtection" -}}
+{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "safety.grantDeletionProtection" "value" $raw) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+deletionPolicy for the data-bearing CRs this chart renders itself
+(the platform-PKI OpenBaoNamespace and OpenBaoSecretEngine).
+*/}}
+{{- define "openbao-config-mto-bootstrap.deletionPolicy" -}}
+{{- ternary "Retain" "Delete" (eq (include "openbao-config-mto-bootstrap.safetyDeletionProtection" .) "true") -}}
+{{- end -}}

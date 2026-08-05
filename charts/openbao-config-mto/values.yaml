@@ -24,6 +24,20 @@ component: all
 # Environment slice for KV paths (kv/data/<env>/...).
 env: dev
 
+# Safety guardrails: non-destructive deletion by default. Cluster-global —
+# t-op-v2 renders every tenant with the same values.
+safety:
+  # true (default): mounts, auth mounts and bao namespaces get
+  # deletionPolicy=Retain — CR deletion/rename orphans the bao object and
+  # its data (logged + Event). false: CR deletion destroys it; a namespace
+  # delete cascades through everything inside.
+  deletionProtection: true
+  # false (default): policies/roles/groups/aliases get
+  # deletionPolicy=Delete — deleting the CR revokes the access. true:
+  # grants survive CR deletion and render churn, at the cost of leaked
+  # grants on offboarding that nothing tracks.
+  grantDeletionProtection: false
+
 # Bao server URL used in ESO SecretStores + ConfigMap VAULT_ADDR.
 # PRODUCTION: switch to https://. If bao serves with a private-PKI cert,
 # also set baoCABundle (PEM, multi-line) and wire the workload-side mount.

@@ -11,6 +11,10 @@
 {{- $esoRefresh := .parameters.externalSecretRefreshInterval }}
 {{- $certManager := .parameters.certManagerEnabled }}
 {{- $crossTenantPki := .parameters.crossTenantPkiEnabled }}
+{{- /* deletionPolicy for the shared tenant's data CRs. Only an exact
+       "false" disables protection — anything unexpected fails toward
+       Retain; the shared namespace holds every tenant's shared data. */ -}}
+{{- $dataPolicy := ternary "Delete" "Retain" (eq .parameters.safetyDeletionProtection "false") }}
 {{- /* Comma-separated roster of all real tenant names. Passed to each child so
        its chart can skip cross-tenant shares whose peer is not a real tenant
        (no dangling Policy/Role; self-heals when the peer appears). */ -}}
@@ -21,12 +25,12 @@
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoNamespace
 metadata: { name: {{ $shared }}, namespace: {{ $opNs }} }
-spec: { name: {{ $shared }} }
+spec: { name: {{ $shared }}, deletionPolicy: {{ $dataPolicy }} }
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoSecretEngine
 metadata: { name: {{ $shared }}-kv, namespace: {{ $opNs }} }
-spec: { path: kv, openbaoNamespace: {{ $shared }}/, kvV2: {} }
+spec: { path: kv, openbaoNamespace: {{ $shared }}/, kvV2: {}, deletionPolicy: {{ $dataPolicy }} }
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoSecretEngine
@@ -35,11 +39,12 @@ spec:
   path: transit
   openbaoNamespace: {{ $shared }}/
   transit: {}
+  deletionPolicy: {{ $dataPolicy }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoAuthMethod
 metadata: { name: {{ $shared }}-kubernetes, namespace: {{ $opNs }} }
-spec: { path: kubernetes, type: kubernetes, openbaoNamespace: {{ $shared }}/ }
+spec: { path: kubernetes, type: kubernetes, openbaoNamespace: {{ $shared }}/, deletionPolicy: {{ $dataPolicy }} }
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoKubernetesAuthEngineConfig
