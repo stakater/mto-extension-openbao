@@ -79,10 +79,11 @@ spec:
 apiVersion: external-secrets.io/v1
 kind: SecretStore
 metadata:
-  name: {{ $saName }}-share-{{ $peer }}-bao
+  name: {{ $saName }}.share-{{ $peer }}-bao
   namespace: {{ $saNs }}
   labels:
     {{- $labels | nindent 4 }}
+    bao.stakater.com/app: {{ $f.app | quote }}
 spec:
   provider:
     vault:

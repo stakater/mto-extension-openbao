@@ -385,12 +385,23 @@ Usage:
 
 {{- /* G13 — unknown key, checked first: a misspelled key means nothing read below
        reflects what the user meant. Only our own prefix is considered. */ -}}
+{{- $hasBao := false -}}
 {{- range $k, $_ := $ann -}}
 {{- if hasPrefix $p $k -}}
+{{- $hasBao = true -}}
 {{- if not (has (trimPrefix $p $k) $known) -}}
 {{- $errs = append $errs (printf "unknown annotation %q — this chart reads none of that name, so it has no effect. Valid keys: %s" $k (join ", " (sortAlpha $known))) -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{- /* G16 — rendered ConfigMap and SecretStore names embed this name and
+       reserve dot-separated suffixes (.error, .deploy-error,
+       .share-<peer>-bao). Kubernetes allows dots in ServiceAccount names;
+       keeping OpenBao-enabled ones dot-free is what keeps those suffixes
+       unreachable. Says nothing about role/policy name ambiguity. */ -}}
+{{- if and $hasBao (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name)) -}}
+{{- $errs = append $errs (printf "ServiceAccount name %q cannot be used with OpenBao: rendered ConfigMap and SecretStore names embed it and reserve dot-separated suffixes (.error, .share-<peer>-bao), so it must match ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ (lowercase letters, digits and hyphens — no dots). Rename the ServiceAccount" $name) -}}
 {{- end -}}
 
 {{- /* G14 — a misspelled boolean would leave its engine off while the
