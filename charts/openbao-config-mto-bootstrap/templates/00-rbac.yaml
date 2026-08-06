@@ -1,8 +1,9 @@
 # RBAC granted to the template-operator-v2 ServiceAccount so it can:
 #   - LIST/WATCH Tenant CRs (parent objectFieldRef source)
 #   - LIST/WATCH Namespaces (child namespaceSelector resolution)
-#   - CRUD TemplateInstance (parent renders child TIs)
-#   - CRUD OpenBao* CRs (child renders the per-tenant scaffolding)
+#   - CRUD TemplateInstances and OpenBao* CRs in operatorNamespace only —
+#     mutation verbs in the openbao-config-mto-manager Role, cluster-wide
+#     `list` here (rationale on the security.mto.stakater.com rule)
 #   - read ServiceAccounts + Deployments (workload discovery via the
 #     child Template's namespaceSelector-scoped objectFieldRefs; the SA
 #     read verbs are needed independently of the render-driven CRUD below)
@@ -51,6 +52,13 @@ kind: ClusterRole
 metadata:
   name: openbao-config-mto-manager
 rules:
+  # `list` only. These kinds render exclusively into operatorNamespace, so
+  # every other verb sits in the openbao-config-mto-manager Role below. The
+  # cluster-wide `list` has one consumer: template-operator-v2's orphan
+  # discovery, which lists each rendered GVK across the cluster by ownership
+  # label on every reconcile and on TI deletion. Without it TI teardown
+  # wedges: the deletion-path discovery returns Forbidden, the finalizer
+  # never confirms what it owns, and the TI sticks in Terminating.
   - apiGroups: ["security.mto.stakater.com"]
     resources:
       - openbaonamespaces
@@ -64,7 +72,7 @@ rules:
       - openbaotransitkeys
       - openbaopkisecretengineconfigs
       - openbaopkisecretengineroles
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["list"]
   # The child Templates resolve workload ServiceAccounts through
   # namespaceSelector-scoped objectFieldRefs, which needs read access
   # independently of any toggle. bao-cert-manager is the only ServiceAccount
@@ -119,9 +127,13 @@ rules:
     resources: ["secretstores", "externalsecrets"]
     verbs: ["create"]
   {{- end }}
+  # `list` only, same reason as the security.mto.stakater.com rule above.
+  # Caveat: template-operator-v2's own manager ClusterRole grants full
+  # TemplateInstance CRUD cluster-wide regardless (its own CRD); this rule is
+  # scoped so this chart's grants stand on their own.
   - apiGroups: ["templates.v2.stakater.com"]
     resources: ["templateinstances"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["list"]
   # Issuers, the bao-cert-manager ServiceAccount and the Role/RoleBinding pair
   # are rendered by the .certmanager slice and by nothing else. Same create-only
   # gating as above, for the same teardown reason.
@@ -199,6 +211,52 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  name: openbao-config-mto-manager
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.templateOperator.serviceAccountName }}
+    namespace: {{ .Values.templateOperator.namespace }}
+---
+# Every verb except cluster-scope `list` for the kinds that render ONLY into
+# operatorNamespace: the OpenBao* CRs and the child TemplateInstances. The
+# Role's `list` is deliberately redundant with the ClusterRole's cluster-wide
+# `list` (which exists for orphan discovery); it stays so the informer
+# requirements read complete here.
+#
+# Never toggle-gated: teardown runs after a toggle flips, and a Role gated on
+# a toggle wedges the TI finalizer Forbidden.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-config-mto-manager
+  namespace: {{ .Values.operatorNamespace }}
+rules:
+  - apiGroups: ["security.mto.stakater.com"]
+    resources:
+      - openbaonamespaces
+      - openbaosecretengines
+      - openbaopolicies
+      - openbaoauthmethods
+      - openbaokubernetesauthengineconfigs
+      - openbaokubernetesauthroles
+      - openbaojwtoidcauthengineconfigs
+      - openbaojwtoidcauthengineroles
+      - openbaotransitkeys
+      - openbaopkisecretengineconfigs
+      - openbaopkisecretengineroles
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["templates.v2.stakater.com"]
+    resources: ["templateinstances"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-config-mto-manager
+  namespace: {{ .Values.operatorNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
   name: openbao-config-mto-manager
 subjects:
   - kind: ServiceAccount

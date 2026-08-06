@@ -20,6 +20,9 @@
       ]
     }
   },
+  "required": [
+    "operatorNamespace"
+  ],
   "properties": {
     "operatorNamespace": {
       "type": "string",
