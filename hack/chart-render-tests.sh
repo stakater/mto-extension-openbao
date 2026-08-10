@@ -191,8 +191,14 @@ done
 check exclusivity "$exclusivity_ok" "$exclusivity_detail"
 
 # 5. empty slice
-emptycount="$(render certManager "$FIXTURES/values-no-optins.yaml" | normalize | grep -c '^kind:' || true)"
-[ "$emptycount" -eq 0 ] && check empty 0 || check empty 1 "expected 0 objects, got $emptycount"
+# Render on its own line: inside a command substitution the exit status is lost,
+# and a failed render then yields emptycount=0 — this check's pass condition.
+if render certManager "$FIXTURES/values-no-optins.yaml" > "$WORK/empty.yaml" 2>"$WORK/empty.err"; then
+  emptycount="$(normalize < "$WORK/empty.yaml" | grep -c '^kind:' || true)"
+  [ "$emptycount" -eq 0 ] && check empty 0 || check empty 1 "expected 0 objects, got $emptycount"
+else
+  check empty 1 "render itself failed: $(head -2 "$WORK/empty.err" | tr '\n' ' ')"
+fi
 
 # 6. bad value
 if render bogus "$FIXTURES/values-full.yaml" > /dev/null 2> "$WORK/bogus.err"; then
@@ -624,6 +630,40 @@ else
   check togglehelper 1 "schema-less render did not hit the _helpers.tpl guard: $(printf '%s' "$helper_err" | head -2 | tr '\n' ' ' | cut -c1-100)"
 fi
 
+# 15. pkimode — platformPki.mode is matched exactly against "intermediate", so
+# any other value used to fall through to an ONLINE self-signed platform root
+# with no error. Two guards reject it, each checked without the other so
+# deleting either fails here instead of restoring the fall-through.
+pkimode_ok=0; pkimode_detail=""
+# a. the schema enum alone, templates stripped.
+mkdir -p "$WORK/boot-pkimode-schema/templates"
+cp "$BOOTSTRAP/Chart.yaml" "$BOOTSTRAP/values.yaml" "$BOOTSTRAP/values.schema.json" "$WORK/boot-pkimode-schema/"
+printf '# intentionally empty\n' > "$WORK/boot-pkimode-schema/templates/noop.yaml"
+for bad in Intermediate bogus ""; do
+  if "$HELM" template boot "$WORK/boot-pkimode-schema" --set-string platformPki.mode="$bad" >/dev/null 2>&1; then
+    pkimode_ok=1; pkimode_detail="$pkimode_detail [schema accepted mode=\"$bad\"]"
+  fi
+done
+# b. the template fail() alone, schema removed.
+cp -R "$BOOTSTRAP" "$WORK/boot-pkimode-noschema"
+rm -f "$WORK/boot-pkimode-noschema/values.schema.json"
+for bad in Intermediate bogus; do
+  out="$("$HELM" template boot "$WORK/boot-pkimode-noschema" --set-string platformPki.mode="$bad" 2>&1 || true)"
+  grep -q 'platformPki.mode must be' <<<"$out" \
+    || { pkimode_ok=1; pkimode_detail="$pkimode_detail [no fail() guard for mode=\"$bad\"]"; }
+  # The regression this exists for: a fall-through renders an online root.
+  grep -qE '^\s+type: root' <<<"$out" \
+    && { pkimode_ok=1; pkimode_detail="$pkimode_detail [mode=\"$bad\" rendered type: root]"; }
+done
+# c. both valid modes still render their own type.
+for good in root intermediate; do
+  out="$("$HELM" template boot "$BOOTSTRAP" --set-string platformPki.mode="$good" \
+    --set-string platformPki.externalSignSecret=sec 2>&1 || true)"
+  grep -qE "^\s+type: $good" <<<"$out" \
+    || { pkimode_ok=1; pkimode_detail="$pkimode_detail [mode=$good did not render type: $good]"; }
+done
+[ "$pkimode_ok" -eq 0 ] && check pkimode 0 || check pkimode 1 "$pkimode_detail"
+
 # 18. deletionflip — the two safety knobs flip exactly their own kind
 # group: data-bearing kinds (SecretEngine, Namespace, AuthMethod) follow
 # safety.deletionProtection, grant kinds follow safety.grantDeletionProtection.
@@ -683,7 +723,13 @@ outputs_ok=0; outputs_detail=""
 for tname in $("$YQ" ea -N 'select(.kind == "Template") | .metadata.name' "$WORK/boot-templates.yaml"); do
   sel="select(.kind == \"Template\" and .metadata.name == \"$tname\")"
   nentries="$("$YQ" ea "$sel | (.spec.outputs // []) | length" "$WORK/boot-templates.yaml")"
-  if [ "$nentries" -eq 0 ]; then continue; fi
+  # Zero entries is a failure, not a skip: status.outputs is the only working
+  # hook for per-kind TI health, so a Template that stops emitting them loses
+  # that signal silently.
+  if [ "$nentries" -eq 0 ]; then
+    outputs_detail="$outputs_detail [$tname has no spec.outputs — per-kind TI health is unreportable]"
+    continue
+  fi
   [ "$nentries" -le 50 ] || outputs_detail="$outputs_detail [$tname $nentries outputs > 50]"
 
   names="$("$YQ" ea "$sel | [.spec.outputs[].fields[].name] | .[]" "$WORK/boot-templates.yaml")"
@@ -984,9 +1030,16 @@ forged="$("$YQ" e -N 'select(.kind == "ConfigMap") | keys | sort | join(",")' "$
 if command -v go >/dev/null 2>&1; then
   apiserver_detail=""
   for fx in values-full values-guards; do
-    render all "$FIXTURES/$fx.yaml" > "$WORK/api-$fx.yaml" 2>/dev/null
+    # render-validate reports 0 problems on an empty file, so a failed render
+    # would pass vacuously — same shape as the `empty` bug above.
+    if ! render all "$FIXTURES/$fx.yaml" > "$WORK/api-$fx.yaml" 2>"$WORK/api-$fx.err"; then
+      apiserver_detail="$apiserver_detail [$fx: render failed: $(head -2 "$WORK/api-$fx.err" | tr '\n' ' ')]"
+      continue
+    fi
     if ! out="$(cd "$REPO_ROOT" && GOFLAGS=-mod=mod go run ./hack/render-validate "$WORK/api-$fx.yaml" 2>&1)"; then
-      apiserver_detail="$apiserver_detail [$fx: $(printf '%s' "$out" | sed -n '2,3p' | tr '\n' ' ')]"
+      # Line 1 carries infrastructure failures (READ-ERROR, missing go.mod), so
+      # dropping it reports "[values-full: ]" with no cause.
+      apiserver_detail="$apiserver_detail [$fx: $(printf '%s' "$out" | sed -n '1,3p' | tr '\n' ' ')]"
     fi
   done
   [ -z "$apiserver_detail" ] && check apiserver 0 || check apiserver 1 "$apiserver_detail"

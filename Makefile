@@ -1,514 +1,44 @@
-# VERSION defines the project version for the bundle.
-# Update this value when you upgrade the version of your project.
-# To re-generate a bundle for another specific version without changing the standard setup, you can:
-# - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
-# - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.0.1
-# Must equal the GitHub repository name. Stakater's shared CI derives the image
-# it advertises on the pull request and pulls back during e2e from the
-# repository name alone, so an image pushed under any other name is one nothing
-# downstream can find.
-OPERATOR_NAME ?= openbao-config-operator
-CATALOG_DIR_PATH ?= catalog
+# MTO OpenBao extension — Helm charts.
+#
+# This repo holds the two hand-maintained charts that template-operator-v2
+# renders once per MTO Tenant. The operator that reconciles the OpenBao* CRs
+# they emit, its CRDs and its install chart live in
+# github.com/stakater-ab/openbao-config-operator.
+
+# Each chart publishes at its own Chart.yaml version.
+MTO_BOOTSTRAP_VERSION := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto-bootstrap/Chart.yaml)
+MTO_VERSION           := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto/Chart.yaml)
+
 DOCKER_REPO_BASE ?= ghcr.io/stakater
 ifeq ($(strip $(DOCKER_REPO_BASE)),)
 DOCKER_REPO_BASE := ghcr.io/stakater
 endif
+HELM_REGISTRY ?= $(DOCKER_REPO_BASE)/charts
 
-# CHANNELS define the bundle channels used in the bundle.
-# Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
-# To re-generate a bundle for other specific channels without changing the standard setup, you can:
-# - use the CHANNELS as arg of the bundle target (e.g make bundle CHANNELS=candidate,fast,stable)
-# - use environment variables to overwrite this value (e.g export CHANNELS="candidate,fast,stable")
-ifneq ($(origin CHANNELS), undefined)
-BUNDLE_CHANNELS := --channels=$(CHANNELS)
-endif
-
-# DEFAULT_CHANNEL defines the default channel used in the bundle.
-# Add a new line here if you would like to change its default config. (E.g DEFAULT_CHANNEL = "stable")
-# To re-generate a bundle for any other default channel without changing the default setup, you can:
-# - use the DEFAULT_CHANNEL as arg of the bundle target (e.g make bundle DEFAULT_CHANNEL=stable)
-# - use environment variables to overwrite this value (e.g export DEFAULT_CHANNEL="stable")
-ifneq ($(origin DEFAULT_CHANNEL), undefined)
-BUNDLE_DEFAULT_CHANNEL := --default-channel=$(DEFAULT_CHANNEL)
-endif
-BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
-
-# IMAGE_TAG_BASE defines the docker.io namespace and part of the image name for remote images.
-# This variable is used to construct full image tags for bundle and catalog images.
-#
-# For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# stakater.cloud/openbao-config-operator-bundle:$VERSION and stakater.cloud/openbao-config-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= $(DOCKER_REPO_BASE)/$(OPERATOR_NAME)
-
-# BUNDLE_IMG defines the image:tag used for the bundle.
-# You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
-BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)$(GIT_TAG)
-
-# BUNDLE_GEN_FLAGS are the flags passed to the operator-sdk generate bundle command
-BUNDLE_GEN_FLAGS ?= -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
-
-# USE_IMAGE_DIGESTS defines if images are resolved via tags or digests
-# You can enable this value if you would like to use SHA Based Digests
-# To enable set flag to true
-USE_IMAGE_DIGESTS ?= false
-ifeq ($(USE_IMAGE_DIGESTS), true)
-	BUNDLE_GEN_FLAGS += --use-image-digests
-endif
-
-# Set the Operator SDK version to use. By default, what is installed on the system is used.
-# This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
-OPERATOR_SDK_VERSION ?= v1.41.1
-# Image URL to use all building/pushing image targets
-IMG ?= $(IMAGE_TAG_BASE):v$(VERSION)$(GIT_TAG)
-# ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
-# Track the apiserver minor that the target OpenShift release ships (4.20 -> 1.33),
-# so unit tests exercise the same API surface production does. Overridable so a
-# skew run can point at another minor without editing this file.
-ENVTEST_K8S_VERSION ?= 1.33.0
-
-# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
-ifeq (,$(shell go env GOBIN))
-GOBIN=$(shell go env GOPATH)/bin
-else
-GOBIN=$(shell go env GOBIN)
-endif
-
-# CONTAINER_TOOL defines the container tool to be used for building images.
-# Be aware that the target commands are only tested with Docker which is
-# scaffolded by default. However, you might want to replace it to use other
-# tools. (i.e. podman)
-CONTAINER_TOOL ?= docker
-
-# Setting SHELL to bash allows bash commands to be executed by recipes.
-# Options are set to exit when a recipe line exits non-zero or a piped command fails.
-SHELL = /usr/bin/env bash -o pipefail
-.SHELLFLAGS = -ec
-
-TEST_CLUSTER_NAME ?= e2e-test-cluster
-ACTION ?= cluster
-
-.PHONY: all
-all: build
-
-##@ General
-
-# The help target prints out all targets with their descriptions organized
-# beneath their categories. The categories are represented by '##@' and the
-# target descriptions by '##'. The awk command is responsible for reading the
-# entire set of makefiles included in this invocation, looking for lines of the
-# file as xyz: ## something, and then pretty-format the target and help. Then,
-# if there's a line with ##@ something, that gets pretty-printed as a category.
-# More info on the usage of ANSI control characters for terminal formatting:
-# https://en.wikipedia.org/wiki/ANSI_escape_code#SGR_parameters
-# More info on the awk command:
-# http://linuxcommand.org/lc3_adv_awk.php
-
-.PHONY: help
-help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
-
-##@ Development
-
-.PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
-	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
-
-.PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
-	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
-
-.PHONY: fmt
-fmt: ## Run go fmt against code.
-	go fmt ./...
-
-.PHONY: vet
-vet: ## Run go vet against code.
-	go vet ./...
-
-.PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
-	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
-
-OPENBAO_NS   ?= openbao
-OPERATOR_NS  ?= openbao-config-operator-system
-VAULT_ADDR   ?= http://openbao.$(OPENBAO_NS).svc.cluster.local:8200
-POLICY_FILE  ?= test/policies/obx-e2e-manage.hcl
-TOKEN_SECRET ?= mto-openbao-token
-TOKEN_KEY    ?= token
-
-# Local/test VAULT_ADDR via port-forward (host can reach cluster svc)
-VAULT_ADDR_LOCAL ?= http://127.0.0.1:18200
-
-.PHONY: test-e2e
-test-e2e:
-	@echo "Running e2e with VAULT_ADDR=$(VAULT_ADDR_LOCAL)"
-	@# 1) Port-forward OpenBao service -> localhost:18200
-	@kubectl -n $(OPENBAO_NS) port-forward svc/openbao 18200:8200 >/tmp/pf.log 2>&1 & echo $$! > .pf.pid
-	@# 2) Wait until the port responds (fail if it never does)
-	@ok=0; \
-	for i in $$(seq 1 60); do \
-		if curl -sS -o /dev/null $(VAULT_ADDR_LOCAL)/v1/sys/health; then \
-			echo "OpenBao reachable on 127.0.0.1:18200"; ok=1; break; \
-		fi; \
-		sleep 1; \
-	done; \
-	if [ $$ok -ne 1 ]; then \
-		echo "ERROR: OpenBao not reachable on 127.0.0.1:18200 after 60s"; \
-		kill $$(cat .pf.pid) >/dev/null 2>&1 || true; rm -f .pf.pid; \
-		exit 1; \
-	fi
-	@# 2) Read limited token from Secret and run tests with env set
-	@TOKEN=$$(kubectl -n $(OPERATOR_NS) get secret $(TOKEN_SECRET) \
-		-o go-template='{{index .data "$(TOKEN_KEY)" | base64decode}}'); \
-	if [ -z "$$TOKEN" ]; then echo "ERROR: empty VAULT_TOKEN from secret $(TOKEN_SECRET)"; \
-	kill $$(cat .pf.pid) >/dev/null 2>&1 || true; rm -f .pf.pid; exit 1; fi; \
-	VAULT_ADDR=$(VAULT_ADDR_LOCAL) VAULT_TOKEN="$$TOKEN" OPERATOR_NS=$(OPERATOR_NS) \
-	OPENBAO_NS=$(OPENBAO_NS) OPENBAO_SVC=openbao OPENBAO_SCHEME=http OPENBAO_PORT=8200 \
-	OPENBAO_TOKEN_SECRET=mto-openbao-token OPENBAO_TOKEN_KEY=token \
-		go test ./test/e2e/ -v -ginkgo.v; \
-	RC=$$?; \
-	kill $$(cat .pf.pid) >/dev/null 2>&1 || true; rm -f .pf.pid; \
-	if [ $$RC -ne 0 ]; then $(MAKE) e2e-diagnostics; fi; \
-	exit $$RC
-
-.PHONY: openbao-install
-openbao-install: helm
-	$(HELM) repo add openbao https://openbao.github.io/openbao-helm ;\
-	$(HELM) repo update ;\
-	$(HELM) upgrade openbao openbao/openbao --namespace $(OPENBAO_NS) --create-namespace --install --set server.dev.enabled=true
-
-.PHONY: openbao-provision-creds
-openbao-provision-creds:
-	OPENBAO_NS=$(OPENBAO_NS) \
-	OPERATOR_NS=$(OPERATOR_NS) \
-	VAULT_ADDR=$(VAULT_ADDR) \
-	VAULT_TOKEN=root \
-	POLICY_NAME=obx-e2e-manage \
-	POLICY_FILE=$(POLICY_FILE) \
-	./hack/e2e/openbao/provision_credentials.sh
-
-# Bootstraps the operator's own kubernetes-auth identity (mount, config,
-# operator-manage policy, role). The operator then logs in with its
-# ServiceAccount instead of reading a token from a Secret. Idempotent.
-# VAULT_TOKEN=root matches the dev-mode openbao-install; production runs the
-# script directly with a temp bootstrap token (see bootstrap-policy.hcl).
-.PHONY: openbao-bootstrap-auth
-openbao-bootstrap-auth:
-	OPENBAO_NS=$(OPENBAO_NS) \
-	OPERATOR_NS=$(OPERATOR_NS) \
-	VAULT_ADDR=$(VAULT_ADDR) \
-	VAULT_TOKEN=root \
-	./hack/e2e/openbao/bootstrap_operator_auth.sh
-
-.PHONY: operator-deploy
-operator-deploy:
-	kubectl create ns $(OPERATOR_NS) --dry-run=client -o yaml | kubectl apply -f -
-	kubectl -n $(OPERATOR_NS) apply -f hack/e2e/obx/rbac.yaml
-	OPERATOR_IMAGE=$(OPERATOR_IMAGE) ./hack/apply_env_yaml.sh hack/e2e/obx/deploy.yaml.tmpl
-	kubectl -n $(OPERATOR_NS) rollout status deploy/mto-openbao-extension --timeout=180s
-
-.PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
-	$(GOLANGCI_LINT) run
-
-.PHONY: lint-fix
-lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	$(GOLANGCI_LINT) run --fix
-
-##@ Build
-
-.PHONY: build
-build: manifests generate fmt vet ## Build manager binary.
-	go build -o bin/manager cmd/main.go
-
-.PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
-	go run ./cmd/main.go
-
-# If you wish to build the manager image targeting other platforms you can use the --platform flag.
-# (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.
-# More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-.PHONY: docker-build
-docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build --build-arg GIT_USER=${GIT_USER} --build-arg GIT_TOKEN=${GIT_TOKEN} -t ${IMG} .
-
-.PHONY: docker-push
-docker-push: ## Push docker image with the manager.
-	$(CONTAINER_TOOL) push ${IMG}
-
-# PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
-# architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
-# - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/
-# - have enabled BuildKit. More info: https://docs.docker.com/develop/develop-images/build_enhancements/
-# - be able to push the image to your registry (i.e. if you do not set a valid value via IMG=<myregistry/image:<tag>> then the export will fail)
-# To adequately provide solutions that are compatible with multiple platforms, you should consider using this option.
-PLATFORMS ?= linux/arm64,linux/amd64,linux/s390x,linux/ppc64le
-.PHONY: docker-buildx
-docker-buildx: ## Build and push docker image for the manager for cross-platform support
-	# copy existing Dockerfile and insert --platform=${BUILDPLATFORM} into Dockerfile.cross, and preserve the original Dockerfile
-	sed -e '1 s/\(^FROM\)/FROM --platform=\$$\{BUILDPLATFORM\}/; t' -e ' 1,// s//FROM --platform=\$$\{BUILDPLATFORM\}/' Dockerfile > Dockerfile.cross
-	- $(CONTAINER_TOOL) buildx create --name openbao-config-operator-builder
-	$(CONTAINER_TOOL) buildx use openbao-config-operator-builder
-	- $(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) --tag ${IMG} -f Dockerfile.cross .
-	- $(CONTAINER_TOOL) buildx rm openbao-config-operator-builder
-	rm Dockerfile.cross
-
-.PHONY: build-installer
-build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-	mkdir -p dist
-	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-	$(KUSTOMIZE) build config/default > dist/install.yaml
-
-##@ Deployment
-
-ifndef ignore-not-found
-  ignore-not-found = false
-endif
-
-.PHONY: install
-install: manifests kustomize ## Install CRDs into the K8s cluster specified in ~/.kube/config.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) apply -f -
-
-.PHONY: uninstall
-uninstall: manifests kustomize ## Uninstall CRDs from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/crd | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
-
-.PHONY: load-image
-load-image: ## Load local image into Kind cluster if it exists locally, otherwise it will be pulled
-	$(MAKE) cluster ACTION=load-image
-
-# Wait for the controller rollout, dumping cluster state to stdout if it stalls
-# and retrying once after a clean restart.
-#
-# The dump goes to stdout rather than to files under e2e-logs/ on purpose: this
-# runs in `deploy`, which is upstream of `test-e2e`, so a failure here aborts the
-# job before any artifact-uploading step is reached. Printing means the evidence
-# lands in the workflow log, where it survives regardless.
-#
-# The retry is not just defensive. A private image on a cold Kind node has no
-# local layer to reuse, and one fixed window gives a slow pull no second chance;
-# ImagePullBackOff also burns through a short window in two or three attempts.
-define rollout-controller-with-retry
-@bash -ceu '\
-	ns="$(OPERATOR_NS)"; \
-	dep="$(OPERATOR_NAME)-controller-manager"; \
-	echo ">>> Waiting for rollout (90s fast path)..."; \
-	if ! $(KUBECTL) -n "$$ns" rollout status deploy/"$$dep" --timeout=90s; then \
-	  echo ">>> Rollout stalled - collecting debug info before restart"; \
-	  echo "---- Deployment describe ----"; \
-	  $(KUBECTL) -n "$$ns" describe deploy/"$$dep" || true; \
-	  echo "---- Pods (wide) ----"; \
-	  $(KUBECTL) -n "$$ns" get pods -l control-plane=controller-manager -o wide || true; \
-	  echo "---- Pod describe (image pull and config errors surface here) ----"; \
-	  $(KUBECTL) -n "$$ns" describe pods -l control-plane=controller-manager || true; \
-	  echo "---- Events (recent 20) ----"; \
-	  $(KUBECTL) -n "$$ns" get events --sort-by=.lastTimestamp | tail -n 20 || true; \
-	  echo "---- Pod logs (last 50, empty if no container started) ----"; \
-	  for p in $$( $(KUBECTL) -n "$$ns" get pods -l control-plane=controller-manager -o name 2>/dev/null ); do \
-	    echo "-- $$p --"; \
-	    $(KUBECTL) -n "$$ns" logs "$$p" --tail=50 2>/dev/null || true; \
-	  done; \
-	  echo ">>> End of debug info"; \
-	  echo ">>> Performing clean restart (scale 0 -> 1)..."; \
-	  $(KUBECTL) -n "$$ns" scale deploy/"$$dep" --replicas=0; \
-	  for i in $$(seq 1 24); do \
-	    cnt="$$( $(KUBECTL) -n "$$ns" get pods -l control-plane=controller-manager --no-headers 2>/dev/null | wc -l | tr -d " " )"; \
-	    [ "$$cnt" = "0" ] && break; \
-	    sleep 5; \
-	  done; \
-	  $(KUBECTL) -n "$$ns" scale deploy/"$$dep" --replicas=1; \
-	  echo ">>> Retrying rollout (210s)..."; \
-	  $(KUBECTL) -n "$$ns" rollout status deploy/"$$dep" --timeout=210s; \
-	fi; \
-	$(KUBECTL) -n "$$ns" wait --for=condition=Available deploy/"$$dep" --timeout=120s; \
-	echo ">>> Deployment $$dep successfully rolled out and ready."; \
-	'
-endef
-
-.PHONY: e2e-diagnostics
-e2e-diagnostics: ## Dump cluster state into ./e2e-logs, which CI uploads as an artifact on failure.
-	mkdir -p e2e-logs
-	-$(KUBECTL) -n $(OPERATOR_NS) get pods -o wide > e2e-logs/operator-pods.txt 2>&1
-	-$(KUBECTL) -n $(OPERATOR_NS) describe pods >> e2e-logs/operator-pods.txt 2>&1
-	-$(KUBECTL) -n $(OPERATOR_NS) logs deploy/$(OPERATOR_NAME)-controller-manager --tail=6000 > e2e-logs/controller.log 2>&1
-	-$(KUBECTL) -n $(OPERATOR_NS) logs deploy/$(OPERATOR_NAME)-controller-manager --previous --tail=3000 > e2e-logs/controller-previous.log 2>&1
-	-$(KUBECTL) -n $(OPENBAO_NS) get pods -o wide > e2e-logs/openbao-pods.txt 2>&1
-	-$(KUBECTL) get events -A --sort-by=.lastTimestamp > e2e-logs/events.txt 2>&1
-	-$(KUBECTL) get openbaopolicies,openbaosecretengines,openbaonamespaces -A -o yaml > e2e-logs/openbao-crs.yaml 2>&1
-
-.PHONY: deploy
-deploy: kustomize setup-cluster openbao-install openbao-provision-creds openbao-bootstrap-auth install
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG) && \
-	$(KUSTOMIZE) edit set configmap controller-manager-config --from-literal=VAULT_ADDR='$(VAULT_ADDR)' --namespace $(OPERATOR_NS)
-	$(KUSTOMIZE) build config/default | $(KUBECTL) apply -f -
-	$(KUBECTL) wait --for=condition=Established crd/openbaopolicies.security.mto.stakater.com --timeout=60s
-	$(call rollout-controller-with-retry)
-
-.PHONY: undeploy
-undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
-	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
-
-.PHONY: cluster
-cluster: ## Setup Kind cluster with specified action (default: cluster). Usage: make cluster ACTION=<action>
-	curl -sSL https://raw.githubusercontent.com/stakater/.github/refs/heads/main/.github/scripts/setup-kind-cluster.sh | \
-	TEST_CLUSTER_NAME=$(TEST_CLUSTER_NAME) \
-	IMG=$(IMG) \
-	CONTAINER_TOOL=$(CONTAINER_TOOL) \
-	KIND_VERSION=$(KIND_VERSION) \
-	LOCALBIN=$(LOCALBIN) \
-	OPERATOR_NAMESPACE=$(OPERATOR_NS) \
-	PULL_SECRET_NAME=saap-dockerconfigjson \
-	GHCR_USERNAME=$(GHCR_USERNAME) \
-	GHCR_TOKEN=$(GHCR_TOKEN) \
-	bash -s $(ACTION)
-
-.PHONY: pull-secret
-pull-secret: ## Create pull secret for private registry
-	$(MAKE) cluster ACTION=pull-secret
-
-.PHONY: setup-cluster
-setup-cluster: ## Setup complete Kind cluster with image loading and pull secret
-	$(MAKE) cluster ACTION=all
-
-##@ Dependencies
-
-## Location to install dependencies to
-LOCALBIN ?= $(shell pwd)/bin
-$(LOCALBIN):
-	mkdir -p $(LOCALBIN)
-
-## Tool Binaries
-KUBECTL ?= kubectl
-KUSTOMIZE ?= $(LOCALBIN)/kustomize
-CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
-ENVTEST ?= $(LOCALBIN)/setup-envtest
-GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
-HELM ?= $(shell command -v helm || echo $(PWD)/bin/helm)
-HELMIFY ?= $(LOCALBIN)/helmify
-KIND ?= $(LOCALBIN)/kind
-
-## Tool Versions
-KUSTOMIZE_VERSION ?= v5.4.3
-CONTROLLER_TOOLS_VERSION ?= v0.19.0
-ENVTEST_VERSION ?= release-0.19
-GOLANGCI_LINT_VERSION ?= v1.64.4
-HELMIFY_VERSION ?= v0.4.20
-KIND_VERSION ?= v0.30.0
-
-.PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
-
-.PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
-$(CONTROLLER_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
-
-.PHONY: envtest
-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
-
-.PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
-
-.PHONY: helmify
-helmify: $(HELMIFY)
-$(HELMIFY): $(LOCALBIN)
-	$(call go-install-tool,$(HELMIFY),github.com/arttor/helmify/cmd/helmify,${HELMIFY_VERSION})
-
-.PHONY: helm
-helm: $(HELM)
-$(HELM): $(LOCALBIN)
-	@if [ ! -f $(HELM) ]; then \
-		echo "Downloading helm v3.19.0" ;\
-		curl -sSLO https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz ;\
-		tar -zxvf helm-v3.19.0-linux-amd64.tar.gz ;\
-		mv linux-amd64/helm $(HELM) ;\
-		rm -rf linux-amd64 helm-v3.19.0-linux-amd64.tar.gz ;\
-		chmod +x $(HELM) ;\
-	else \
-		echo "Helm already installed at $(HELM)" ;\
-	fi
-
-.PHONY: kind
-kind: $(KIND)
-$(KIND): $(LOCALBIN)
-	$(call go-install-tool,$(KIND),sigs.k8s.io/kind,$(KIND_VERSION))
-
-##@ Helm charts (operator + bootstrap + tenant)
-
-# Operator chart — auto-generated via helmify from config/default kustomize
-# output. Regenerated on every release; never committed.
-HELM_CHART_NAME      ?= $(OPERATOR_NAME)
-HELM_CHART_DIR       ?= charts/$(HELM_CHART_NAME)
-
-# Hand-maintained sibling charts.
 MTO_BOOTSTRAP_CHART_DIR ?= charts/openbao-config-mto-bootstrap
 MTO_CHART_DIR           ?= charts/openbao-config-mto
 
-HELM_REGISTRY        ?= $(DOCKER_REPO_BASE)/charts
-CHART_VERSION        ?= $(VERSION)$(GIT_TAG)
-HELMIFY_POSTPROCESS  ?=
-
-# Shared helm release pipeline. Pulled from stakater/.github at first use.
-HELM_MK_URL ?= https://raw.githubusercontent.com/stakater/.github/refs/heads/main/.github/makefiles/helm.mk
-HELM_MK     := makefiles/helm.mk
-
-.PHONY: download-helm-mk
-download-helm-mk: ## Download shared helm.mk if missing.
-	@if [ ! -f $(HELM_MK) ]; then \
-		mkdir -p $(dir $(HELM_MK)); \
-		echo "Downloading $(HELM_MK_URL) -> $(HELM_MK)"; \
-		curl -fsSL $(HELM_MK_URL) -o $(HELM_MK); \
-	fi
-
-# helm.mk logs in to ghcr.io with GIT_USER/GIT_TOKEN; the CI chart-push action only
-# exports GHCR_USERNAME/GHCR_TOKEN, so fall back to those when GIT_* is unset.
+# Registry credentials. GHCR_* is what push.yaml sets; GIT_* is the local
+# override so a developer can push to their own registry without exporting
+# GHCR-shaped names.
 GIT_USER  ?= $(GHCR_USERNAME)
 GIT_TOKEN ?= $(GHCR_TOKEN)
 
-HELM_MK_CMD = GOBIN=$(LOCALBIN) PATH="$(LOCALBIN):$$PATH" $(MAKE) -f $(HELM_MK)
-# helm.mk references $(KUSTOMIZE) but never defines it, so it has to be passed in.
-HELM_MK_ARGS = \
-	KUSTOMIZE=$(KUSTOMIZE) \
-	GIT_USER=$(GIT_USER) \
-	GIT_TOKEN=$(GIT_TOKEN) \
-	OPERATOR_NAME=$(OPERATOR_NAME) \
-	HELM_CHART_NAME=$(HELM_CHART_NAME) \
-	HELM_CHART_DIR=$(HELM_CHART_DIR) \
-	HELM_REGISTRY=$(HELM_REGISTRY) \
-	CHART_VERSION=$(CHART_VERSION) \
-	HELMIFY_POSTPROCESS=$(HELMIFY_POSTPROCESS) \
-	IMG=$(IMG)
+.DEFAULT_GOAL := all
 
-.PHONY: helm-release
-helm-release: helm-release-operator helm-release-mto-bootstrap helm-release-mto ## Release operator + mto-bootstrap + mto charts to OCI.
+.PHONY: all
+all: helm-lint helm-version-check helm-render-test crd-validate ## Everything CI runs: lint, version pin, render tests, CRD schema check.
 
-.PHONY: helm-release-operator
-helm-release-operator: helmify kustomize yq download-helm-mk ## Helmify config/default and release the operator chart.
-	@$(HELM_MK_CMD) helm-release $(HELM_MK_ARGS)
+##@ General
 
-.PHONY: helm-release-mto-bootstrap
-helm-release-mto-bootstrap: helm ## Lint, package and push openbao-config-mto-bootstrap.
-	$(HELM) lint $(MTO_BOOTSTRAP_CHART_DIR) --strict
-	@mkdir -p dist
-	$(HELM) package $(MTO_BOOTSTRAP_CHART_DIR) -d dist --version $(CHART_VERSION)
-	$(HELM) push dist/openbao-config-mto-bootstrap-$(CHART_VERSION).tgz oci://$(HELM_REGISTRY)
+.PHONY: help
+help: ## Display this help.
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-.PHONY: helm-release-mto
-helm-release-mto: helm ## Lint, package and push openbao-config-mto (per-Tenant chart pulled by t-op-v2).
-	$(HELM) lint $(MTO_CHART_DIR) --strict --set tenant=lint-only
-	@mkdir -p dist
-	$(HELM) package $(MTO_CHART_DIR) -d dist --version $(CHART_VERSION)
-	$(HELM) push dist/openbao-config-mto-$(CHART_VERSION).tgz oci://$(HELM_REGISTRY)
+##@ Chart tests
 
 .PHONY: helm-lint
-helm-lint: helm ## Lint the two hand-maintained charts (operator chart is auto-generated).
+helm-lint: helm ## Lint both hand-maintained charts.
 	$(HELM) lint $(MTO_BOOTSTRAP_CHART_DIR) --strict
 	$(HELM) lint $(MTO_CHART_DIR) --strict --set tenant=lint-only
 
@@ -516,124 +46,236 @@ helm-lint: helm ## Lint the two hand-maintained charts (operator chart is auto-g
 helm-render-test: helm yq ## Verify the tenant chart's component slices (golden, disjoint, union, purity).
 	HELM=$(HELM) YQ=$(YQ_BIN) hack/chart-render-tests.sh
 
-# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
-# $1 - target path with name of binary
-# $2 - package url which can be installed
-# $3 - specific version of package
-define go-install-tool
-@[ -f "$(1)-$(3)" ] || { \
-set -e; \
-package=$(2)@$(3) ;\
-echo "Downloading $${package}" ;\
-rm -f $(1) || true ;\
-GOBIN=$(LOCALBIN) go install $${package} ;\
-mv $(1) $(1)-$(3) ;\
-} ;\
-ln -sf $(1)-$(3) $(1)
+CRD_DIR         ?= hack/crds
+CRD_SOURCE_REPO := $(shell awk -F= '/^repo=/{print $$2}' $(CRD_DIR)/SOURCE)
+CRD_SOURCE_REF  := $(shell awk -F= '/^ref=/{print $$2}' $(CRD_DIR)/SOURCE)
+
+# The check is field-level, so every render path that can emit an OpenBao* CR
+# needs its own pass: a kind validated in one says nothing about a field only
+# another emits. Hence each component slice, and the bootstrap chart's
+# mode=intermediate branch, which emits a field mode=root never does.
+#
+# Slices may legitimately render nothing, so they pass -allow-empty. The full
+# renders must not — zero objects there means the render broke.
+TENANT_COMPONENTS ?= all core eso certManager trust
+
+.PHONY: crd-validate
+crd-validate: helm ## Validate every rendered OpenBao* CR against the vendored operator CRDs.
+	@set -e; \
+	for fx in values-full values-guards values-no-optins; do \
+		for comp in $(TENANT_COMPONENTS); do \
+			empty=-allow-empty; [ "$$comp" = all ] && empty=""; \
+			printf -- '-- tenant %s/%s ' "$$fx" "$$comp"; \
+			$(HELM) template crdcheck $(MTO_CHART_DIR) -n crdcheck \
+				-f hack/render-fixtures/$$fx.yaml --set-string component=$$comp \
+				| go run ./hack/crd-validate $$empty $(CRD_DIR) -; \
+		done; \
+	done; \
+	printf -- '-- bootstrap mode=root '; \
+	$(HELM) template crdcheck $(MTO_BOOTSTRAP_CHART_DIR) -n crdcheck \
+		--set-string platformPki.mode=root \
+		| go run ./hack/crd-validate $(CRD_DIR) -; \
+	printf -- '-- bootstrap mode=intermediate '; \
+	$(HELM) template crdcheck $(MTO_BOOTSTRAP_CHART_DIR) -n crdcheck \
+		--set-string platformPki.mode=intermediate \
+		--set-string platformPki.externalSignSecret=platform-pki-signed \
+		| go run ./hack/crd-validate $(CRD_DIR) -
+
+# The vendored CRDs go stale silently: a field renamed upstream changes no file
+# here, so nothing triggers. This diffs them against CRD_SOURCE_BRANCH, which is
+# a variable because the operator's default branch does not carry the CRDs until
+# the split lands.
+#
+# Hard failure when run directly; the workflow is what marks it
+# continue-on-error. Not part of `all`, which must pass offline.
+CRD_SOURCE_BRANCH ?= $(shell awk -F= '/^branch=/{print $$2}' $(CRD_DIR)/SOURCE)
+CRD_SOURCE_PATH   := config/crd/bases
+
+.PHONY: crd-staleness
+crd-staleness: ## Report drift between hack/crds and $(CRD_SOURCE_BRANCH) of the operator repo.
+	@command -v gh >/dev/null 2>&1 || { echo "gh not installed — skipping"; exit 0; }
+	@tmp=$$(mktemp -d); rc=0; \
+	upstream=$$(gh api "repos/$(CRD_SOURCE_REPO)/contents/$(CRD_SOURCE_PATH)?ref=$(CRD_SOURCE_BRANCH)" -q '.[].name' 2>/dev/null) || upstream=""; \
+	if [ -z "$$upstream" ]; then \
+		rm -rf $$tmp; \
+		echo "cannot list $(CRD_SOURCE_REPO)@$(CRD_SOURCE_BRANCH):$(CRD_SOURCE_PATH) — wrong branch, or no read access"; \
+		exit 1; \
+	fi; \
+	for f in $(CRD_DIR)/*.yaml; do \
+		b=$$(basename $$f); \
+		: > $$tmp/$$b; \
+		if ! gh api "repos/$(CRD_SOURCE_REPO)/contents/$(CRD_SOURCE_PATH)/$$b?ref=$(CRD_SOURCE_BRANCH)" -q .content 2>/dev/null > $$tmp/$$b.b64; then \
+			echo "GONE:  $$b (not in $(CRD_SOURCE_REPO)@$(CRD_SOURCE_BRANCH))"; rc=1; continue; \
+		fi; \
+		base64 -d < $$tmp/$$b.b64 > $$tmp/$$b 2>/dev/null || { echo "GONE:  $$b (undecodable response)"; rc=1; continue; }; \
+		diff -q $$f $$tmp/$$b >/dev/null || { echo "STALE: $$b"; rc=1; }; \
+	done; \
+	for b in $$upstream; do \
+		[ -f $(CRD_DIR)/$$b ] || { echo "NEW:   $$b (upstream only — not vendored here)"; rc=1; }; \
+	done; \
+	rm -rf $$tmp; \
+	if [ $$rc -eq 0 ]; then echo "vendored CRDs match $(CRD_SOURCE_REPO)@$(CRD_SOURCE_BRANCH) (pinned $(CRD_SOURCE_REF))"; \
+	else echo "run 'make crds-vendor' and re-run the chart tests"; fi; \
+	exit $$rc
+
+# Fetches into a temp dir first and refuses to touch hack/crds unless the fetch
+# produced files — replacing the vendored set with nothing, then recording a ref
+# for a tree never fetched, is worse than doing nothing.
+.PHONY: crds-vendor
+crds-vendor: ## Refresh hack/crds from $(CRD_SOURCE_BRANCH) of the operator repo.
+	@set -e; \
+	command -v gh >/dev/null 2>&1 || { echo "gh is required"; exit 1; }; \
+	tmp=$$(mktemp -d); trap 'rm -rf $$tmp' EXIT; \
+	names=$$(gh api "repos/$(CRD_SOURCE_REPO)/contents/$(CRD_SOURCE_PATH)?ref=$(CRD_SOURCE_BRANCH)" -q '.[].name'); \
+	if [ -z "$$names" ]; then \
+		echo "no CRDs at $(CRD_SOURCE_REPO)@$(CRD_SOURCE_BRANCH):$(CRD_SOURCE_PATH) — leaving hack/crds untouched"; exit 1; \
+	fi; \
+	for b in $$names; do \
+		gh api "repos/$(CRD_SOURCE_REPO)/contents/$(CRD_SOURCE_PATH)/$$b?ref=$(CRD_SOURCE_BRANCH)" -q .content | base64 -d > $$tmp/$$b; \
+		[ -s $$tmp/$$b ] || { echo "empty download for $$b — leaving hack/crds untouched"; exit 1; }; \
+	done; \
+	sha=$$(gh api "repos/$(CRD_SOURCE_REPO)/commits/$(CRD_SOURCE_BRANCH)" -q .sha); \
+	[ -n "$$sha" ] || { echo "could not resolve $(CRD_SOURCE_BRANCH) — leaving hack/crds untouched"; exit 1; }; \
+	rm -f $(CRD_DIR)/*.yaml; \
+	cp $$tmp/*.yaml $(CRD_DIR)/; \
+	today=$$(date +%Y-%m-%d); \
+	sed -i.bak -e "s|^ref=.*|ref=$$sha|" -e "s|^date=.*|date=$$today|" $(CRD_DIR)/SOURCE; \
+	rm -f $(CRD_DIR)/SOURCE.bak; \
+	echo "vendored $$(ls $(CRD_DIR)/*.yaml | wc -l | tr -d ' ') CRDs from $(CRD_SOURCE_BRANCH) at $$sha ($$today)"
+
+##@ Chart release
+
+.PHONY: helm-login
+helm-login: helm ## Log in to the OCI chart registry.
+	@if [ -z "$(GIT_USER)" ] || [ -z "$(GIT_TOKEN)" ]; then \
+		echo "GIT_USER/GIT_TOKEN (or GHCR_USERNAME/GHCR_TOKEN) must be set"; exit 1; \
+	fi
+	@echo "$(GIT_TOKEN)" | $(HELM) registry login $(firstword $(subst /, ,$(HELM_REGISTRY))) -u "$(GIT_USER)" --password-stdin
+
+.PHONY: helm-release
+helm-release: helm-release-mto-bootstrap helm-release-mto ## Release both charts to OCI.
+
+# helm push has no existence check and no --force, and GHCR permits tag
+# overwrite, so a republished version silently replaces what tenants pull.
+#
+# Fails closed: only an explicit not-found means the tag is free. helm show chart
+# also exits 1 on DNS failure and an expired token, and treating those as free
+# would publish over tenants on a network blip. Must run after helm-login —
+# unauthenticated, GHCR answers 403 for absent and published tags alike.
+define check-tag-free
+@out=$$($(HELM) show chart oci://$(HELM_REGISTRY)/$(1) --version $(2) 2>&1); rc=$$?; \
+if [ $$rc -eq 0 ]; then \
+	echo "$(1) $(2) is already published — bump Chart.yaml before releasing"; exit 1; \
+fi; \
+if ! printf '%s' "$$out" | grep -qiE 'not found|manifest unknown|name unknown'; then \
+	echo "cannot determine whether $(1) $(2) is published — refusing to push:"; \
+	printf '%s\n' "$$out" | head -3; exit 1; \
+fi
 endef
 
-.PHONY: operator-sdk
-OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
-operator-sdk: ## Download operator-sdk locally if necessary.
-ifeq (,$(wildcard $(OPERATOR_SDK)))
-ifeq (, $(shell which operator-sdk 2>/dev/null))
-	@{ \
-	set -e ;\
-	mkdir -p $(dir $(OPERATOR_SDK)) ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPERATOR_SDK) https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION)/operator-sdk_$${OS}_$${ARCH} ;\
-	chmod +x $(OPERATOR_SDK) ;\
-	}
-else
-OPERATOR_SDK = $(shell which operator-sdk)
-endif
-endif
+.PHONY: helm-release-mto-bootstrap
+helm-release-mto-bootstrap: helm helm-login ## Lint, package and push openbao-config-mto-bootstrap.
+	$(HELM) lint $(MTO_BOOTSTRAP_CHART_DIR) --strict
+	$(call check-tag-free,openbao-config-mto-bootstrap,$(MTO_BOOTSTRAP_VERSION))
+	@mkdir -p dist
+	$(HELM) package $(MTO_BOOTSTRAP_CHART_DIR) -d dist
+	$(HELM) push dist/openbao-config-mto-bootstrap-$(MTO_BOOTSTRAP_VERSION).tgz oci://$(HELM_REGISTRY)
 
-.PHONY: bundle
-bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metadata, then validate generated files.
-	$(OPERATOR_SDK) generate kustomize manifests -q
-	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
-	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
-	$(OPERATOR_SDK) bundle validate ./bundle
+.PHONY: helm-release-mto
+helm-release-mto: helm helm-login ## Lint, package and push openbao-config-mto (per-Tenant chart pulled by t-op-v2).
+	$(HELM) lint $(MTO_CHART_DIR) --strict --set tenant=lint-only
+	$(call check-tag-free,openbao-config-mto,$(MTO_VERSION))
+	@mkdir -p dist
+	$(HELM) package $(MTO_CHART_DIR) -d dist
+	$(HELM) push dist/openbao-config-mto-$(MTO_VERSION).tgz oci://$(HELM_REGISTRY)
 
-.PHONY: bundle-build
-bundle-build: ## Build the bundle image.
-	docker build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+# t-op-v2 pulls the tenant chart at the exact version openbaoConfigMto.version
+# names. Bumping Chart.yaml without the pin leaves tenants on the old chart;
+# bumping the pin without publishing leaves them rendering nothing.
+.PHONY: helm-version-check
+helm-version-check: ## Fail if the bootstrap's openbaoConfigMto.version disagrees with the tenant Chart.yaml.
+	@# The awk block leaves openbaoConfigMto at the next top-level key, so a
+	@# missing version: under it cannot silently adopt a later one. Both values
+	@# are asserted non-empty: comparing "" to "" is equality, which would make
+	@# a parse failure on either side the pass path.
+	@pinned=$$(awk '/^openbaoConfigMto:/{f=1; next} f && /^[^[:space:]]/{exit} f && /^  version:/{print $$2; exit}' \
+		$(MTO_BOOTSTRAP_CHART_DIR)/values.yaml); \
+	if [ -z "$$pinned" ]; then \
+		echo "could not read openbaoConfigMto.version from $(MTO_BOOTSTRAP_CHART_DIR)/values.yaml"; exit 1; \
+	fi; \
+	if [ -z "$(MTO_VERSION)" ]; then \
+		echo "could not read version from $(MTO_CHART_DIR)/Chart.yaml"; exit 1; \
+	fi; \
+	if [ "$$pinned" != "$(MTO_VERSION)" ]; then \
+		echo "openbaoConfigMto.version ($$pinned) != $(MTO_CHART_DIR) Chart.yaml ($(MTO_VERSION))"; exit 1; \
+	fi; \
+	echo "chart version pin OK ($$pinned)"
 
-.PHONY: bundle-push
-bundle-push: ## Push the bundle image.
-	$(MAKE) docker-push IMG=$(BUNDLE_IMG)
+##@ Tools
 
-.PHONY: opm
-OPM = $(LOCALBIN)/opm
-opm: ## Download opm locally if necessary.
-ifeq (,$(wildcard $(OPM)))
-ifeq (,$(shell which opm 2>/dev/null))
-	@{ \
-	set -e ;\
-	mkdir -p $(dir $(OPM)) ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/v1.23.0/$${OS}-$${ARCH}-opm ;\
-	chmod +x $(OPM) ;\
-	}
-else
-OPM = $(shell which opm)
-endif
-endif
+LOCALBIN ?= $(shell pwd)/bin
+$(LOCALBIN):
+	mkdir -p $(LOCALBIN)
+
+# A system binary wins over the pinned download, so *_VERSION is what we fetch
+# and *_MIN is the floor enforced against whatever is actually used.
+#
+# curl -f matters: without it curl writes the HTTP error body to the destination
+# and exits 0, so an error page becomes the cached tool. The tar and --version
+# probes are the real net — nothing lands in bin/ that has not run once.
+HELM         ?= $(shell command -v helm || echo $(LOCALBIN)/helm)
+HELM_VERSION ?= v3.19.0
+HELM_MIN     ?= 3.14
+
+YQ_BIN     ?= $(shell command -v yq || echo $(LOCALBIN)/yq)
+YQ_VERSION ?= v4.44.3
+# 4.40 is where the harness first runs clean end to end, measured across builds:
+# 4.25.1 fails 6 checks and 4.35.2 still fails 1. splitDoc is not the binding
+# constraint — it works as far back as 4.13.5; sort_keys is what the older
+# builds get wrong, and a too-low floor lets them through to fail as a golden
+# diff with no hint that the yq version is the cause.
+YQ_MIN     ?= 4.40
+
+# Both targets are phony and always run their floor check. Making the check a
+# prerequisite of the downloaded file instead would skip it whenever the binary
+# already exists — which is the normal case, and the only case where the floor
+# matters.
+OS_LOWER = $$(uname | tr '[:upper:]' '[:lower:]')
+ARCH_GO  = $$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+
+.PHONY: helm
+helm: ## Ensure a helm binary of at least $(HELM_MIN) is available.
+	@if [ ! -x "$(HELM)" ]; then \
+		set -e ;\
+		echo "Downloading helm $(HELM_VERSION)" ;\
+		mkdir -p $(LOCALBIN) ;\
+		tmp=$$(mktemp -d) ;\
+		curl -fsSL -o $$tmp/helm.tar.gz "https://get.helm.sh/helm-$(HELM_VERSION)-$(OS_LOWER)-$(ARCH_GO).tar.gz" ;\
+		tar -zxf $$tmp/helm.tar.gz -C $$tmp ;\
+		mv $$tmp/$(OS_LOWER)-$(ARCH_GO)/helm $(LOCALBIN)/helm ;\
+		chmod +x $(LOCALBIN)/helm ;\
+		rm -rf $$tmp ;\
+	fi
+	@have=$$($(HELM) version --template '{{.Version}}' 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) ;\
+	if [ -z "$$have" ]; then echo "$(HELM) is not a working helm binary — delete it and re-run"; exit 1; fi ;\
+	if [ "$$(printf '%s\n%s\n' "$(HELM_MIN)" "$$have" | sort -V | head -1)" != "$(HELM_MIN)" ]; then \
+		echo "helm $$have is older than the required $(HELM_MIN) ($(HELM))"; exit 1; \
+	fi
 
 .PHONY: yq
-# hack/chart-render-tests.sh needs the splitDoc operator (yq >= 4.25).
-YQ_VERSION := v4.44.3
-YQ_BIN := $(LOCALBIN)/yq
-yq:
-ifeq (,$(wildcard $(YQ_BIN)))
-ifeq (,$(shell which yq 2>/dev/null))
-	@{ \
-	set -e ;\
-	mkdir -p $(dir $(YQ_BIN)) ;\
-	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
-	curl -sSLo $(YQ_BIN) https://github.com/mikefarah/yq/releases/download/$(YQ_VERSION)/yq_$${OS}-$${ARCH} ;\
-	chmod +x $(YQ_BIN) ;\
-	}
-else
-YQ_BIN = $(shell which yq)
-endif
-endif
-
-# A comma-separated list of bundle images (e.g. make catalog-build BUNDLE_IMGS=example.com/operator-bundle:v0.1.0,example.com/operator-bundle:v0.2.0).
-# These images MUST exist in a registry and be pull-able.
-BUNDLE_IMGS ?= $(BUNDLE_IMG)
-
-# The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)$(GIT_TAG)
-
-# Set CATALOG_BASE_IMG to an existing catalog image tag to add $BUNDLE_IMGS to that image.
-ifneq ($(origin CATALOG_BASE_IMG), undefined)
-FROM_INDEX_OPT := --from-index $(CATALOG_BASE_IMG)
-endif
-
-# Render bundle to the catalog index.
-.PHONY: catalog-render
-catalog-render: opm yq ## Render bundle to catalog index.
-	bash generate-catalog-index.sh $(DOCKER_REPO_BASE) $(OPERATOR_NAME) $(CATALOG_DIR_PATH) $(VERSION) $(GIT_TAG)
-
-# Build a catalog image by adding bundle images to an empty catalog using the operator package manager tool, 'opm'.
-# This recipe invokes 'opm' in 'semver' bundle add mode. For more information on add modes, see:
-# https://github.com/operator-framework/community-operators/blob/7f1438c/docs/packaging-operator.md#updating-your-existing-operator
-.PHONY: catalog-build
-catalog-build: opm ## Build a catalog image.
-	$(OPM) index add --container-tool docker --mode semver --tag $(CATALOG_IMG) --bundles $(BUNDLE_IMGS) $(FROM_INDEX_OPT)
-
-# Push the catalog image.
-.PHONY: catalog-push
-catalog-push: ## Push a catalog image.
-	$(MAKE) docker-push IMG=$(CATALOG_IMG)
-
-# Push the catalog image.
-.PHONY: publish
-publish: ## Build and publish operator.
-	echo $(BUNDLE_IMGS)
-	$(MAKE) manifests build docker-build docker-push
-	rm -f bin/kustomize
-	$(MAKE) bundle bundle-build bundle-push
-	$(MAKE) catalog-render catalog-build catalog-push
+yq: ## Ensure a yq binary of at least $(YQ_MIN) is available.
+	@if [ ! -x "$(YQ_BIN)" ]; then \
+		set -e ;\
+		echo "Downloading yq $(YQ_VERSION)" ;\
+		mkdir -p $(LOCALBIN) ;\
+		tmp=$$(mktemp) ;\
+		curl -fsSL -o $$tmp "https://github.com/mikefarah/yq/releases/download/$(YQ_VERSION)/yq_$(OS_LOWER)_$(ARCH_GO)" ;\
+		chmod +x $$tmp ;\
+		$$tmp --version >/dev/null ;\
+		mv $$tmp $(LOCALBIN)/yq ;\
+	fi
+	@have=$$($(YQ_BIN) --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1) ;\
+	if [ -z "$$have" ]; then echo "$(YQ_BIN) is not a working yq binary — delete it and re-run"; exit 1; fi ;\
+	if [ "$$(printf '%s\n%s\n' "$(YQ_MIN)" "$$have" | sort -V | head -1)" != "$(YQ_MIN)" ]; then \
+		echo "yq $$have is older than the required $(YQ_MIN) — splitDoc is unavailable ($(YQ_BIN))"; exit 1; \
+	fi
