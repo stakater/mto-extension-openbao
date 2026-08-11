@@ -1050,19 +1050,32 @@ metadata:
   name: pki-team-a-svc
   namespace: openbao-config-operator-system
 spec:
+  allowAnyName: false
   allowBareDomains: true
   allowGlobDomains: true
+  allowIpSans: false
   allowSubdomains: true
   allowedDomains:
     - team-a-dev.svc.cluster.local
     - team-a-tools.svc.cluster.local
   clientFlag: true
+  codeSigningFlag: false
   deletionPolicy: Delete
+  emailProtection: false
   enforceHostnames: true
+  extKeyUsage:
+    - ServerAuth
+    - ClientAuth
+  generateLease: false
+  keyUsage:
+    - DigitalSignature
+    - KeyEncipherment
   maxTtl: 720h
   name: team-a-svc
+  noStore: false
   openbaoNamespace: team-a/
   path: pki-int
+  requireCN: true
   serverFlag: true
   ttl: 168h
 ---
@@ -1182,17 +1195,17 @@ spec:
     path "transit/*"            { capabilities = ["create", "read", "update", "list", "delete"] }
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
-    path "pki/ca/pem"           { capabilities = ["read"] }
-    path "pki/ca_chain"         { capabilities = ["read"] }
-    path "pki/cert/ca"          { capabilities = ["read"] }
-    path "pki/certs"            { capabilities = ["list"] }
-    path "pki/cert/+"           { capabilities = ["read"] }
-    path "pki/issue/+"          { capabilities = ["update"] }
-    path "pki/sign/+"           { capabilities = ["update"] }
-    path "pki/roles"            { capabilities = ["list"] }
-    path "pki/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
+    # can regenerate the tenant CA (which invalidates every cert ever
+    # issued from it).
+    path "pki-int/ca/pem"           { capabilities = ["read"] }
+    path "pki-int/ca_chain"         { capabilities = ["read"] }
+    path "pki-int/cert/ca"          { capabilities = ["read"] }
+    path "pki-int/certs"            { capabilities = ["list"] }
+    path "pki-int/cert/+"           { capabilities = ["read"] }
+    path "pki-int/issue/+"          { capabilities = ["update"] }
+    path "pki-int/sign/+"           { capabilities = ["update"] }
+    path "pki-int/roles"            { capabilities = ["list"] }
+    path "pki-int/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
 ---
 # Source: openbao-config-mto/templates/07-sso-policies.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1219,13 +1232,13 @@ spec:
     path "transit/keys"         { capabilities = ["list"] }
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
-    path "pki/ca/pem"           { capabilities = ["read"] }
-    path "pki/ca_chain"         { capabilities = ["read"] }
-    path "pki/cert/ca"          { capabilities = ["read"] }
-    path "pki/certs"            { capabilities = ["list"] }
-    path "pki/cert/+"           { capabilities = ["read"] }
+    # can regenerate the tenant CA (which invalidates every cert ever
+    # issued from it).
+    path "pki-int/ca/pem"           { capabilities = ["read"] }
+    path "pki-int/ca_chain"         { capabilities = ["read"] }
+    path "pki-int/cert/ca"          { capabilities = ["read"] }
+    path "pki-int/certs"            { capabilities = ["list"] }
+    path "pki-int/cert/+"           { capabilities = ["read"] }
 ---
 # Source: openbao-config-mto/templates/07-sso-policies.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1257,15 +1270,15 @@ spec:
     path "transit/keys/+"       { capabilities = ["read"] }
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
-    path "pki/ca/pem"           { capabilities = ["read"] }
-    path "pki/ca_chain"         { capabilities = ["read"] }
-    path "pki/cert/ca"          { capabilities = ["read"] }
-    path "pki/certs"            { capabilities = ["list"] }
-    path "pki/cert/+"           { capabilities = ["read"] }
-    path "pki/issue/+"          { capabilities = ["update"] }
-    path "pki/sign/+"           { capabilities = ["update"] }
+    # can regenerate the tenant CA (which invalidates every cert ever
+    # issued from it).
+    path "pki-int/ca/pem"           { capabilities = ["read"] }
+    path "pki-int/ca_chain"         { capabilities = ["read"] }
+    path "pki-int/cert/ca"          { capabilities = ["read"] }
+    path "pki-int/certs"            { capabilities = ["list"] }
+    path "pki-int/cert/+"           { capabilities = ["read"] }
+    path "pki-int/issue/+"          { capabilities = ["update"] }
+    path "pki-int/sign/+"           { capabilities = ["update"] }
 ---
 # Source: openbao-config-mto/templates/07-sso-policies.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1296,19 +1309,22 @@ spec:
     path "transit/*"            { capabilities = ["create", "read", "update", "list", "delete"] }
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
-    path "pki/ca/pem"           { capabilities = ["read"] }
-    path "pki/ca_chain"         { capabilities = ["read"] }
-    path "pki/cert/ca"          { capabilities = ["read"] }
-    path "pki/certs"            { capabilities = ["list"] }
-    path "pki/cert/+"           { capabilities = ["read"] }
-    path "pki/issue/+"          { capabilities = ["update"] }
-    path "pki/sign/+"           { capabilities = ["update"] }
-    path "pki/roles"            { capabilities = ["list"] }
-    path "pki/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
-    path "pki/root/*"           { capabilities = ["create", "read", "update", "delete"] }
-    path "pki/config/*"         { capabilities = ["create", "read", "update", "delete"] }
+    # can regenerate the tenant CA (which invalidates every cert ever
+    # issued from it).
+    path "pki-int/ca/pem"           { capabilities = ["read"] }
+    path "pki-int/ca_chain"         { capabilities = ["read"] }
+    path "pki-int/cert/ca"          { capabilities = ["read"] }
+    path "pki-int/certs"            { capabilities = ["list"] }
+    path "pki-int/cert/+"           { capabilities = ["read"] }
+    path "pki-int/issue/+"          { capabilities = ["update"] }
+    path "pki-int/sign/+"           { capabilities = ["update"] }
+    path "pki-int/roles"            { capabilities = ["list"] }
+    path "pki-int/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
+    path "pki-int/intermediate/generate/+" { capabilities = ["update"] }
+    path "pki-int/intermediate/set-signed" { capabilities = ["update"] }
+    path "pki-int/issuers"          { capabilities = ["list"] }
+    path "pki-int/issuer/+"         { capabilities = ["read", "update", "delete"] }
+    path "pki-int/config/*"         { capabilities = ["create", "read", "update", "delete"] }
 ---
 # Source: openbao-config-mto/templates/07-sso-policies.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1337,13 +1353,13 @@ spec:
     path "transit/keys/+"       { capabilities = ["read"] }
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
-    path "pki/ca/pem"           { capabilities = ["read"] }
-    path "pki/ca_chain"         { capabilities = ["read"] }
-    path "pki/cert/ca"          { capabilities = ["read"] }
-    path "pki/certs"            { capabilities = ["list"] }
-    path "pki/cert/+"           { capabilities = ["read"] }
+    # can regenerate the tenant CA (which invalidates every cert ever
+    # issued from it).
+    path "pki-int/ca/pem"           { capabilities = ["read"] }
+    path "pki-int/ca_chain"         { capabilities = ["read"] }
+    path "pki-int/cert/ca"          { capabilities = ["read"] }
+    path "pki-int/certs"            { capabilities = ["list"] }
+    path "pki-int/cert/+"           { capabilities = ["read"] }
 ---
 # Source: openbao-config-mto/templates/04-sa-own-tenant.yaml
 apiVersion: security.mto.stakater.com/v1alpha1

@@ -248,6 +248,111 @@ Usage: {{ include "openbao.pkiDefaultRoleName" (dict "tpl" .Values.pki.defaultRo
 {{- end -}}
 
 {{/*
+Fails unless every pki.roles[] entry renders a DISTINCT role name.
+
+The name is the bao role name, the `metadata.name` of the
+OpenBaoPKISecretEngineRole (as pki-<name>) and the cert-manager Issuer name, so
+two entries that render the same name emit two same-named objects with different
+specs from one render. Helm does not reject that, and server-side apply takes
+the last one: the other entry's ttl, flags and domains vanish with no error on
+any object, no failed TemplateInstance and no Event — the render looks clean and
+one of the two roles the values asked for does not exist.
+
+Called from every template that iterates pki.roles (03, 04, 10) rather than from
+03 alone, because each component renders in its own TemplateInstance and the
+certManager slice iterates the roles without 03.
+
+Usage (root context): {{ include "openbao.pkiAssertRoleNamesUnique" . }}
+*/}}
+{{- define "openbao.pkiAssertRoleNamesUnique" -}}
+{{- $tenant := .Values.tenant -}}
+{{- /* Named here rather than left to the CA-constraint guard downstream, which
+       would report the same state as "no template has a literal suffix". The
+       schema rejects both [] and null, so this only fires with the schema
+       skipped. */ -}}
+{{- if not .Values.pki.roles -}}
+{{- fail "pki.enabled=true but pki.roles is empty — the engine and the tenant CA would be created with no role able to issue from them" -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- range $i, $r := .Values.pki.roles -}}
+{{- if not (kindIs "string" $r.nameTemplate) -}}
+{{- fail (printf "pki.roles[%d] has no nameTemplate — every entry needs one, and it becomes the bao role name, the OpenBaoPKISecretEngineRole name and the cert-manager Issuer name" $i) -}}
+{{- end -}}
+{{- $name := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) -}}
+{{- if not $name -}}
+{{- fail (printf "pki.roles[%d].nameTemplate renders empty for tenant %q" $i $tenant) -}}
+{{- end -}}
+{{- if hasKey $seen $name -}}
+{{- fail (printf "pki.roles[%d].nameTemplate and pki.roles[%s].nameTemplate both render the role name %q for tenant %q — each entry becomes an object of that name, so one would silently overwrite the other. Make every nameTemplate render a distinct name" $i (index $seen $name) $name $tenant) -}}
+{{- end -}}
+{{- $_ := set $seen $name (toString $i) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Name constraints (permittedDnsDomains) for the tenant intermediate CA.
+
+Normally the union of every role's allowedDomainsTemplate across the tenant's
+workload namespaces — the same set the roles get, so the CA can issue for
+everything its roles allow and nothing else.
+
+That union is empty in the window before any of the tenant's namespaces carry
+the label the parent selects on, and this field cannot be left empty there. The
+operator treats a present CA as final ("A present CA is final for both root and
+intermediate — regenerating destroys the private key"), so whatever constraints
+the CA is born with are the constraints it keeps: an empty set is not a startup
+state that later renders repair, it is a permanent property of that tenant's CA.
+Empty means no DNS name constraint at all, which inside the platform chain (the
+platform CA's own permittedDnsDomains still applies) means this tenant's CA is
+accepted for any other tenant's name — exactly the isolation cross-tenant trust
+leans on. The role's allowedDomains is safe to leave empty by comparison: bao
+fails it closed and the next render fills it in.
+
+So when the union is empty, fall back to the literal suffix of each
+allowedDomainsTemplate — the part after the last placeholder, e.g.
+"{namespace}.svc.cluster.local" → "svc.cluster.local". A DNS name constraint is
+a suffix match, so that is the narrowest constraint guaranteed to permit
+everything the template can ever render, whatever namespaces show up later. It
+is wider than the per-namespace union, and narrower than the unconstrained CA it
+replaces.
+
+Note what this does NOT fix: because the CA is final, a namespace added after
+the CA exists never widens the constraints, so its certs are issued by the role
+and then rejected by every verifier. Emitting the suffix here means a CA born in
+the empty window is immune to that; a CA born with per-namespace constraints is
+not. See README → "PKI".
+
+Usage: {{ include "openbao.pkiCADomainFloor" (dict "roles" .Values.pki.roles) }}
+Returns a YAML list under key `domains` (fromYaml on the caller side).
+*/}}
+{{- define "openbao.pkiCADomainFloor" -}}
+{{- $out := list -}}
+{{- range $r := .roles -}}
+{{- range $tpl := (default (list) $r.allowedDomainsTemplate) -}}
+{{- /* Drop every label that contains a placeholder, from the left. A label
+       either is fully literal or is unpredictable, so the first fully-literal
+       label after the last placeholder starts the guaranteed suffix. */ -}}
+{{- $keep := list -}}
+{{- range $label := splitList "." $tpl -}}
+{{- if or (contains "{" $label) (contains "}" $label) -}}
+{{- $keep = list -}}
+{{- else -}}
+{{- $keep = append $keep $label -}}
+{{- end -}}
+{{- end -}}
+{{- $suffix := join "." $keep -}}
+{{- if $suffix -}}
+{{- $out = append $out $suffix -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+domains:
+{{- range ($out | uniq | sortAlpha) }}
+  - {{ . | quote }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Renders the bao kubernetes-auth role NAME the cert-manager Issuer uses,
 from pki.certManager.authRoleNameTemplate. Substitutes {tenant} and {ns}.
 */}}

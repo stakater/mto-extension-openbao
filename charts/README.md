@@ -692,6 +692,21 @@ There are two CA setups:
 
 > **Needs:** [cert-manager](https://cert-manager.io/) for certificate issuance through Kubernetes; the platform CA (from the bootstrap chart) for the default shared-trust setup.
 
+### What bounds a certificate, and what doesn't
+
+Two separate limits apply, and they behave differently over time.
+
+**The role** decides what it will issue: `allowedDomainsTemplate` becomes the role's allowed names, one entry per tenant namespace. The role is rewritten on every render, so it tracks namespaces as they come and go.
+
+**The tenant CA** carries *name constraints* — a limit baked into the CA certificate itself, which every verifier enforces on the whole chain. In shared-trust mode the chart sets them from the same domains. Unlike the role, **a CA's constraints are fixed when the CA is created**: OpenBao treats an existing CA as final (regenerating one would destroy its private key), so later renders cannot widen them. Two consequences worth knowing before you turn PKI on:
+
+- A namespace added to the tenant *after* the CA exists is not in the CA's constraints. The role will happily issue a certificate for it and every verifier will then reject the chain. If you add namespaces to a tenant that has been running a while and certificates start failing validation for the new namespace only, this is why — the fix is to re-create the tenant CA (which invalidates certificates already issued from it), so prefer creating the tenant's namespaces before enabling PKI.
+- If no namespace is labelled yet when the CA is created, there are no per-namespace domains to use. The chart then falls back to the literal suffix of `allowedDomainsTemplate` (`{namespace}.svc.cluster.local` → `svc.cluster.local`), so the CA is still constrained to cluster-internal names rather than being unconstrained. That is wider than a per-namespace list — a CA created in that window is not limited to *its own* tenant's names — but it is bounded, and it never goes stale. Give at least one `allowedDomainsTemplate` entry a literal suffix; the chart refuses to render an unbounded CA.
+
+Name constraints cover **DNS names only**. An IP address in a certificate is bounded by neither the CA's constraints nor `allowedDomains`, which is why the shipped role sets `allowIpSans: false` (OpenBao's own default is `true`). Turn it on only for a workload that genuinely presents certificates by IP.
+
+Everything in a `pki.roles[]` entry other than the two template fields is passed straight through to the role and **left out when you don't set it**, meaning OpenBao's default applies. `values.yaml` lists each field with that default; a misspelled key is rejected by the values schema rather than silently ignored.
+
 ### Two ways to get a certificate
 
 **1. Through cert-manager (recommended).** Turn on `parent.certManager.enabled` in the bootstrap chart (or `pki.certManager.enabled` when using the per-tenant chart standalone). The chart creates a cert-manager `Issuer` (named after the tenant's PKI role) in each namespace that opts in, all inside a separate per-tenant render (`openbao-config-mto-<tenant>.certmanager`) — so a cluster without cert-manager fails only that render, never the tenant's core setup. Your app then requests a certificate the normal cert-manager way:
@@ -884,7 +899,7 @@ For each tier in `sso.tiers`, the chart creates a login role bound to an IdP gro
 
 | Tier | What a person can do |
 |---|---|
-| `super-admin` | Everything `admin` can, **plus** destroy/regenerate the tenant CA. Break-glass only. |
+| `super-admin` | Everything `admin` can, **plus** regenerating the tenant CA (which invalidates every certificate ever issued from it). Break-glass only. Deliberately *not* able to sign another CA with the tenant CA — that would create an issuer nobody is tracking. |
 | `admin` | Full KV (including delete), full Transit, issue certificates and manage roles. Cannot destroy the CA. |
 | `editor` | Read/create/update KV; encrypt/decrypt with Transit; issue certificates. |
 | `viewer` | Read KV; read Transit and PKI. No changes. |

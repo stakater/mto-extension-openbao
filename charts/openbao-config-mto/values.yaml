@@ -195,18 +195,42 @@ pki:
   # and a long-TTL server-only role) instead of a single both-flags role. Each
   # role's allowedDomains is the union, across the tenant's workload namespaces,
   # of its allowedDomainsTemplate entries. nameTemplate supports {tenant} and
-  # must render UNIQUE per entry (it becomes the bao role name + the cert-manager
-  # Issuer name). allowedDomainsTemplate supports {tenant} and {namespace}.
+  # must render UNIQUE per entry — it becomes the bao role name, the CR name and
+  # the cert-manager Issuer name, so a collision would have one entry silently
+  # overwrite the other; the chart fails the render instead.
+  # allowedDomainsTemplate supports {tenant} and {namespace}, and at least one
+  # entry needs a literal DNS suffix (as ".svc.cluster.local" is here) — that
+  # suffix is what constrains the tenant CA in the window before the tenant's
+  # namespaces are labelled. See pki.hierarchy and README → "PKI".
   #
   # SAs with bao.stakater.com/pki: "true" are granted issue/sign on EVERY role
   # (the workload picks which to use); cert-manager emits one Issuer per role
   # per workload namespace, named after the role.
+  #
+  # Every field below other than nameTemplate/allowedDomainsTemplate is passed
+  # through to the OpenBaoPKISecretEngineRole as given, and OMITTED when unset —
+  # so an unset field means "bao's default", which is not always the safe one.
+  # The two that are set to false here (allowIpSans, allowAnyName) are bao
+  # defaults being deliberately overridden; see below.
   roles:
     - nameTemplate: "{tenant}-svc"
       allowedDomainsTemplate:
         - "{namespace}.svc.cluster.local"
       allowSubdomains: true
       enforceHostnames: true
+      # bao defaults allow_ip_sans=true, and NOTHING else in this chart bounds
+      # an IP SAN: allowedDomains and enforceHostnames constrain DNS names, and
+      # so does the CA's permittedDnsDomains (name constraints are per name
+      # type). Left at bao's default, any PKI-enabled workload could mint a
+      # cert carrying any IP SAN — a sibling's or another tenant's ClusterIP —
+      # and every verifier would accept it. Set true only if a workload
+      # genuinely presents certs by IP.
+      allowIpSans: false
+      # bao's default is already false. Pinned because turning it on discards
+      # allowedDomains entirely: the role would issue for ANY name, bounded
+      # only by the CA's name constraints, and under cross-tenant trust a peer
+      # that trusts this tenant would accept those certs.
+      allowAnyName: false
       # 7-day cert TTL / 30-day max — one TTL covers HTTPS server and mTLS
       # workload use cases. Apps needing shorter rotation can override per
       # Certificate via cert-manager (`spec.duration`).
@@ -216,12 +240,21 @@ pki:
       # dual-purpose certs. The actual usage is constrained per Certificate.
       serverFlag: true
       clientFlag: true
+      # Other pass-through fields, all omitted unless set (bao's default in
+      # brackets): requireCN [true] — false lets a Certificate carry only
+      # dnsNames, see README; noStore [false] — true stops bao storing issued
+      # certs (bounds storage growth, but breaks the viewer/audit-read SSO
+      # tiers, which list pki/certs and read pki/cert/<serial>);
+      # generateLease [false]; codeSigningFlag / emailProtection [false];
+      # keyUsage / extKeyUsage (lists) — bao's key-usage defaults apply when
+      # omitted; allowBareDomains / allowGlobDomains [false].
     # Example of a second, differentiated role (commented out by default):
     # - nameTemplate: "{tenant}-client"
     #   allowedDomainsTemplate:
     #     - "{namespace}.svc.cluster.local"
     #   allowSubdomains: true
     #   enforceHostnames: true
+    #   allowIpSans: false
     #   ttl: "24h"
     #   maxTtl: "168h"
     #   serverFlag: false      # client-only

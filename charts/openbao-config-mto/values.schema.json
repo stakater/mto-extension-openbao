@@ -36,6 +36,87 @@
         "enabled": {
           "$ref": "#/definitions/boolish"
         },
+        "roles": {
+          "description": "PKI role catalog. Constrained field-by-field because every field is a pass-through to OpenBaoPKISecretEngineRole that the chart OMITS when absent, so a misspelling (allowedDomainTemplate, maxTTL, allowSubDomains) is not a no-op: it silently leaves bao's default in place, which for allow_ip_sans and require_cn is the permissive one. additionalProperties is false for exactly that reason — an unknown key here is always a typo or a field the chart does not plumb, and both need to fail rather than render.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "nameTemplate",
+              "allowedDomainsTemplate"
+            ],
+            "properties": {
+              "nameTemplate": {
+                "description": "Bao role name; {tenant} is substituted. Must render unique across entries — it is also the CR name and the cert-manager Issuer name.",
+                "type": "string",
+                "minLength": 1
+              },
+              "allowedDomainsTemplate": {
+                "description": "Allowed cert names; {tenant} and {namespace} are substituted, once per tenant workload namespace. At least one entry needs a literal DNS suffix — that suffix constrains the tenant CA before any namespace is labelled.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "allowSubdomains": { "$ref": "#/definitions/boolish" },
+              "allowBareDomains": { "$ref": "#/definitions/boolish" },
+              "allowGlobDomains": { "$ref": "#/definitions/boolish" },
+              "allowIpSans": {
+                "description": "Nothing else in the chart bounds an IP SAN — allowedDomains and the CA's permittedDnsDomains are both DNS-name constraints. bao's default is true; leave this false unless a workload presents certs by IP.",
+                "$ref": "#/definitions/boolish"
+              },
+              "allowAnyName": {
+                "description": "true discards allowedDomains: the role issues for any name, bounded only by the CA's name constraints.",
+                "$ref": "#/definitions/boolish"
+              },
+              "enforceHostnames": { "$ref": "#/definitions/boolish" },
+              "requireCN": { "$ref": "#/definitions/boolish" },
+              "noStore": {
+                "description": "true stops bao storing issued certs. Bounds storage growth, but the viewer and audit-read SSO tiers list pki/certs and read pki/cert/<serial>, which then return nothing.",
+                "$ref": "#/definitions/boolish"
+              },
+              "generateLease": { "$ref": "#/definitions/boolish" },
+              "serverFlag": { "$ref": "#/definitions/boolish" },
+              "clientFlag": { "$ref": "#/definitions/boolish" },
+              "codeSigningFlag": { "$ref": "#/definitions/boolish" },
+              "emailProtection": { "$ref": "#/definitions/boolish" },
+              "keyUsage": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "extKeyUsage": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "ttl": {
+                "description": "Bao duration string, e.g. \"168h\".",
+                "type": "string",
+                "pattern": "^([0-9]+(ns|us|ms|s|m|h|d))+$"
+              },
+              "maxTtl": {
+                "description": "Bao duration string. Note the spelling: maxTtl, not maxTTL.",
+                "type": "string",
+                "pattern": "^([0-9]+(ns|us|ms|s|m|h|d))+$"
+              },
+              "keyType": {
+                "type": "string",
+                "enum": [
+                  "rsa",
+                  "ec",
+                  "ed25519",
+                  "any"
+                ]
+              },
+              "keyBits": {
+                "type": "integer"
+              }
+            }
+          }
+        },
         "hierarchy": {
           "type": "object",
           "properties": {

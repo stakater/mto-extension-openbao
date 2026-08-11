@@ -13,6 +13,13 @@ Emits:
     its allowedDomains is the union, across every tenant workload namespace, of
     that role's allowedDomainsTemplate entries.
 
+NAME CONSTRAINTS: in hierarchy mode the CA carries permittedDnsDomains, and the
+operator treats a present CA as final — so unlike the role, whose allowedDomains
+is rewritten every render, the CA's constraints are whatever it was born with.
+They can never be empty (see openbao.pkiCADomainFloor), and a namespace added
+after the CA exists is NOT covered by them: the role issues for it and verifiers
+reject the chain. README → "PKI" documents that for users.
+
 DISASTER-RECOVERY NOTE: type=root keeps the CA private key entirely inside bao
 with no chart-level backup. For a production hierarchy set platformPki in the
 bootstrap chart (ideally mode=intermediate, offline-rooted) and
@@ -29,6 +36,7 @@ the SA — see 04-sa-own-tenant.yaml. Apps using cert-manager Issuer injection
 to bao directly via its own dedicated SA.
 */}}
 {{- if .Values.pki.enabled }}
+{{- include "openbao.pkiAssertRoleNamesUnique" . }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $hier := .Values.pki.hierarchy }}
 {{- $mount := include "openbao.pkiMount" . }}
@@ -63,6 +71,19 @@ to bao directly via its own dedicated SA.
 {{- end }}
 {{- end }}
 {{- $allDomains = $allDomains | uniq }}
+{{- /* The CA's name constraints must never render empty in hierarchy mode: the
+       operator treats a present CA as final, so an empty set is not a startup
+       state a later render repairs but a permanent property of this tenant's CA,
+       and empty means no DNS constraint at all. Fall back to the stable literal
+       suffix of the templates when the per-namespace union is empty. See
+       openbao.pkiCADomainFloor. */ -}}
+{{- $caDomains := $allDomains }}
+{{- if and $hier.enabled (not $caDomains) }}
+{{- $caDomains = (include "openbao.pkiCADomainFloor" (dict "roles" .Values.pki.roles) | fromYaml).domains }}
+{{- if not $caDomains }}
+{{- fail "pki.hierarchy.enabled=true but no pki.roles[].allowedDomainsTemplate entry has a literal suffix to constrain the tenant CA with (every DNS label carries a {placeholder}). The CA's name constraints are frozen at creation, and an unconstrained tenant CA is accepted for any other tenant's name — give at least one template a literal suffix, e.g. \"{namespace}.svc.cluster.local\"" }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoSecretEngine
@@ -100,12 +121,10 @@ spec:
   internalSign:
     name: {{ $hier.platformMount }}
     openbaoNamespace: {{ $hier.platformNamespace }}
-  {{- with $allDomains }}
   permittedDnsDomains:
-    {{- range . }}
+    {{- range $caDomains }}
     - {{ . | quote }}
     {{- end }}
-  {{- end }}
   {{- else }}
   type: root
   {{- end }}
@@ -171,11 +190,50 @@ spec:
   {{- if $r.enforceHostnames }}
   enforceHostnames: {{ $r.enforceHostnames }}
   {{- end }}
+  {{- /* hasKey, not truthiness, for every field whose bao default is true:
+         `{{- if $r.allowIpSans }}` could only ever turn it ON, so setting
+         false in values would silently keep bao's permissive default.
+         allowIpSans matters most — allowedDomains and enforceHostnames
+         constrain DNS names only, and the CA's permittedDnsDomains is a DNS
+         constraint too, so an IP SAN is bounded by nothing in this chart. */ -}}
+  {{- if hasKey $r "allowIpSans" }}
+  allowIpSans: {{ $r.allowIpSans }}
+  {{- end }}
+  {{- if hasKey $r "allowAnyName" }}
+  allowAnyName: {{ $r.allowAnyName }}
+  {{- end }}
+  {{- if hasKey $r "requireCN" }}
+  requireCN: {{ $r.requireCN }}
+  {{- end }}
+  {{- if hasKey $r "noStore" }}
+  noStore: {{ $r.noStore }}
+  {{- end }}
+  {{- if hasKey $r "generateLease" }}
+  generateLease: {{ $r.generateLease }}
+  {{- end }}
   {{- if hasKey $r "serverFlag" }}
   serverFlag: {{ $r.serverFlag }}
   {{- end }}
   {{- if hasKey $r "clientFlag" }}
   clientFlag: {{ $r.clientFlag }}
+  {{- end }}
+  {{- if hasKey $r "codeSigningFlag" }}
+  codeSigningFlag: {{ $r.codeSigningFlag }}
+  {{- end }}
+  {{- if hasKey $r "emailProtection" }}
+  emailProtection: {{ $r.emailProtection }}
+  {{- end }}
+  {{- with $r.keyUsage }}
+  keyUsage:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- with $r.extKeyUsage }}
+  extKeyUsage:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
   {{- end }}
   {{- if $r.ttl }}
   ttl: {{ $r.ttl | quote }}

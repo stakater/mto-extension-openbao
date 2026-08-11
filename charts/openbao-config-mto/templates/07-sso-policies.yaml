@@ -10,9 +10,11 @@ Section 7 — per (tenant, tier) SSO role + policy. For each tier in
 
 Tier ladder (most → least privilege):
 
-  super-admin  every admin grant PLUS CA destroy/regen on pki/root + pki/config.
-               Reserved for platform-team-level break-glass; tenant CA
-               regen invalidates every cert ever issued.
+  super-admin  every admin grant PLUS regenerating the tenant CA (the
+               intermediate/* or root/* paths for the mount's own CA, plus
+               config/*). Reserved for platform-team-level break-glass; tenant
+               CA regen invalidates every cert ever issued. Deliberately NOT
+               root/sign-intermediate — see the comment on that block.
   admin        KV CRUD + delete/destroy; transit full ops; PKI issue +
                role CRUD. Does NOT include CA destroy.
   editor       KV CRU + transit encrypt/decrypt/rewrap; PKI issue.
@@ -34,6 +36,13 @@ Tier ladder (most → least privilege):
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $labels := include "openbao.labels" . }}
+{{- /* The EFFECTIVE tenant PKI mount, not pki.mountPath. In hierarchy mode —
+       the default — the tenant CA is an intermediate at pki.hierarchy.mountPath
+       and pki.mountPath holds nothing, so grants written against the raw value
+       name a mount that does not exist: every human tier silently loses all PKI
+       access, including super-admin's break-glass. Same helper as 03, 04 and 10.
+       hack/chart-render-tests.sh (ssopkimount) fails if this drifts back. */ -}}
+{{- $pkiMount := include "openbao.pkiMount" . }}
 {{- range $tier := $.Values.sso.tiers }}
 {{- $caps := index $.Values.tierCaps $tier }}
 {{- /* super-admin reuses admin tier caps for KV; the extra PKI scope is
@@ -91,26 +100,49 @@ spec:
     {{- if $.Values.pki.enabled }}
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles; only super-admin
-    # can touch pki/root and pki/config (these regenerate the tenant CA
-    # and invalidate every previously issued cert).
-    path "{{ $.Values.pki.mountPath }}/ca/pem"           { capabilities = ["read"] }
-    path "{{ $.Values.pki.mountPath }}/ca_chain"         { capabilities = ["read"] }
-    path "{{ $.Values.pki.mountPath }}/cert/ca"          { capabilities = ["read"] }
-    path "{{ $.Values.pki.mountPath }}/certs"            { capabilities = ["list"] }
-    path "{{ $.Values.pki.mountPath }}/cert/+"           { capabilities = ["read"] }
+    # can regenerate the tenant CA (which invalidates every cert ever
+    # issued from it).
+    path "{{ $pkiMount }}/ca/pem"           { capabilities = ["read"] }
+    path "{{ $pkiMount }}/ca_chain"         { capabilities = ["read"] }
+    path "{{ $pkiMount }}/cert/ca"          { capabilities = ["read"] }
+    path "{{ $pkiMount }}/certs"            { capabilities = ["list"] }
+    path "{{ $pkiMount }}/cert/+"           { capabilities = ["read"] }
     {{- if or (eq $tier "editor") (eq $tier "admin") (eq $tier "super-admin") }}
-    path "{{ $.Values.pki.mountPath }}/issue/+"          { capabilities = ["update"] }
-    path "{{ $.Values.pki.mountPath }}/sign/+"           { capabilities = ["update"] }
+    path "{{ $pkiMount }}/issue/+"          { capabilities = ["update"] }
+    path "{{ $pkiMount }}/sign/+"           { capabilities = ["update"] }
     {{- end }}
     {{- if or (eq $tier "admin") (eq $tier "super-admin") }}
-    path "{{ $.Values.pki.mountPath }}/roles"            { capabilities = ["list"] }
-    path "{{ $.Values.pki.mountPath }}/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
+    path "{{ $pkiMount }}/roles"            { capabilities = ["list"] }
+    path "{{ $pkiMount }}/roles/+"          { capabilities = ["create", "read", "update", "list", "delete"] }
     {{- end }}
-    {{- /* root + config restricted to super-admin only. Tenant admins
-           cannot blow away the CA. */ -}}
+    {{- /* CA lifecycle, super-admin only — tenant admins cannot blow away the
+           CA. Enumerated per mode rather than granted as `root/*`, for two
+           reasons.
+
+           `root/*` covers root/sign-intermediate and root/sign-self-issued,
+           which are not CA regeneration: they sign a CSR the caller supplies,
+           so a tenant super-admin could mint a sub-CA under the tenant CA and
+           issue for any name that sub-CA allows, bounded only by the tenant
+           CA's own name constraints. Break-glass needs to replace this mount's
+           CA, not to become an issuer for other certificates.
+
+           And `root/*` is the wrong path family in hierarchy mode: this mount
+           holds an INTERMEDIATE, whose regeneration is
+           intermediate/generate + intermediate/set-signed, so the grant that
+           was meant as break-glass never worked in the default mode. */ -}}
     {{- if eq $tier "super-admin" }}
-    path "{{ $.Values.pki.mountPath }}/root/*"           { capabilities = ["create", "read", "update", "delete"] }
-    path "{{ $.Values.pki.mountPath }}/config/*"         { capabilities = ["create", "read", "update", "delete"] }
+    {{- if $.Values.pki.hierarchy.enabled }}
+    path "{{ $pkiMount }}/intermediate/generate/+" { capabilities = ["update"] }
+    path "{{ $pkiMount }}/intermediate/set-signed" { capabilities = ["update"] }
+    path "{{ $pkiMount }}/issuers"          { capabilities = ["list"] }
+    path "{{ $pkiMount }}/issuer/+"         { capabilities = ["read", "update", "delete"] }
+    {{- else }}
+    path "{{ $pkiMount }}/root/generate/+"  { capabilities = ["update"] }
+    path "{{ $pkiMount }}/root/rotate/+"    { capabilities = ["update"] }
+    path "{{ $pkiMount }}/root/replace"     { capabilities = ["update"] }
+    path "{{ $pkiMount }}/root"             { capabilities = ["read", "delete"] }
+    {{- end }}
+    path "{{ $pkiMount }}/config/*"         { capabilities = ["create", "read", "update", "delete"] }
     {{- end }}
     {{- end }}
 ---

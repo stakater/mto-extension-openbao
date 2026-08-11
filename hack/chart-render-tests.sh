@@ -88,6 +88,19 @@
 #                    nullinputs (30) checks only that the render exits 0.
 #  32. ssoredirect — sso.allowedRedirectUris emptied fails at render with the
 #                    value named, rather than rendering a null bao rejects.
+#  33. ssopkimount — every PKI path in every rendered policy names the
+#                    EFFECTIVE tenant mount. §7 read pki.mountPath directly
+#                    while the engine, CA and roles were at
+#                    pki.hierarchy.mountPath, so every human SSO tier was
+#                    granted paths on a mount that does not exist.
+#  34. pkirolenames — two pki.roles entries rendering the same name fail the
+#                    render (one would otherwise silently overwrite the other),
+#                    and the schema rejects misspelled role keys — dropped
+#                    silently, they leave bao's own, permissive, default.
+#  35. pkicadomains — the tenant CA's permittedDnsDomains is never empty in
+#                    hierarchy mode. An omitted field is not a null field, so
+#                    nullfields (31) passes on an unconstrained CA, and the
+#                    operator treats a present CA as final: empty is permanent.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -1123,6 +1136,198 @@ ssor_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-f
 grep -qE '^\s+allowedRedirectUris:' <<<"$ssor_out" \
   || { ssor_ok=1; ssor_detail="$ssor_detail [a populated sso.allowedRedirectUris rendered no roles]"; }
 [ "$ssor_ok" -eq 0 ] && check ssoredirect 0 || check ssoredirect 1 "$ssor_detail"
+
+# 33. ssopkimount — every PKI path in every rendered policy names the EFFECTIVE
+# tenant mount (openbao.pkiMount), not pki.mountPath. §7 read the raw value
+# while §3/§4/§10 went through the helper, so with the default
+# pki.hierarchy.enabled=true the human SSO tiers were granted paths under `pki`
+# while the engine, the CA and the roles all lived at `pki-int`: every SSO tier
+# silently had no PKI access at all, super-admin's break-glass included. It
+# rendered, it validated, and the golden carried it.
+#
+# Checked by prefix across the whole render, not by asserting §7's text, so the
+# same drift in any other template fails here too.
+spm_ok=0; spm_detail=""
+# Any policy line that is unmistakably a PKI path, whatever mount it claims.
+# No `sign/`: transit has a sign endpoint too, so that tail cannot tell the two
+# mounts apart. The stale-mount assertion below covers the sign grants instead.
+PKI_PATH_TAILS='ca/pem|ca_chain|cert/ca|certs|cert/[+]|issue/|roles|root|root/|intermediate/|issuers|issuer/'
+pki_path_prefixes() { # <manifest> -> one mount prefix per PKI path line
+  # The mount is everything between `path "` and the first PKI-specific tail,
+  # so this reads the prefix off the render itself rather than being told it.
+  # `#` as the s delimiter, not `|`: the tails are an alternation, and a `|`
+  # delimiter ends the pattern at the first branch ("parentheses not balanced").
+  grep -oE "path \"[^\"]+/($PKI_PATH_TAILS)" "$1" \
+    | sed -E "s#^path \"##; s#/($PKI_PATH_TAILS)\$##" \
+    | sort -u
+}
+for posture in "true:pki-int:pki" "false:pki:pki-int"; do
+  spm_hier="${posture%%:*}"; spm_rest="${posture#*:}"
+  spm_want="${spm_rest%%:*}"; spm_stale="${spm_rest#*:}"
+  "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+    --set component=core --set "pki.hierarchy.enabled=$spm_hier" > "$WORK/spm.out" 2>&1 \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier render failed: $(head -1 "$WORK/spm.out" | cut -c1-90)]"; continue; }
+  # a. the inactive mount is granted nowhere. This is the actual regression: the
+  # grants named a mount that holds nothing.
+  if grep -q "path \"$spm_stale/" "$WORK/spm.out"; then
+    spm_ok=1
+    spm_detail="$spm_detail [hierarchy=$spm_hier grants paths on the inactive mount $spm_stale: $(grep -oE "path \"$spm_stale/[^\"]*" "$WORK/spm.out" | sort -u | head -3 | tr '\n' ' ')]"
+  fi
+  # b. and every PKI path that can be attributed to a mount uses the live one.
+  spm_got="$(pki_path_prefixes "$WORK/spm.out")" \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier: prefix scan failed]"; continue; }
+  # Non-empty first: "no PKI paths at all" must not read as "no wrong prefixes".
+  [ -n "$spm_got" ] \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier rendered no PKI policy paths]"; continue; }
+  [ "$spm_got" = "$spm_want" ] \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier: PKI paths under $(printf '%s' "$spm_got" | tr '\n' ',' | sed 's/,$//'), want only $spm_want]"; }
+done
+# The mount the SSO tiers actually got, pinned by name: the prefix check above
+# would still pass if §7 dropped its PKI block entirely.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core > "$WORK/spm-sso.out" 2>&1 \
+  && grep -q 'path "pki-int/ca/pem"           { capabilities = \["read"\] }' "$WORK/spm-sso.out" \
+  || { spm_ok=1; spm_detail="$spm_detail [no SSO-tier PKI grant at the effective mount]"; }
+[ "$spm_ok" -eq 0 ] && check ssopkimount 0 || check ssopkimount 1 "$spm_detail"
+
+# 34. pkirolenames — two pki.roles entries that render the same name fail the
+# render. The name is the bao role, the CR name and the cert-manager Issuer
+# name, so a collision emitted two same-named objects with different specs from
+# one render: helm accepts it, server-side apply keeps the last, and the other
+# entry's TTL and flags disappear with no error, no failed TI and no Event.
+#
+# Guarded in two independent places, each checked with the other removed:
+# the template fail() (schema stripped) and the schema's own key constraints.
+prn_ok=0; prn_detail=""
+cat > "$WORK/roles-dup.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      ttl: "1h"
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      ttl: "999h"
+YAML
+cp -R "$CHART" "$WORK/chart-noschema-roles"
+rm -f "$WORK/chart-noschema-roles/values.schema.json"
+# a. the template guard, with the schema gone. Rendered per component because
+# each slice is its own TemplateInstance: certManager iterates pki.roles
+# without §3, so a guard living only in §3 would let the collision through
+# there. core covers §3/§4, certManager covers §10.
+for prn_comp in core certManager; do
+  if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+    -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-dup.yaml" \
+    --set component=$prn_comp > "$WORK/prn.out" 2>&1; then
+    prn_ok=1; prn_detail="$prn_detail [component=$prn_comp rendered a duplicate role name instead of failing]"
+    continue
+  fi
+  grep -q 'both render the role name' "$WORK/prn.out" \
+    || { prn_ok=1; prn_detail="$prn_detail [component=$prn_comp failed without naming the collision: $(head -1 "$WORK/prn.out" | cut -c1-90)]"; }
+done
+# b. a missing nameTemplate names the entry instead of dying in a helper.
+cat > "$WORK/roles-noname.yaml" <<'YAML'
+pki:
+  roles:
+    - allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+YAML
+if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-noname.yaml" \
+  --set component=core > "$WORK/prn-nn.out" 2>&1; then
+  prn_ok=1; prn_detail="$prn_detail [a role with no nameTemplate rendered]"
+else
+  grep -q 'has no nameTemplate' "$WORK/prn-nn.out" \
+    || { prn_ok=1; prn_detail="$prn_detail [missing nameTemplate failed without naming the field: $(head -1 "$WORK/prn-nn.out" | cut -c1-90)]"; }
+fi
+# c. the schema alone, on the typos the template cannot see: an unknown key is
+# omitted from the CR, so bao keeps its own default — permissive for
+# allow_ip_sans and require_cn — and the render stays clean.
+cat > "$WORK/roles-typo.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      allowedDomainTemplate: ["typo"]
+      maxTTL: "720h"
+      allowIpSANs: true
+YAML
+if "$HELM" template "$RELEASE" "$CHART" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-typo.yaml" \
+  --set component=core > "$WORK/prn-typo.out" 2>&1; then
+  prn_ok=1; prn_detail="$prn_detail [schema accepted misspelled role keys]"
+else
+  for prn_key in allowedDomainTemplate maxTTL allowIpSANs; do
+    grep -q "$prn_key" "$WORK/prn-typo.out" \
+      || { prn_ok=1; prn_detail="$prn_detail [schema rejection did not name $prn_key]"; }
+  done
+fi
+# d. counterweight: two DISTINCT names still render two roles. Without this the
+# guard could reject every multi-role catalog and still pass above.
+cat > "$WORK/roles-ok.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+    - nameTemplate: "{tenant}-client"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+YAML
+prn_n="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  -f "$WORK/roles-ok.yaml" --set component=core 2>/dev/null \
+  | grep -c '^kind: OpenBaoPKISecretEngineRole' || true)"
+[ "$prn_n" = 2 ] \
+  || { prn_ok=1; prn_detail="$prn_detail [two distinct role names rendered $prn_n roles, want 2]"; }
+[ "$prn_ok" -eq 0 ] && check pkirolenames 0 || check pkirolenames 1 "$prn_detail"
+
+# 35. pkicadomains — the tenant CA's permittedDnsDomains is never empty in
+# hierarchy mode.
+#
+# Not covered by nullfields (31): an OMITTED field is not a null field, so the
+# render was clean and admission was happy while the CA went out with no name
+# constraints at all. The operator treats a present CA as final ("A present CA
+# is final for both root and intermediate"), so that is permanent for that
+# tenant — the next render cannot repair it, and an unconstrained tenant CA is
+# accepted for any other tenant's name inside the platform chain. The role's
+# allowedDomains is the opposite case and is deliberately left omittable: bao
+# fails an empty role closed.
+pcd_ok=0; pcd_detail=""
+# a. the zero-labelled-namespace window: constrained by the template suffix.
+pcd_dom() { # <manifest> -> permittedDnsDomains entries of the tenant CA
+  "$YQ" e -N 'select(.kind == "OpenBaoPKISecretEngineConfig" and .metadata.name == "team-a-pki-root")
+              | .spec.permittedDnsDomains // [] | .[]' "$1"
+}
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
+  --set component=core > "$WORK/pcd-empty.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads render failed: $(head -1 "$WORK/pcd-empty.out" | cut -c1-90)]"; }
+pcd_got="$(pcd_dom "$WORK/pcd-empty.out")" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [yq failed on the no-workloads render]"; }
+[ "$pcd_got" = "svc.cluster.local" ] \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads CA constraints are \"$(printf '%s' "$pcd_got" | tr '\n' ',')\", want the template suffix svc.cluster.local]"; }
+# b. with namespaces, the per-namespace union — not the wider suffix fallback.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core > "$WORK/pcd-full.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [values-full render failed]"; }
+pcd_full="$(pcd_dom "$WORK/pcd-full.out")" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [yq failed on the values-full render]"; }
+[ -n "$pcd_full" ] \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [populated tenant rendered no CA constraints]"; }
+grep -qx 'svc.cluster.local' <<<"$pcd_full" \
+  && { pcd_ok=1; pcd_detail="$pcd_detail [populated tenant fell back to the suffix floor instead of its namespaces]"; }
+# c. a catalog with no literal suffix anywhere cannot be constrained, so it
+# fails at render rather than emitting an unconstrained CA.
+cat > "$WORK/roles-noliteral.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}"]
+YAML
+if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
+  -f "$WORK/roles-noliteral.yaml" --set component=core > "$WORK/pcd-nl.out" 2>&1; then
+  pcd_ok=1; pcd_detail="$pcd_detail [a placeholder-only allowedDomainsTemplate rendered an unconstrained CA]"
+else
+  grep -q 'literal suffix' "$WORK/pcd-nl.out" \
+    || { pcd_ok=1; pcd_detail="$pcd_detail [placeholder-only template failed without explaining why: $(head -1 "$WORK/pcd-nl.out" | cut -c1-90)]"; }
+fi
+[ "$pcd_ok" -eq 0 ] && check pkicadomains 0 || check pkicadomains 1 "$pcd_detail"
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust

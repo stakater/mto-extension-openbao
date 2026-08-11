@@ -77,6 +77,7 @@ Access is opt-in per engine, and a tier says how much:
 {{- end }}
 {{- end }}
 {{- end }}
+{{- if .Values.pki.enabled }}{{ include "openbao.pkiAssertRoleNamesUnique" . }}{{ end }}
 {{- /* Index accumulators: healthy entries keyed by resolved app, error entries
        by ServiceAccount name (the resolved app may be the invalid part). */ -}}
 {{- $idxHealthy := dict }}

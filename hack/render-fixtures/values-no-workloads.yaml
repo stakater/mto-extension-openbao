@@ -15,10 +15,17 @@
 #
 # pki.hierarchy is pinned on rather than inherited. It is already the chart
 # default, and values-full.yaml covers the populated branch (the golden carries
-# permittedDnsDomains with two entries), but that field is the second empty-list
-# site in 03-pki-scaffolding.yaml and it renders in no other branch. Inheriting
-# the default would mean a later flip to hierarchy.enabled=false silently drops
-# this fixture's coverage of it while still passing.
+# permittedDnsDomains with two entries), but the CA's permittedDnsDomains renders
+# in no other branch. Inheriting the default would mean a later flip to
+# hierarchy.enabled=false silently drops this fixture's coverage of it while
+# still passing.
+#
+# That field is the one empty-list site here that must NOT be omitted when empty.
+# The role's allowedDomains fails closed in bao and is repaired by the next
+# render; the CA's constraints are frozen at creation, so an omitted set is a
+# permanently unconstrained tenant CA. It falls back to the templates' literal
+# suffix instead — pinned by the pkicadomains check, since crd-validate and
+# nullfields both pass on a CA with the field missing entirely.
 tenant: team-a
 knownTenants: "team-a,team-b"
 
