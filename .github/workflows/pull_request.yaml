@@ -34,5 +34,5 @@ jobs:
         # push.yaml pushes with — deliberate, rather than a second credential to
         # manage. A fork PR gets no secrets and would fail here.
         env:
-          GHCR_USERNAME: stakater-user
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
