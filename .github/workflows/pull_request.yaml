@@ -6,8 +6,7 @@ on:
       - main
       - release
     # 'hack/' is deliberately not ignored — it holds the chart render tests,
-    # their golden fixtures, the vendored operator CRDs and the two Go helpers
-    # the tests run.
+    # their golden fixtures and the two Go helpers the tests run.
     #
     # '*.md', not '**.md': anndrift and vardrift read charts/README.md, so a
     # README-only PR must still run them. '*' does not cross a '/'.
@@ -29,23 +28,11 @@ jobs:
           go-version: "1.26"
       - name: Lint, version pin, render tests, CRD schema check
         run: make all
-
-  # Only catches drift that coincides with a PR — an operator-side rename
-  # changes no file here. crd-staleness.yaml is the scheduled run that can.
-  crd-staleness:
-    name: CRD Staleness
-    runs-on: ubuntu-latest
-    # Advisory: the vendored CRDs are another repo's generated output, so they
-    # go stale with no file in this repo changing. A red mark here means
-    # `make crds-vendor`, not a broken PR.
-    #
-    # Branch comes from hack/crds/SOURCE. The token must be able to read the
-    # private operator repo, or this reports "no read access" — never a false
-    # clean.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compare hack/crds against the operator repo
-        run: make crd-staleness
+        # crd-validate pulls the operator CRDs from its published (private)
+        # chart, so this needs a package-read credential; without it the pull
+        # fails the job rather than skipping the schema check. Same token
+        # push.yaml pushes with — deliberate, rather than a second credential to
+        # manage. A fork PR gets no secrets and would fail here.
         env:
-          GH_TOKEN: ${{ secrets.STAKATER_AB_REPOS }}
+          GHCR_USERNAME: stakater-user
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

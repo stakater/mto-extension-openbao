@@ -20,12 +20,14 @@
 # hierarchy.enabled=false silently drops this fixture's coverage of it while
 # still passing.
 #
-# That field is the one empty-list site here that must NOT be omitted when empty.
-# The role's allowedDomains fails closed in bao and is repaired by the next
-# render; the CA's constraints are frozen at creation, so an omitted set is a
-# permanently unconstrained tenant CA. It falls back to the templates' literal
-# suffix instead — pinned by the pkicadomains check, since crd-validate and
-# nullfields both pass on a CA with the field missing entirely.
+# The CA's constraints are frozen at creation, so an omitted set would be a
+# permanently unconstrained tenant CA — and in THIS window there is no namespace
+# to derive one from. So the chart emits no OpenBaoPKISecretEngineConfig at all
+# here; the engine mount and the roles still render, and the CA follows on the
+# render after a namespace is labelled. That absence is what the pkicadomains
+# check asserts, since crd-validate and nullfields both pass on a CA with the
+# field missing entirely. The role's allowedDomains is the opposite case and is
+# deliberately omittable: bao fails it closed and the next render repairs it.
 tenant: team-a
 knownTenants: "team-a,team-b"
 

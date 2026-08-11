@@ -45,7 +45,7 @@ spec:
     - name: ssoEnabled
       value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" . | quote }}
     - name: ssoIssuerUrl
-      value: {{ .Values.parent.sso.issuerUrl | quote }}
+      value: {{ (include "openbao-config-mto-bootstrap.parentSso" . | fromYaml).issuerUrl | default "" | quote }}
     - name: eso
       value: {{ include "openbao-config-mto-bootstrap.esoMode" . | quote }}
     - name: externalSecretRefreshInterval

@@ -4,8 +4,9 @@ Section 3 — per-tenant PKI secret engine (doc-aligned single-role model).
 
 Emits:
   - OpenBaoSecretEngine of kind=pki at the effective tenant mount.
-  - OpenBaoPKISecretEngineConfig for the tenant CA. By default a self-signed
-    type=root; in hierarchy mode (pki.hierarchy.enabled) a type=intermediate
+  - OpenBaoPKISecretEngineConfig for the tenant CA, ONCE THE TENANT HAS AT LEAST
+    ONE WORKLOAD NAMESPACE (see $emitCA). By default a self-signed type=root; in
+    hierarchy mode (pki.hierarchy.enabled) a type=intermediate
     cross-namespace-signed by the cluster platform CA (see the bootstrap
     chart's platformPki).
   - ONE OpenBaoPKISecretEngineRole per pki.roles[] entry (the role catalog).
@@ -13,11 +14,11 @@ Emits:
     its allowedDomains is the union, across every tenant workload namespace, of
     that role's allowedDomainsTemplate entries.
 
-NAME CONSTRAINTS: in hierarchy mode the CA carries permittedDnsDomains, and the
+NAME CONSTRAINTS: the CA carries permittedDnsDomains in BOTH modes, and the
 operator treats a present CA as final — so unlike the role, whose allowedDomains
 is rewritten every render, the CA's constraints are whatever it was born with.
-They can never be empty (see openbao.pkiCADomainFloor), and a namespace added
-after the CA exists is NOT covered by them: the role issues for it and verifiers
+They can never be empty (the render fails instead), and a namespace added after
+the CA exists is NOT covered by them: the role issues for it and verifiers
 reject the chain. README → "PKI" documents that for users.
 
 DISASTER-RECOVERY NOTE: type=root keeps the CA private key entirely inside bao
@@ -38,7 +39,10 @@ to bao directly via its own dedicated SA.
 {{- if .Values.pki.enabled }}
 {{- include "openbao.pkiAssertRoleNamesUnique" . }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
-{{- $hier := .Values.pki.hierarchy }}
+{{- /* Optional block, read through a variable: the chained form
+       `.Values.pki.hierarchy.enabled` nil-pointers the whole render when it is
+       nulled. A nil block means root mode, as openbao.pkiMount also reads it. */ -}}
+{{- $hier := default (dict) .Values.pki.hierarchy }}
 {{- $mount := include "openbao.pkiMount" . }}
 {{- $labels := include "openbao.labels" . }}
 {{- if $hier.enabled }}
@@ -50,16 +54,9 @@ to bao directly via its own dedicated SA.
 {{- end }}
 {{- end }}
 
-{{- /* Unique workload namespaces across the tenant. */ -}}
-{{- $namespaces := dict }}
-{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) }}
-{{- $ns := dig "metadata" "namespace" "" $sa }}
-{{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
-{{- end }}
-{{- range $d := (ternary .Values.deployments (list) (kindIs "slice" .Values.deployments)) }}
-{{- $ns := dig "metadata" "namespace" "" $d }}
-{{- if $ns }}{{ $_ := set $namespaces $ns true }}{{ end }}
-{{- end }}
+{{- /* Same helper §11 gates its Bundle on — the two gates must agree, and two
+       copies of the derivation would drift. */ -}}
+{{- $namespaces := include "openbao.tenantNamespaces" . | fromYaml }}
 {{- /* Union of every role's allowedDomains across all namespaces — the
        intermediate CA's name constraints must cover every role it can issue. */ -}}
 {{- $allDomains := list }}
@@ -71,18 +68,22 @@ to bao directly via its own dedicated SA.
 {{- end }}
 {{- end }}
 {{- $allDomains = $allDomains | uniq }}
-{{- /* The CA's name constraints must never render empty in hierarchy mode: the
-       operator treats a present CA as final, so an empty set is not a startup
-       state a later render repairs but a permanent property of this tenant's CA,
-       and empty means no DNS constraint at all. Fall back to the stable literal
-       suffix of the templates when the per-namespace union is empty. See
-       openbao.pkiCADomainFloor. */ -}}
-{{- $caDomains := $allDomains }}
-{{- if and $hier.enabled (not $caDomains) }}
-{{- $caDomains = (include "openbao.pkiCADomainFloor" (dict "roles" .Values.pki.roles) | fromYaml).domains }}
-{{- if not $caDomains }}
-{{- fail "pki.hierarchy.enabled=true but no pki.roles[].allowedDomainsTemplate entry has a literal suffix to constrain the tenant CA with (every DNS label carries a {placeholder}). The CA's name constraints are frozen at creation, and an unconstrained tenant CA is accepted for any other tenant's name — give at least one template a literal suffix, e.g. \"{namespace}.svc.cluster.local\"" }}
-{{- end }}
+{{- /* The CA waits for the tenant's first workload namespace. Its constraints
+       are frozen at creation (a present CA is final), and with no namespaces the
+       only derivable constraint is the templates' literal suffix —
+       "svc.cluster.local" by default, i.e. every namespace in the cluster. A
+       Tenant is normally created before its namespaces are labelled, so that
+       would be the ordinary path, permanently. Nothing can issue in that window
+       anyway. §11 skips its Bundle in the same window: it sources <tenant>-ca,
+       which only this object publishes.
+
+       This WITHDRAWS as well as defers — a render cannot see an existing CA — so
+       un-labelling a PKI tenant's last namespace is destructive. README → "PKI". */ -}}
+{{- $emitCA := gt (len $namespaces) 0 }}
+{{- /* Both modes. Under pki.crossTenant a peer trusts a self-signed root
+       directly as an anchor, so nothing above it bounds an unconstrained one. */ -}}
+{{- if and $emitCA (not $allDomains) }}
+{{- fail "pki.enabled=true but no pki.roles[].allowedDomainsTemplate entry renders a domain for any of this tenant's namespaces, so the tenant CA would be created with no DNS name constraints. Its constraints are frozen at creation and an unconstrained tenant CA is accepted for any other tenant's name — give at least one role an allowedDomainsTemplate entry, e.g. \"{namespace}.svc.cluster.local\"" }}
 {{- end }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -97,6 +98,7 @@ spec:
   openbaoNamespace: {{ $tenant }}/
   pki: {}
   deletionPolicy: {{ include "openbao.deletionPolicy" $ }}
+{{- if $emitCA }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPKISecretEngineConfig
@@ -116,15 +118,16 @@ spec:
   # Publish this tenant's CA cert to a ConfigMap so trust-manager Bundles can
   # source it for cross-tenant trust (see 11-pki-cross-tenant-trust.yaml).
   publishCABundleConfigMap: {{ $tenant }}-ca
+  # X.509 name constraints, in both modes — see the $emitCA comment above.
+  permittedDnsDomains:
+    {{- range $allDomains }}
+    - {{ . | quote }}
+    {{- end }}
   {{- if $hier.enabled }}
   type: intermediate
   internalSign:
     name: {{ $hier.platformMount }}
     openbaoNamespace: {{ $hier.platformNamespace }}
-  permittedDnsDomains:
-    {{- range $caDomains }}
-    - {{ . | quote }}
-    {{- end }}
   {{- else }}
   type: root
   {{- end }}
@@ -138,6 +141,7 @@ spec:
   {{- if .Values.pki.rootCA.keyBits }}
   keyBits: {{ .Values.pki.rootCA.keyBits }}
   {{- end }}
+{{- end }}
 {{- /* Role catalog — one OpenBaoPKISecretEngineRole per pki.roles entry, each
        with its own allowedDomains (union of its template across namespaces). */ -}}
 {{- range $r := .Values.pki.roles }}
@@ -187,7 +191,9 @@ spec:
   {{- if $r.allowGlobDomains }}
   allowGlobDomains: {{ $r.allowGlobDomains }}
   {{- end }}
-  {{- if $r.enforceHostnames }}
+  {{- /* hasKey: bao's enforce_hostnames default is TRUE, so truthiness could
+         only turn it on. Same rule as the block below. */ -}}
+  {{- if hasKey $r "enforceHostnames" }}
   enforceHostnames: {{ $r.enforceHostnames }}
   {{- end }}
   {{- /* hasKey, not truthiness, for every field whose bao default is true:

@@ -2,5 +2,29 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>stakater-ab/.github:renovate-config"
+  ],
+  "customManagers": [
+    {
+      "description": "Operator-side CRD drift changes no file here, so no push or pull_request run can notice it; this replaces the deleted crd-staleness job. The package is PRIVATE \u2014 without a ghcr.io hostRule the lookup fails silently on renovate's dashboard and no PR appears. Keep depNameTemplate in step with OPERATOR_CHART in the Makefile.",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Makefile$/"
+      ],
+      "matchStrings": [
+        "OPERATOR_CHART_VERSION\\s*\\?=\\s*(?<currentValue>\\S+)"
+      ],
+      "depNameTemplate": "ghcr.io/stakater/charts/openbao-config-operator",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "A bump edits only the Makefile, and helm-release on main fails closed on an already-published chart version \u2014 so without [skip-ci] every merged bump reddens main and pages the release webhook. The PR run already validated against the new CRDs.",
+      "matchDepNames": [
+        "ghcr.io/stakater/charts/openbao-config-operator"
+      ],
+      "commitMessageSuffix": "[skip-ci]"
+    }
   ]
 }

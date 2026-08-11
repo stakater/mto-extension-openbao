@@ -43,6 +43,10 @@ self-grant trust.
 {{- end }}
 {{- end }}
 {{- end }}
+{{- /* No Bundle before the tenant has a namespace: its first source is
+       <tenant>-ca, which §3 does not publish until the CA exists, and the target
+       selector would match nothing anyway. */ -}}
+{{- if $tenantNamespaces }}
 ---
 apiVersion: trust.cert-manager.io/v1alpha1
 kind: Bundle
@@ -91,5 +95,6 @@ metadata:
     {{- $labels | nindent 4 }}
 data:
   allowed-tenants: {{ $allowList | sortAlpha | join "," | quote }}
+{{- end }}
 {{- end }}
 {{- end }}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "openbao-config-mto values",
-  "description": "Deliberately minimal. This chart is normally rendered by template-operator-v2 from the bootstrap chart's valuesTemplate, so any constraint here has to accept everything t-op-v2 can send -- including serviceAccounts/deployments arriving as JSON null when a tenant has no workloads yet. Only the switches consumed as string comparisons are constrained, because a near-miss there (yes / on / True / 1) silently disables a feature. serviceAccounts, deployments, tierCaps, transit.tierCaps, pki.roles and sso.tiers are left entirely unconstrained on purpose. The boolean forms mirror the bootstrap chart's _helpers.tpl: a boolean, or the quoted strings \"true\"/\"false\".",
+  "description": "Deliberately minimal. This chart is normally rendered by template-operator-v2 from the bootstrap chart's valuesTemplate, so any constraint here has to accept everything t-op-v2 can send -- including serviceAccounts/deployments arriving as JSON null when a tenant has no workloads yet. Only the switches consumed as string comparisons are constrained, because a near-miss there (yes / on / True / 1) silently disables a feature. serviceAccounts, deployments, tierCaps, transit.tierCaps and sso.tiers are left entirely unconstrained on purpose. pki.roles is the exception: it is constrained field-by-field, for the reason given on that key. The boolean forms mirror the bootstrap chart's _helpers.tpl: a boolean, or the quoted strings \"true\"/\"false\".",
   "type": "object",
   "definitions": {
     "boolish": {
@@ -37,7 +37,7 @@
           "$ref": "#/definitions/boolish"
         },
         "roles": {
-          "description": "PKI role catalog. Constrained field-by-field because every field is a pass-through to OpenBaoPKISecretEngineRole that the chart OMITS when absent, so a misspelling (allowedDomainTemplate, maxTTL, allowSubDomains) is not a no-op: it silently leaves bao's default in place, which for allow_ip_sans and require_cn is the permissive one. additionalProperties is false for exactly that reason — an unknown key here is always a typo or a field the chart does not plumb, and both need to fail rather than render.",
+          "description": "PKI role catalog. Constrained field-by-field because every field is a pass-through to OpenBaoPKISecretEngineRole that the chart OMITS when absent, so a misspelling (allowedDomainTemplate, maxTTL, allowSubDomains) is not a no-op: it silently leaves bao's default in place, which for allow_ip_sans and require_cn is the permissive one. additionalProperties is false for exactly that reason \u2014 an unknown key here is always a typo or a field the chart does not plumb, and both need to fail rather than render.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -49,12 +49,12 @@
             ],
             "properties": {
               "nameTemplate": {
-                "description": "Bao role name; {tenant} is substituted. Must render unique across entries — it is also the CR name and the cert-manager Issuer name.",
+                "description": "Bao role name; {tenant} is substituted. Must render unique across entries, and must render a valid RFC 1123 subdomain \u2014 it is also the OpenBaoPKISecretEngineRole name (as pki-<name>) and the cert-manager Issuer name, both of which the apiserver rejects otherwise.",
                 "type": "string",
                 "minLength": 1
               },
               "allowedDomainsTemplate": {
-                "description": "Allowed cert names; {tenant} and {namespace} are substituted, once per tenant workload namespace. At least one entry needs a literal DNS suffix — that suffix constrains the tenant CA before any namespace is labelled.",
+                "description": "Allowed cert names; {tenant} and {namespace} are substituted, once per tenant workload namespace. The union across namespaces is also the tenant CA's X.509 name constraints, which are frozen when the CA is created.",
                 "type": "array",
                 "minItems": 1,
                 "items": {
@@ -62,43 +62,67 @@
                   "minLength": 1
                 }
               },
-              "allowSubdomains": { "$ref": "#/definitions/boolish" },
-              "allowBareDomains": { "$ref": "#/definitions/boolish" },
-              "allowGlobDomains": { "$ref": "#/definitions/boolish" },
+              "allowSubdomains": {
+                "$ref": "#/definitions/boolish"
+              },
+              "allowBareDomains": {
+                "$ref": "#/definitions/boolish"
+              },
+              "allowGlobDomains": {
+                "$ref": "#/definitions/boolish"
+              },
               "allowIpSans": {
-                "description": "Nothing else in the chart bounds an IP SAN — allowedDomains and the CA's permittedDnsDomains are both DNS-name constraints. bao's default is true; leave this false unless a workload presents certs by IP.",
+                "description": "Nothing else in the chart bounds an IP SAN \u2014 allowedDomains and the CA's permittedDnsDomains are both DNS-name constraints. bao's default is true; leave this false unless a workload presents certs by IP.",
                 "$ref": "#/definitions/boolish"
               },
               "allowAnyName": {
                 "description": "true discards allowedDomains: the role issues for any name, bounded only by the CA's name constraints.",
                 "$ref": "#/definitions/boolish"
               },
-              "enforceHostnames": { "$ref": "#/definitions/boolish" },
-              "requireCN": { "$ref": "#/definitions/boolish" },
+              "enforceHostnames": {
+                "$ref": "#/definitions/boolish"
+              },
+              "requireCN": {
+                "$ref": "#/definitions/boolish"
+              },
               "noStore": {
                 "description": "true stops bao storing issued certs. Bounds storage growth, but the viewer and audit-read SSO tiers list pki/certs and read pki/cert/<serial>, which then return nothing.",
                 "$ref": "#/definitions/boolish"
               },
-              "generateLease": { "$ref": "#/definitions/boolish" },
-              "serverFlag": { "$ref": "#/definitions/boolish" },
-              "clientFlag": { "$ref": "#/definitions/boolish" },
-              "codeSigningFlag": { "$ref": "#/definitions/boolish" },
-              "emailProtection": { "$ref": "#/definitions/boolish" },
+              "generateLease": {
+                "$ref": "#/definitions/boolish"
+              },
+              "serverFlag": {
+                "$ref": "#/definitions/boolish"
+              },
+              "clientFlag": {
+                "$ref": "#/definitions/boolish"
+              },
+              "codeSigningFlag": {
+                "$ref": "#/definitions/boolish"
+              },
+              "emailProtection": {
+                "$ref": "#/definitions/boolish"
+              },
               "keyUsage": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "extKeyUsage": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               },
               "ttl": {
-                "description": "Bao duration string, e.g. \"168h\".",
+                "description": "Bao duration string, e.g. \"168h\". Mirrors the OpenBaoPKISecretEngineRole CRD pattern exactly: a unit suffix is required. bao's own parser would take a bare integer as seconds, but the CR passes through admission first, so a bare integer renders clean and is rejected at apply \u2014 failing the tenant's whole TemplateInstance.",
                 "type": "string",
                 "pattern": "^([0-9]+(ns|us|ms|s|m|h|d))+$"
               },
               "maxTtl": {
-                "description": "Bao duration string. Note the spelling: maxTtl, not maxTTL.",
+                "description": "Bao duration string. Note the spelling: maxTtl, not maxTTL. Same CRD-mirroring pattern as ttl.",
                 "type": "string",
                 "pattern": "^([0-9]+(ns|us|ms|s|m|h|d))+$"
               },
@@ -112,7 +136,10 @@
                 ]
               },
               "keyBits": {
-                "type": "integer"
+                "type": "integer",
+                "description": "Key size. Bounds mirror the OpenBaoPKISecretEngineRole CRD (0-8192); a value outside them renders clean and is rejected at apply.",
+                "minimum": 0,
+                "maximum": 8192
               }
             }
           }
