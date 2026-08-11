@@ -1087,10 +1087,32 @@ fi
 #
 # Field-agnostic on purpose. Naming the two known sites would not catch the
 # third, and this shape recurs wherever a list is built by ranging namespaces.
+#
+# The whole line is built INSIDE the generator, so a document with no nulls
+# produces no result at all. The obvious form — identity + (generator) — is
+# yq-version-dependent: `"str" + (empty)` yields nothing up to 4.44.x and yields
+# "str" from 4.45 on, so on a newer yq every object was reported as an offender.
+# That went unnoticed because a developer machine on the pinned YQ_VERSION
+# (4.44.3) passed while CI, which resolves `yq` from PATH and so uses whatever
+# the runner image ships (4.53.3), failed on every object. Hence the self-check
+# below: it pins the detector's own behaviour, on any yq, before it is trusted.
 nullfield_paths() { # nullfield_paths <manifest> -> "Kind/name spec.field" per null leaf
-  "$YQ" e -N 'select(. != null) | .kind + "/" + .metadata.name + " " + (.. | select(tag == "!!null") | path | join("."))' "$1"
+  "$YQ" e -N 'select(. != null) | . as $d | (.. | select(tag == "!!null") | ($d.kind + "/" + $d.metadata.name + " " + (path | join("."))))' "$1"
 }
 nf_detail=""
+# Self-check first: a detector that cannot report is indistinguishable from a
+# clean render, and a detector that reports everything is noise. Both directions
+# are asserted against fixtures whose answer is known.
+printf 'kind: Probe\nmetadata:\n  name: clean\nspec:\n  domains:\n    - a\n' > "$WORK/nf-clean.yaml"
+printf 'kind: Probe\nmetadata:\n  name: dirty\nspec:\n  domains:\n' > "$WORK/nf-dirty.yaml"
+nf_probe_clean="$(nullfield_paths "$WORK/nf-clean.yaml")" \
+  || nf_detail="$nf_detail [self-check: yq failed on the clean probe]"
+[ -z "$nf_probe_clean" ] \
+  || nf_detail="$nf_detail [self-check: reported \"$nf_probe_clean\" on a manifest with no null field — every finding below would be a false positive; check the yq build ($("$YQ" --version 2>&1 | tr -d '\n'))]"
+nf_probe_dirty="$(nullfield_paths "$WORK/nf-dirty.yaml")" \
+  || nf_detail="$nf_detail [self-check: yq failed on the dirty probe]"
+[ "$nf_probe_dirty" = "Probe/dirty spec.domains" ] \
+  || nf_detail="$nf_detail [self-check: a known null field reported as \"$nf_probe_dirty\", want \"Probe/dirty spec.domains\" — the detector cannot see nulls, so a clean result below means nothing]"
 for nf in "null-inputs:$WORK/null.yaml" "no-workloads:$WORK/noworkloads.yaml"; do
   nf_label="${nf%%:*}"; nf_file="${nf#*:}"
   if [ "$nf_label" = no-workloads ]; then
