@@ -4,26 +4,44 @@ on:
   push:
     branches:
       - main
+    # '*.md', not '**.md': charts/README.md is a test input.
     paths-ignore:
       - '*.md'
-      - 'docs/'
-      - 'examples/'
-      - 'hack/'
+      - 'docs/**'
+      - 'examples/**'
 
 jobs:
-  push-operator:
-    name: Push Operator
+  push-charts:
+    name: Push Charts
     if: "! contains(toJSON(github.event.commits.*.message), '[skip-ci]')"
-    uses: stakater/.github/.github/workflows/operator_push.yaml@main
-    secrets:
-      SLACK_WEBHOOK_URL: ${{ secrets.STAKATER_DELIVERY_SLACK_WEBHOOK }}
-      CONTAINER_REGISTRY_URL: ghcr.io/stakater
-      CONTAINER_REGISTRY_USERNAME: stakater-user
-      CONTAINER_REGISTRY_PASSWORD: ${{ secrets.GHCR_TOKEN }}
-      STAKATER_AB_REPOS: ${{ secrets.STAKATER_AB_REPOS }}
-    with:
-      ENABLE_LINTING: true
-      ENABLE_UNIT_TESTS: true
-      ENABLE_STAKATER_AB_GIT_AUTH: true
-      ENABLE_CHART_PUSH: true
-      GO_VERSION: "1.26"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Lint, version pin, render tests, CRD schema check
+        run: make all
+
+      # check-tag-free in the Makefile refuses a version that is already
+      # published — helm push itself would overwrite it.
+      - name: Package and push charts
+        run: make helm-release
+        env:
+          GHCR_USERNAME: stakater-user
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+
+      # The shared operator_push.yaml this job replaced sent this.
+      - name: Notify on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "openbao chart repo: chart release failed on main. ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.STAKATER_DELIVERY_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

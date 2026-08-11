@@ -16,6 +16,15 @@ from it without invalidating tenant chains that already chain to the root.
 */}}
 {{- if .Values.platformPki.enabled }}
 {{- $p := .Values.platformPki }}
+{{- /*
+mode is matched exactly against "intermediate" below, so any other value would
+fall through to type: root — an online self-signed platform root, a silent
+downgrade of the trust model. Reject rather than let the else branch absorb it.
+*/}}
+{{- $mode := $p.mode | default "" }}
+{{- if not (has $mode (list "root" "intermediate")) }}
+{{- fail (printf "platformPki.mode must be \"root\" or \"intermediate\", got %q" $mode) }}
+{{- end }}
 {{- $ns := trimSuffix "/" $p.openbaoNamespace }}
 {{- if $ns }}
 ---

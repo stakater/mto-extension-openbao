@@ -17,6 +17,20 @@ sso:
   enabled: true
   dex:
     issuerUrl: "https://dex.example.com"
+    # Renders spec.oidcDiscoveryCaPem — a field behind an opt-in is invisible to
+    # crd-validate unless a fixture turns the opt-in on.
+    caBundlePem: |
+      -----BEGIN CERTIFICATE-----
+      MIIBkTCB+wIJAJ3xVFyz0kQxMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBmRl
+      eC1jYTAeFw0yNjAxMDEwMDAwMDBaFw0zNjAxMDEwMDAwMDBaMBExDzANBgNVBAMM
+      BmRleC1jYTBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQDLp7Ck9dQ0nQ0YtVQZ3vXt
+      -----END CERTIFICATE-----
+
+# Renders tokenPeriod on the share-out / share-in roles.
+token:
+  ttl: "1h"
+  maxTTL: "4h"
+  period: "30m"
 
 networkPolicy:
   enabled: true
@@ -30,6 +44,20 @@ pki:
     enabled: true
   crossTenant:
     enabled: true
+  # Chart default plus allowBareDomains/allowGlobDomains, off by default and so
+  # rendered in no other fixture.
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate:
+        - "{namespace}.svc.cluster.local"
+      allowSubdomains: true
+      allowBareDomains: true
+      allowGlobDomains: true
+      enforceHostnames: true
+      ttl: "168h"
+      maxTtl: "720h"
+      serverFlag: true
+      clientFlag: true
 
 serviceAccounts:
   # Kitchen-sink SA: own-tenant grants + every share flavor + transit + pki.

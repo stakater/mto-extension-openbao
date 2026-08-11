@@ -1,0 +1,14 @@
+# Vendored from stakater-ab/openbao-config-operator, config/crd/bases.
+#
+# Not shipped by either chart — used only by `make crd-validate`, which prunes
+# and validates every rendered OpenBao* CR exactly as the apiserver would.
+#
+# branch is the ref `make crd-staleness` and `make crds-vendor` read. It is
+# split/import-operator until that PR merges, because the operator repo's
+# default branch does not carry the CRDs yet. Move it to main once it does.
+#
+# Refresh with: make crds-vendor
+repo=stakater-ab/openbao-config-operator
+branch=split/import-operator
+ref=c5503c4b26f3051a9053b68c857e46c0d635bbe4
+date=2026-08-07

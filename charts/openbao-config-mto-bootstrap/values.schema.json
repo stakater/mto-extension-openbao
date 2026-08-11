@@ -41,6 +41,11 @@
       "properties": {
         "enabled": {
           "$ref": "#/definitions/boolish"
+        },
+        "mode": {
+          "description": "\"root\" is an online self-signed platform root; \"intermediate\" keeps the root offline. Enumerated because the template matches \"intermediate\" exactly, so any other value would otherwise render an online root.",
+          "type": "string",
+          "enum": ["root", "intermediate"]
         }
       }
     },
