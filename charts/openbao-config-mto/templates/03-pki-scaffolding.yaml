@@ -142,10 +142,23 @@ spec:
   name: {{ $roleName }}
   path: {{ $mount }}
   openbaoNamespace: {{ $tenant }}/
+  {{- /* Omitted, not emitted empty, when the tenant has no workload namespaces:
+         a bare `allowedDomains:` is YAML null, which the apiserver rejects as
+         "must be of type array", and one invalid object fails the whole
+         render's apply — taking out the tenant's entire TemplateInstance, not
+         just PKI, with no metric and no Event from the failed child TI.
+         $namespaces is empty exactly when serviceAccounts and deployments both
+         are, which is the window before any of the Tenant's namespaces carry
+         the label the parent selects on — a labelled namespace always yields at
+         least its default ServiceAccount. A role with no allowedDomains is
+         fail-closed in bao (no CN matches, so it issues nothing) and gains its
+         domains on the next render once a namespace appears. */}}
+  {{- with $rdomains }}
   allowedDomains:
-    {{- range $rdomains }}
+    {{- range . }}
     - {{ . | quote }}
     {{- end }}
+  {{- end }}
   {{- if $r.allowSubdomains }}
   allowSubdomains: {{ $r.allowSubdomains }}
   {{- end }}

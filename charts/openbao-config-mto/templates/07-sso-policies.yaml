@@ -21,6 +21,16 @@ Tier ladder (most → least privilege):
                compliance probes that need to enumerate without exposure.
 */}}
 {{- if .Values.sso.enabled }}
+{{- /* Every role below is roleType=oidc, for which bao requires a non-empty
+       allowed_redirect_uris. Emptied in values, `allowedRedirectUris:` would
+       render as YAML null and the apiserver would reject it as "must be of
+       type array", failing the whole render's apply and so the tenant's entire
+       TemplateInstance — not just SSO. Failing here instead names the value at
+       fault; unlike the PKI namespace window this is a static misconfiguration
+       that no cluster state will resolve. */ -}}
+{{- if not .Values.sso.allowedRedirectUris }}
+{{- fail "sso.enabled=true requires at least one entry in sso.allowedRedirectUris — bao rejects an oidc role with no allowed_redirect_uris, so every SSO login would be unusable" }}
+{{- end }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $labels := include "openbao.labels" . }}

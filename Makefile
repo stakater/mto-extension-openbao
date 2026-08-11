@@ -57,12 +57,18 @@ CRD_SOURCE_REF  := $(shell awk -F= '/^ref=/{print $$2}' $(CRD_DIR)/SOURCE)
 #
 # Slices may legitimately render nothing, so they pass -allow-empty. The full
 # renders must not — zero objects there means the render broke.
+#
+# values-no-workloads covers a state no other fixture reaches: a tenant whose
+# namespaces are not labeled yet, so every per-namespace list renders empty. An
+# unguarded `key:` over an empty range is YAML null, which fails admission and
+# so fails the tenant's whole TemplateInstance. Only a real admission pass finds
+# those, because the render itself succeeds.
 TENANT_COMPONENTS ?= all core eso certManager trust
 
 .PHONY: crd-validate
 crd-validate: helm ## Validate every rendered OpenBao* CR against the vendored operator CRDs.
 	@set -e; \
-	for fx in values-full values-guards values-no-optins; do \
+	for fx in values-full values-guards values-no-optins values-no-workloads; do \
 		for comp in $(TENANT_COMPONENTS); do \
 			empty=-allow-empty; [ "$$comp" = all ] && empty=""; \
 			printf -- '-- tenant %s/%s ' "$$fx" "$$comp"; \

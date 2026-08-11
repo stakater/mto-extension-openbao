@@ -81,6 +81,13 @@
 #                    safe defaults.
 #  20. platformpki — the bootstrap chart's own platform-PKI CRs follow
 #                    safety.deletionProtection in both postures.
+#  31. nullfields — no rendered field is YAML null when the tenant has no
+#                    workload namespaces. Field-agnostic: a `key:` above an
+#                    empty range is null, admission rejects it, and one such
+#                    object fails the whole tenant's TemplateInstance.
+#                    nullinputs (30) checks only that the render exits 0.
+#  32. ssoredirect — sso.allowedRedirectUris emptied fails at render with the
+#                    value named, rather than rendering a null bao rejects.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -1051,11 +1058,71 @@ fi
 # LIST resolutions that can be null; every consumer must ternary-guard. A crash
 # here fails the whole tenant.
 if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
-  --set serviceAccounts=null --set deployments=null > /dev/null 2>"$WORK/null.err"; then
+  --set serviceAccounts=null --set deployments=null > "$WORK/null.yaml" 2>"$WORK/null.err"; then
   check nullinputs 0
 else
   check nullinputs 1 "null serviceAccounts/deployments crashed the render: $(head -1 "$WORK/null.err")"
 fi
+
+# 31. nullfields — a successful render is not the assertion. With no workload
+# namespaces every per-namespace list is empty, and a `key:` emitted above an
+# empty range is YAML null, which admission rejects as "must be of type array".
+# One invalid object fails the whole render's apply, so this takes out the
+# tenant's entire TemplateInstance, not just the feature that produced the
+# null — and a failed child TI emits no metric and no Event. nullinputs above
+# passed throughout that bug: it only ever checked the exit status.
+#
+# Field-agnostic on purpose. Naming the two known sites would not catch the
+# third, and this shape recurs wherever a list is built by ranging namespaces.
+nullfield_paths() { # nullfield_paths <manifest> -> "Kind/name spec.field" per null leaf
+  "$YQ" e -N 'select(. != null) | .kind + "/" + .metadata.name + " " + (.. | select(tag == "!!null") | path | join("."))' "$1"
+}
+nf_detail=""
+for nf in "null-inputs:$WORK/null.yaml" "no-workloads:$WORK/noworkloads.yaml"; do
+  nf_label="${nf%%:*}"; nf_file="${nf#*:}"
+  if [ "$nf_label" = no-workloads ]; then
+    # Rendered here rather than reused: values-no-workloads.yaml is the fixture
+    # that also turns on pki.hierarchy, the only path that emits
+    # permittedDnsDomains — the second empty-list site.
+    "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
+      --set component=all > "$nf_file" 2>"$WORK/noworkloads.err" \
+      || { nf_detail="$nf_detail [$nf_label: render failed: $(head -1 "$WORK/noworkloads.err")]"; continue; }
+  fi
+  # Own line, then check the status: $(...) would discard a yq failure and the
+  # empty result would read as "no null fields".
+  nf_out="$(nullfield_paths "$nf_file")" \
+    || { nf_detail="$nf_detail [$nf_label: yq failed: $(printf '%s' "$nf_out" | head -1)]"; continue; }
+  [ -n "$nf_out" ] \
+    && nf_detail="$nf_detail [$nf_label: $(printf '%s' "$nf_out" | sort -u | tr '\n' ' ')]"
+done
+[ -z "$nf_detail" ] && check nullfields 0 \
+  || check nullfields 1 "rendered null field(s) — admission rejects these and fails the whole TI:$nf_detail"
+
+# 32. ssoredirect — every §7 role is roleType=oidc, for which bao requires a
+# non-empty allowed_redirect_uris. Emptied in values it rendered as YAML null
+# and failed admission for the whole tenant. Failing at render names the value
+# instead; unlike the PKI namespace window no cluster state resolves it, so a
+# guard is right here and a `with` would be wrong.
+ssor_ok=0; ssor_detail=""
+for empty in null "[]"; do
+  # Render on its own line so the exit status survives: inside $(...) a failed
+  # render is indistinguishable from a clean one, and "it printed the value
+  # name" alone would also pass on a manifest that merely contains the key.
+  if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+    --set component=core --set "sso.allowedRedirectUris=$empty" > "$WORK/ssor.out" 2>&1; then
+    ssor_ok=1; ssor_detail="$ssor_detail [allowedRedirectUris=$empty rendered instead of failing]"
+    continue
+  fi
+  grep -q 'sso\.allowedRedirectUris' "$WORK/ssor.out" \
+    || { ssor_ok=1; ssor_detail="$ssor_detail [allowedRedirectUris=$empty failed without naming the value: $(head -1 "$WORK/ssor.out" | cut -c1-90)]"; }
+done
+# The counterweight: a populated list must still render the roles. Without this
+# the guard could reject everything and still "pass" above.
+ssor_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core 2>&1 || true)"
+grep -qE '^\s+allowedRedirectUris:' <<<"$ssor_out" \
+  || { ssor_ok=1; ssor_detail="$ssor_detail [a populated sso.allowedRedirectUris rendered no roles]"; }
+[ "$ssor_ok" -eq 0 ] && check ssoredirect 0 || check ssoredirect 1 "$ssor_detail"
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust

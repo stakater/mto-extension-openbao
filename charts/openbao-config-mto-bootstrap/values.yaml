@@ -37,7 +37,7 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.16.0
+  version: 0.17.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.

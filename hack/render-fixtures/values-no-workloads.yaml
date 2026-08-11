@@ -1,0 +1,63 @@
+# Render-test fixture: the zero-labeled-namespace window. Every toggle is on,
+# but the tenant has no workload namespaces at all — serviceAccounts and
+# deployments arrive as JSON null, which is what template-operator-v2 sends for
+# a Tenant whose namespaces are not labeled yet (see the note in
+# values.schema.json's description). Every existing namespace has a default
+# ServiceAccount, so this is a startup window, not a hypothetical.
+#
+# The state matters because it drives every per-namespace list in the chart to
+# empty, and a bare `key:` over an empty range is YAML null, which the apiserver
+# rejects as "must be of type array". One invalid object fails the whole
+# render's apply, so a null here takes out the tenant's entire
+# TemplateInstance — not just the feature that produced it — and a failed child
+# TI emits no metric and no Event. Hence a fixture, not just a unit assertion:
+# crd-validate runs this through the real admission pipeline per component.
+#
+# pki.hierarchy is pinned on rather than inherited. It is already the chart
+# default, and values-full.yaml covers the populated branch (the golden carries
+# permittedDnsDomains with two entries), but that field is the second empty-list
+# site in 03-pki-scaffolding.yaml and it renders in no other branch. Inheriting
+# the default would mean a later flip to hierarchy.enabled=false silently drops
+# this fixture's coverage of it while still passing.
+tenant: team-a
+knownTenants: "team-a,team-b"
+
+eso: enabled
+
+sso:
+  enabled: true
+  dex:
+    issuerUrl: "https://dex.example.com"
+
+networkPolicy:
+  enabled: true
+
+monitoring:
+  enabled: true
+
+pki:
+  enabled: true
+  certManager:
+    enabled: true
+  crossTenant:
+    enabled: true
+  hierarchy:
+    enabled: true
+    platformMount: pki-platform
+    platformNamespace: platform/
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate:
+        - "{namespace}.svc.cluster.local"
+      allowSubdomains: true
+      enforceHostnames: true
+      ttl: "168h"
+      maxTtl: "720h"
+
+transit:
+  enabled: true
+
+# The point of the fixture: null, not [], because that is the wire form
+# t-op-v2 produces for a tenant with no labeled namespaces.
+serviceAccounts: null
+deployments: null
