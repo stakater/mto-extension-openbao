@@ -66,7 +66,7 @@ spec:
     - name: ssoEnabled
       value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" $ | quote }}
     - name: ssoIssuerUrl
-      value: {{ $.Values.parent.sso.issuerUrl | quote }}
+      value: {{ (include "openbao-config-mto-bootstrap.parentSso" $ | fromYaml).issuerUrl | default "" | quote }}
     - name: sharedTenantName
       value: {{ $.Values.parent.sharedTenantName | quote }}
     - name: tenantLabelKey
@@ -200,10 +200,12 @@ spec:
       fields:
         - { name: pkiRoleReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
         - { name: pkiRoleReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
-    # caSerial flips only when a super-admin SSO user regenerates the root, so an
-    # unexpected change is a red flag. Read through fromAll, not from: `from`
-    # fails terminally when the named object is absent, which is every install
-    # with pki.enabled=false.
+    # caSerial flips only when someone replaces the tenant CA out of band — no
+    # SSO tier can, so an unexpected change is a red flag. Absent until the
+    # tenant has its first labelled namespace, since the CA waits for one. Read
+    # through fromAll, not from: `from` fails terminally when the named object is
+    # absent, which is every install with pki.enabled=false and every tenant in
+    # that window.
     - name: pkiConfigs
       fromAll:
         apiVersion: security.mto.stakater.com/v1alpha1
@@ -324,12 +326,24 @@ spec:
           enabled: {{ `{{ .parameters.crossTenantPkiEnabled }}` }}
         certManager:
           enabled: {{ `{{ .parameters.certManagerEnabled }}` }}
+        {{- /* Install-wide, so rendered literally rather than threaded through a
+               parameter. Omitted when unset so the tenant chart's own default
+               applies. t-op-v2 owns rendered fields via SSA, so anything not
+               plumbed here is unreachable for every tenant. */ -}}
+        {{- with (($.Values.parent | default dict).pki | default dict).roles }}
+        roles:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       sharedTenant:
         name: {{ `{{ .parameters.sharedTenantName }}` }}
       sso:
         enabled: {{ `{{ .parameters.ssoEnabled }}` }}
         dex:
           issuerUrl: {{ `{{ .parameters.ssoIssuerUrl | quote }}` }}
+        {{- with (include "openbao-config-mto-bootstrap.parentSso" $ | fromYaml).allowedRedirectUris }}
+        allowedRedirectUris:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
       serviceAccounts: {{ `{{ .parameters.serviceAccounts | toJson }}` }}
       deployments: {{ `{{ .parameters.deployments | toJson }}` }}
 {{- end }}

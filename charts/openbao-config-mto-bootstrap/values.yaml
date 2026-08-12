@@ -37,7 +37,7 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.16.0
+  version: 0.18.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.
@@ -116,9 +116,23 @@ parent:
   # without them only that TI fails; core bao wiring is unaffected.
   certManager:
     enabled: false
+  # Tenant PKI role catalog (tenant chart value pki.roles). Install-wide: every
+  # tenant gets the same catalog. Left empty here so the tenant chart's own
+  # default applies — set it to override, e.g. to add a client-only role or to
+  # change allowIpSans/ttl. The tenant chart validates the entries (unique,
+  # RFC 1123, at least one allowedDomainsTemplate), so a bad catalog fails the
+  # render rather than reaching bao.
+  pki:
+    roles: []
   sso:
     enabled: false
     issuerUrl: ""
+    # OIDC redirect URIs (tenant chart value sso.allowedRedirectUris). bao
+    # rejects an oidc role with an empty list, so the tenant chart fails the
+    # render when sso.enabled and this resolves empty. Left empty here means the
+    # tenant chart's default (http://localhost:8250/oidc/callback, the bao CLI's
+    # loopback listener) — set the real console callback for browser logins.
+    allowedRedirectUris: []
 
 # Drift protection for everything the Templates render (t-op-v2 Template
 # spec.sync), applied to both the parent and child Templates. Requires

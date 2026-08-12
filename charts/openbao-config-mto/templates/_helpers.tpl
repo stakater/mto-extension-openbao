@@ -213,13 +213,6 @@ Per-app transit key CR name: transit-<tenant>-<ns>-<app>-<env>-<hash>.
 {{- end -}}
 
 {{/*
-Per-tenant PKI role CR name: pki-<tenant>-<roleName>.
-*/}}
-{{- define "openbao.pkiRoleName" -}}
-{{- printf "pki-%s-%s" .tenant .roleName -}}
-{{- end -}}
-
-{{/*
 Effective tenant PKI mount path. In hierarchy mode the tenant CA is a
 type=intermediate rendered at a FRESH mount (pki.hierarchy.mountPath) so it
 never reuses a root-bearing mount; otherwise it's the self-signed root at
@@ -245,6 +238,58 @@ Usage: {{ include "openbao.pkiDefaultRoleName" (dict "tpl" .Values.pki.defaultRo
 */}}
 {{- define "openbao.pkiDefaultRoleName" -}}
 {{- replace "{tenant}" .tenant .tpl -}}
+{{- end -}}
+
+{{/*
+Fails unless every pki.roles[] entry renders a DISTINCT role name.
+
+The name is the bao role name, the `metadata.name` of the
+OpenBaoPKISecretEngineRole (as pki-<name>) and the cert-manager Issuer name, so
+two entries that render the same name emit two same-named objects with different
+specs from one render. Helm does not reject that, and server-side apply takes
+the last one: the other entry's ttl, flags and domains vanish with no error on
+any object, no failed TemplateInstance and no Event — the render looks clean and
+one of the two roles the values asked for does not exist.
+
+Called from every template that iterates pki.roles (03, 04, 10) rather than from
+03 alone, because each component renders in its own TemplateInstance and the
+certManager slice iterates the roles without 03.
+
+Usage (root context): {{ include "openbao.pkiAssertRoleNamesUnique" . }}
+*/}}
+{{- define "openbao.pkiAssertRoleNamesUnique" -}}
+{{- $tenant := .Values.tenant -}}
+{{- /* Named here rather than left to the CA-constraint guard downstream, which
+       would report the same state as "no role renders a domain for any
+       namespace". The schema rejects both [] and null, so this only fires with
+       the schema skipped. */ -}}
+{{- if not .Values.pki.roles -}}
+{{- fail "pki.enabled=true but pki.roles is empty — the engine and the tenant CA would be created with no role able to issue from them" -}}
+{{- end -}}
+{{- $seen := dict -}}
+{{- range $i, $r := .Values.pki.roles -}}
+{{- if not (kindIs "string" $r.nameTemplate) -}}
+{{- fail (printf "pki.roles[%d] has no nameTemplate — every entry needs one, and it becomes the bao role name, the OpenBaoPKISecretEngineRole name and the cert-manager Issuer name" $i) -}}
+{{- end -}}
+{{- $name := include "openbao.pkiDefaultRoleName" (dict "tpl" $r.nameTemplate "tenant" $tenant) -}}
+{{- if not $name -}}
+{{- fail (printf "pki.roles[%d].nameTemplate renders empty for tenant %q" $i $tenant) -}}
+{{- end -}}
+{{- /* The strictest consumer sets the rule: the CRD constrains spec.name to an
+       RFC 1123 LABEL (no dots), while metadata.name and the Issuer name would
+       take a subdomain. Not openbao.assertName — that helper echoes its input
+       and this one runs for its failures only, so its limit is repeated below. */ -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $name) -}}
+{{- fail (printf "pki.roles[%d].nameTemplate renders %q for tenant %q, which the operator's CRD rejects for spec.name — it must match ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ (lowercase alphanumerics and '-' only; no dots, no underscores, no uppercase). It becomes the OpenBaoPKISecretEngineRole \"pki-%s\" and the cert-manager Issuer %q" $i $name $tenant $name $name) -}}
+{{- end -}}
+{{- if gt (len (printf "pki-%s" $name)) 253 -}}
+{{- fail (printf "pki.roles[%d].nameTemplate renders %q for tenant %q, making the OpenBaoPKISecretEngineRole name \"pki-%s\" %d chars — over the 253-char Kubernetes name limit. Shorten the nameTemplate or the tenant name" $i $name $tenant $name (len (printf "pki-%s" $name))) -}}
+{{- end -}}
+{{- if hasKey $seen $name -}}
+{{- fail (printf "pki.roles[%d].nameTemplate and pki.roles[%s].nameTemplate both render the role name %q for tenant %q — each entry becomes an object of that name, so one would silently overwrite the other. Make every nameTemplate render a distinct name" $i (index $seen $name) $name $tenant) -}}
+{{- end -}}
+{{- $_ := set $seen $name (toString $i) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

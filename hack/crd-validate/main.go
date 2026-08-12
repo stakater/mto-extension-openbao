@@ -13,8 +13,9 @@
 // way the chart tests are the last place it can be caught cheaply, and a failed
 // child TI is not something anything alerts on.
 //
-// So this runs the apiserver's own admission pipeline against the CRDs vendored
-// in hack/crds: prune, default, then validate metadata, OpenAPI and CEL. The
+// So this runs the apiserver's own admission pipeline against the CRDs the
+// Makefile pulls from the operator's published chart (OPERATOR_CHART_VERSION)
+// into <crd-dir>: prune, default, then validate metadata, OpenAPI and CEL. The
 // pruning diff finds exactly the fields SSA would reject; the rest is what makes
 // "validates like the apiserver" true rather than approximately true.
 //
@@ -109,7 +110,7 @@ func main() {
 		entry, ok := crds[key]
 		if !ok {
 			problems = append(problems, fmt.Sprintf(
-				"%s %s: no vendored CRD for %s — the operator does not serve this kind",
+				"%s %s: no CRD for %s in the operator chart — it does not serve this kind",
 				gvk.Kind, u.GetName(), key))
 			continue
 		}
@@ -182,7 +183,7 @@ func main() {
 		fmt.Printf("TOO-FEW checked %d %s objects, expected at least %d\n", checked, group, *minObjects)
 		os.Exit(1)
 	}
-	fmt.Printf("OK %d %s objects validate against the vendored CRDs\n", checked, group)
+	fmt.Printf("OK %d %s objects validate against the operator chart CRDs\n", checked, group)
 }
 
 // readDocs splits a manifest using apimachinery's reader — the same splitter

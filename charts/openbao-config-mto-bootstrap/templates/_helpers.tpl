@@ -89,8 +89,15 @@ Never compare .Values.<toggle> directly — go through the named helper.
 {{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "platformPki.enabled" "value" .Values.platformPki.enabled) -}}
 {{- end -}}
 
+{{/* parent.sso is nullable, and a chained deref through it nil-pointers the
+     whole bootstrap render. `parent` itself is required by values.schema.json. */}}
+{{- define "openbao-config-mto-bootstrap.parentSso" -}}
+{{- toYaml ((.Values.parent | default dict).sso | default dict) -}}
+{{- end -}}
+
 {{- define "openbao-config-mto-bootstrap.ssoEnabled" -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.enabled" "value" .Values.parent.sso.enabled) -}}
+{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml -}}
+{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.enabled" "value" $sso.enabled) -}}
 {{- end -}}
 
 {{- define "openbao-config-mto-bootstrap.templateSync" -}}

@@ -81,6 +81,26 @@
 #                    safe defaults.
 #  20. platformpki — the bootstrap chart's own platform-PKI CRs follow
 #                    safety.deletionProtection in both postures.
+#  31. nullfields — no rendered field is YAML null when the tenant has no
+#                    workload namespaces. Field-agnostic: a `key:` above an
+#                    empty range is null, admission rejects it, and one such
+#                    object fails the whole tenant's TemplateInstance.
+#                    nullinputs (30) checks only that the render exits 0.
+#  32. ssoredirect — sso.allowedRedirectUris emptied fails at render with the
+#                    value named, rather than rendering a null bao rejects.
+#  33. ssopkimount — every PKI path in every rendered policy names the
+#                    EFFECTIVE tenant mount. §7 read pki.mountPath directly
+#                    while the engine, CA and roles were at
+#                    pki.hierarchy.mountPath, so every human SSO tier was
+#                    granted paths on a mount that does not exist.
+#  34. pkirolenames — two pki.roles entries rendering the same name fail the
+#                    render (one would otherwise silently overwrite the other),
+#                    and the schema rejects misspelled role keys — dropped
+#                    silently, they leave bao's own, permissive, default.
+#  35. pkicadomains — the tenant CA's permittedDnsDomains is never empty in
+#                    hierarchy mode. An omitted field is not a null field, so
+#                    nullfields (31) passes on an unconstrained CA, and the
+#                    operator treats a present CA as final: empty is permanent.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -1051,11 +1071,473 @@ fi
 # LIST resolutions that can be null; every consumer must ternary-guard. A crash
 # here fails the whole tenant.
 if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
-  --set serviceAccounts=null --set deployments=null > /dev/null 2>"$WORK/null.err"; then
+  --set serviceAccounts=null --set deployments=null > "$WORK/null.yaml" 2>"$WORK/null.err"; then
   check nullinputs 0
 else
   check nullinputs 1 "null serviceAccounts/deployments crashed the render: $(head -1 "$WORK/null.err")"
 fi
+
+# 31. nullfields — a successful render is not the assertion. With no workload
+# namespaces every per-namespace list is empty, and a `key:` emitted above an
+# empty range is YAML null, which admission rejects as "must be of type array".
+# One invalid object fails the whole render's apply, so this takes out the
+# tenant's entire TemplateInstance, not just the feature that produced the
+# null — and a failed child TI emits no metric and no Event. nullinputs above
+# passed throughout that bug: it only ever checked the exit status.
+#
+# Field-agnostic on purpose. Naming the two known sites would not catch the
+# third, and this shape recurs wherever a list is built by ranging namespaces.
+#
+# The whole line is built INSIDE the generator, so a document with no nulls
+# produces no result at all. The obvious form — identity + (generator) — is
+# yq-version-dependent: `"str" + (empty)` yields nothing up to 4.44.x and yields
+# "str" from 4.45 on, so on a newer yq every object was reported as an offender.
+# That went unnoticed because a developer machine on the pinned YQ_VERSION
+# (4.44.3) passed while CI, which resolves `yq` from PATH and so uses whatever
+# the runner image ships (4.53.3), failed on every object. Hence the self-check
+# below: it pins the detector's own behaviour, on any yq, before it is trusted.
+nullfield_paths() { # nullfield_paths <manifest> -> "Kind/name spec.field" per null leaf
+  "$YQ" e -N 'select(. != null) | . as $d | (.. | select(tag == "!!null") | ($d.kind + "/" + $d.metadata.name + " " + (path | join("."))))' "$1"
+}
+nf_detail=""
+# Self-check first: a detector that cannot report is indistinguishable from a
+# clean render, and a detector that reports everything is noise. Both directions
+# are asserted against fixtures whose answer is known.
+printf 'kind: Probe\nmetadata:\n  name: clean\nspec:\n  domains:\n    - a\n' > "$WORK/nf-clean.yaml"
+printf 'kind: Probe\nmetadata:\n  name: dirty\nspec:\n  domains:\n' > "$WORK/nf-dirty.yaml"
+nf_probe_clean="$(nullfield_paths "$WORK/nf-clean.yaml")" \
+  || nf_detail="$nf_detail [self-check: yq failed on the clean probe]"
+[ -z "$nf_probe_clean" ] \
+  || nf_detail="$nf_detail [self-check: reported \"$nf_probe_clean\" on a manifest with no null field — every finding below would be a false positive; check the yq build ($("$YQ" --version 2>&1 | tr -d '\n'))]"
+nf_probe_dirty="$(nullfield_paths "$WORK/nf-dirty.yaml")" \
+  || nf_detail="$nf_detail [self-check: yq failed on the dirty probe]"
+[ "$nf_probe_dirty" = "Probe/dirty spec.domains" ] \
+  || nf_detail="$nf_detail [self-check: a known null field reported as \"$nf_probe_dirty\", want \"Probe/dirty spec.domains\" — the detector cannot see nulls, so a clean result below means nothing]"
+for nf in "null-inputs:$WORK/null.yaml" "no-workloads:$WORK/noworkloads.yaml"; do
+  nf_label="${nf%%:*}"; nf_file="${nf#*:}"
+  if [ "$nf_label" = no-workloads ]; then
+    # Rendered here rather than reused: values-no-workloads.yaml is the fixture
+    # that also turns on pki.hierarchy, the only path that emits
+    # permittedDnsDomains — the second empty-list site.
+    "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
+      --set component=all > "$nf_file" 2>"$WORK/noworkloads.err" \
+      || { nf_detail="$nf_detail [$nf_label: render failed: $(head -1 "$WORK/noworkloads.err")]"; continue; }
+  fi
+  # Own line, then check the status: $(...) would discard a yq failure and the
+  # empty result would read as "no null fields".
+  nf_out="$(nullfield_paths "$nf_file")" \
+    || { nf_detail="$nf_detail [$nf_label: yq failed: $(printf '%s' "$nf_out" | head -1)]"; continue; }
+  [ -n "$nf_out" ] \
+    && nf_detail="$nf_detail [$nf_label: $(printf '%s' "$nf_out" | sort -u | tr '\n' ' ')]"
+done
+[ -z "$nf_detail" ] && check nullfields 0 \
+  || check nullfields 1 "rendered null field(s) — admission rejects these and fails the whole TI:$nf_detail"
+
+# 32. ssoredirect — every §7 role is roleType=oidc, for which bao requires a
+# non-empty allowed_redirect_uris. Emptied in values it rendered as YAML null
+# and failed admission for the whole tenant. Failing at render names the value
+# instead; unlike the PKI namespace window no cluster state resolves it, so a
+# guard is right here and a `with` would be wrong.
+#
+# Both empty forms come from a VALUES FILE, not --set: `--set x=[]` gives helm
+# the STRING "[]", so the guard never runs, the render dies in the range, and Go
+# embeds the variable path in that error — which the grep below then matched,
+# passing while asserting nothing.
+ssor_ok=0; ssor_detail=""
+printf 'sso:\n  allowedRedirectUris: []\n'   > "$WORK/ssor-empty.yaml"
+printf 'sso:\n  allowedRedirectUris: null\n' > "$WORK/ssor-null.yaml"
+for ssor_form in empty null; do
+  # Render on its own line so the exit status survives: inside $(...) a failed
+  # render is indistinguishable from a clean one, and "it printed the value
+  # name" alone would also pass on a manifest that merely contains the key.
+  if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+    -f "$WORK/ssor-$ssor_form.yaml" --set component=core > "$WORK/ssor.out" 2>&1; then
+    ssor_ok=1; ssor_detail="$ssor_detail [allowedRedirectUris=$ssor_form rendered instead of failing]"
+    continue
+  fi
+  # The guard's own sentence, not the value name: the value name alone also
+  # appears in the Go template error this check used to pass on.
+  grep -q 'requires at least one entry in sso.allowedRedirectUris' "$WORK/ssor.out" \
+    || { ssor_ok=1; ssor_detail="$ssor_detail [allowedRedirectUris=$ssor_form failed somewhere other than the guard: $(head -1 "$WORK/ssor.out" | cut -c1-90)]"; }
+done
+# The counterweight: a populated list must still render the roles. Without this
+# the guard could reject everything and still "pass" above.
+ssor_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core 2>&1 || true)"
+# The VALUE, not the key: §7 emits `allowedRedirectUris:` unconditionally above
+# its range, so grepping the key matches even when the range emits nothing —
+# which is the YAML-null-that-fails-admission this check family exists to catch.
+grep -qE '^\s+- "http://localhost:8250/oidc/callback"' <<<"$ssor_out" \
+  || { ssor_ok=1; ssor_detail="$ssor_detail [a populated sso.allowedRedirectUris rendered no URI entries]"; }
+[ "$ssor_ok" -eq 0 ] && check ssoredirect 0 || check ssoredirect 1 "$ssor_detail"
+
+# 33. ssopkimount — every PKI path in every rendered policy names the EFFECTIVE
+# tenant mount (openbao.pkiMount), not pki.mountPath. §7 read the raw value
+# while §3/§4/§10 went through the helper, so with the default
+# pki.hierarchy.enabled=true the human SSO tiers were granted paths under `pki`
+# while the engine, the CA and the roles all lived at `pki-int`: every SSO tier
+# silently had no PKI access at all. It
+# rendered, it validated, and the golden carried it.
+#
+# Checked by prefix across the whole render, not by asserting §7's text, so the
+# same drift in any other template fails here too.
+spm_ok=0; spm_detail=""
+# Any policy line that is unmistakably a PKI path, whatever mount it claims.
+# No `sign/`: transit has a sign endpoint too, so that tail cannot tell the two
+# mounts apart. The stale-mount assertion below covers the sign grants instead.
+PKI_PATH_TAILS='ca/pem|ca_chain|cert/ca|certs|cert/[+]|issue/|roles|root|root/|intermediate/|issuers|issuer/'
+pki_path_prefixes() { # <manifest> -> one mount prefix per PKI path line
+  # The mount is everything between `path "` and the first PKI-specific tail,
+  # so this reads the prefix off the render itself rather than being told it.
+  # `#` as the s delimiter, not `|`: the tails are an alternation, and a `|`
+  # delimiter ends the pattern at the first branch ("parentheses not balanced").
+  grep -oE "path \"[^\"]+/($PKI_PATH_TAILS)" "$1" \
+    | sed -E "s#^path \"##; s#/($PKI_PATH_TAILS)\$##" \
+    | sort -u
+}
+for posture in "true:pki-int:pki" "false:pki:pki-int"; do
+  spm_hier="${posture%%:*}"; spm_rest="${posture#*:}"
+  spm_want="${spm_rest%%:*}"; spm_stale="${spm_rest#*:}"
+  "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+    --set component=core --set "pki.hierarchy.enabled=$spm_hier" > "$WORK/spm.out" 2>&1 \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier render failed: $(head -1 "$WORK/spm.out" | cut -c1-90)]"; continue; }
+  # a. the inactive mount is granted nowhere. This is the actual regression: the
+  # grants named a mount that holds nothing.
+  if grep -q "path \"$spm_stale/" "$WORK/spm.out"; then
+    spm_ok=1
+    spm_detail="$spm_detail [hierarchy=$spm_hier grants paths on the inactive mount $spm_stale: $(grep -oE "path \"$spm_stale/[^\"]*" "$WORK/spm.out" | sort -u | head -3 | tr '\n' ' ')]"
+  fi
+  # b. and every PKI path that can be attributed to a mount uses the live one.
+  spm_got="$(pki_path_prefixes "$WORK/spm.out")" \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier: prefix scan failed]"; continue; }
+  # Non-empty first: "no PKI paths at all" must not read as "no wrong prefixes".
+  [ -n "$spm_got" ] \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier rendered no PKI policy paths]"; continue; }
+  [ "$spm_got" = "$spm_want" ] \
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier: PKI paths under $(printf '%s' "$spm_got" | tr '\n' ',' | sed 's/,$//'), want only $spm_want]"; }
+done
+# The mount the SSO tiers actually got, pinned by name: the prefix check above
+# would still pass if §7 dropped its PKI block entirely.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core > "$WORK/spm-sso.out" 2>&1 \
+  && grep -q 'path "pki-int/ca/pem"           { capabilities = \["read"\] }' "$WORK/spm-sso.out" \
+  || { spm_ok=1; spm_detail="$spm_detail [no SSO-tier PKI grant at the effective mount]"; }
+[ "$spm_ok" -eq 0 ] && check ssopkimount 0 || check ssopkimount 1 "$spm_detail"
+
+# 34. pkirolenames — two pki.roles entries that render the same name fail the
+# render. The name is the bao role, the CR name and the cert-manager Issuer
+# name, so a collision emitted two same-named objects with different specs from
+# one render: helm accepts it, server-side apply keeps the last, and the other
+# entry's TTL and flags disappear with no error, no failed TI and no Event.
+#
+# Guarded in two independent places, each checked with the other removed:
+# the template fail() (schema stripped) and the schema's own key constraints.
+prn_ok=0; prn_detail=""
+cat > "$WORK/roles-dup.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      ttl: "1h"
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      ttl: "999h"
+YAML
+cp -R "$CHART" "$WORK/chart-noschema-roles"
+rm -f "$WORK/chart-noschema-roles/values.schema.json"
+# a. the template guard, with the schema gone. Rendered per component because
+# each slice is its own TemplateInstance: certManager iterates pki.roles
+# without §3, so a guard living only in §3 would let the collision through
+# there. core covers §3/§4, certManager covers §10.
+for prn_comp in core certManager; do
+  if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+    -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-dup.yaml" \
+    --set component=$prn_comp > "$WORK/prn.out" 2>&1; then
+    prn_ok=1; prn_detail="$prn_detail [component=$prn_comp rendered a duplicate role name instead of failing]"
+    continue
+  fi
+  grep -q 'both render the role name' "$WORK/prn.out" \
+    || { prn_ok=1; prn_detail="$prn_detail [component=$prn_comp failed without naming the collision: $(head -1 "$WORK/prn.out" | cut -c1-90)]"; }
+done
+# b. a missing nameTemplate names the entry instead of dying in a helper.
+cat > "$WORK/roles-noname.yaml" <<'YAML'
+pki:
+  roles:
+    - allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+YAML
+if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-noname.yaml" \
+  --set component=core > "$WORK/prn-nn.out" 2>&1; then
+  prn_ok=1; prn_detail="$prn_detail [a role with no nameTemplate rendered]"
+else
+  grep -q 'has no nameTemplate' "$WORK/prn-nn.out" \
+    || { prn_ok=1; prn_detail="$prn_detail [missing nameTemplate failed without naming the field: $(head -1 "$WORK/prn-nn.out" | cut -c1-90)]"; }
+fi
+# c. the schema alone, on the typos the template cannot see: an unknown key is
+# omitted from the CR, so bao keeps its own default — permissive for
+# allow_ip_sans and require_cn — and the render stays clean.
+cat > "$WORK/roles-typo.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      allowedDomainTemplate: ["typo"]
+      maxTTL: "720h"
+      allowIpSANs: true
+YAML
+if "$HELM" template "$RELEASE" "$CHART" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-typo.yaml" \
+  --set component=core > "$WORK/prn-typo.out" 2>&1; then
+  prn_ok=1; prn_detail="$prn_detail [schema accepted misspelled role keys]"
+else
+  for prn_key in allowedDomainTemplate maxTTL allowIpSANs; do
+    grep -q "$prn_key" "$WORK/prn-typo.out" \
+      || { prn_ok=1; prn_detail="$prn_detail [schema rejection did not name $prn_key]"; }
+  done
+fi
+# d. a name the apiserver would reject fails at render. One rejected object
+# fails the whole apply — the tenant's entire TI, no metric and no Event.
+# Uniqueness alone never looked at the characters.
+cat > "$WORK/roles-badname.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}_SVC"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+YAML
+if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-badname.yaml" \
+  --set component=core > "$WORK/prn-bn.out" 2>&1; then
+  prn_ok=1; prn_detail="$prn_detail [an RFC 1123-invalid role name rendered]"
+else
+  grep -q "CRD rejects for spec.name" "$WORK/prn-bn.out" \
+    || { prn_ok=1; prn_detail="$prn_detail [invalid role name failed for another reason: $(head -1 "$WORK/prn-bn.out" | cut -c1-90)]"; }
+fi
+# e. same for the 253-char limit.
+{ printf 'pki:\n  roles:\n    - nameTemplate: "{tenant}-'; \
+  head -c 250 < /dev/zero | tr '\0' 'a'; \
+  printf '"\n      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]\n'; \
+} > "$WORK/roles-longname.yaml"
+if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-longname.yaml" \
+  --set component=core > "$WORK/prn-ln.out" 2>&1; then
+  prn_ok=1; prn_detail="$prn_detail [a 253+ char role name rendered]"
+else
+  grep -q 'over the 253-char' "$WORK/prn-ln.out" \
+    || { prn_ok=1; prn_detail="$prn_detail [over-long role name failed for another reason: $(head -1 "$WORK/prn-ln.out" | cut -c1-90)]"; }
+fi
+# g. the pki.roles value constraints MIRROR the operator's CRD. A values schema
+# looser than the CRD is worse than none: the value renders clean and the
+# apiserver rejects the object. Both cases shipped once — a bare-integer ttl
+# (valid to bao's parser, rejected by the CRD) and keyBits over the CRD maximum.
+cat > "$WORK/roles-crdmismatch.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      ttl: "3600"
+YAML
+cat > "$WORK/roles-keybits.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+      keyBits: 16384
+YAML
+for prn_case in crdmismatch:ttl keybits:keyBits; do
+  prn_file="$WORK/roles-${prn_case%%:*}.yaml"; prn_key="${prn_case##*:}"
+  # Against the REAL chart: this one is the schema's job, not a template fail().
+  if "$HELM" template "$RELEASE" "$CHART" -n "$NS" \
+    -f "$FIXTURES/values-full.yaml" -f "$prn_file" \
+    --set component=core > "$WORK/prn-crd.out" 2>&1; then
+    prn_ok=1; prn_detail="$prn_detail [$prn_key outside the operator CRD's constraint rendered — it would be rejected at apply]"
+  else
+    grep -q "$prn_key" "$WORK/prn-crd.out" \
+      || { prn_ok=1; prn_detail="$prn_detail [$prn_key rejection did not name the field: $(head -1 "$WORK/prn-crd.out" | cut -c1-90)]"; }
+  fi
+done
+# f. counterweight: two DISTINCT names still render two roles. Without this the
+# guard could reject every multi-role catalog and still pass above.
+cat > "$WORK/roles-ok.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+    - nameTemplate: "{tenant}-client"
+      allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+YAML
+prn_n="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  -f "$WORK/roles-ok.yaml" --set component=core 2>/dev/null \
+  | grep -c '^kind: OpenBaoPKISecretEngineRole' || true)"
+[ "$prn_n" = 2 ] \
+  || { prn_ok=1; prn_detail="$prn_detail [two distinct role names rendered $prn_n roles, want 2]"; }
+# h. blast radius: the guards must fail the slices that RENDER PKI and only
+# those. §04 renders core and eso, so an unqualified call there hard-failed the
+# tenant's ESO SecretStores over a PKI-only typo.
+for prn_slice in core certManager; do
+  "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+    -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-dup.yaml" \
+    --set component=$prn_slice > /dev/null 2>&1 \
+    && { prn_ok=1; prn_detail="$prn_detail [component=$prn_slice renders PKI but did not catch a duplicate role name]"; }
+done
+"$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-dup.yaml" \
+  --set component=eso > "$WORK/prn-eso.out" 2>&1 \
+  || { prn_ok=1; prn_detail="$prn_detail [a PKI-only role-catalog error failed the eso slice, taking out KV secret delivery: $(head -1 "$WORK/prn-eso.out" | cut -c1-90)]"; }
+# and the eso slice still rendered its own objects rather than going quietly empty
+grep -q '^kind:' "$WORK/prn-eso.out" \
+  || { prn_ok=1; prn_detail="$prn_detail [the eso slice rendered nothing at all under a PKI typo]"; }
+[ "$prn_ok" -eq 0 ] && check pkirolenames 0 || check pkirolenames 1 "$prn_detail"
+
+# 35. pkicadomains — the tenant CA is never created without name constraints,
+# in EITHER mode, and never created before the constraints can be right.
+#
+# Not covered by nullfields (31): an OMITTED field is not a null field, so the
+# render was clean and admission was happy while the CA went out unconstrained.
+# The operator treats a present CA as final ("A present CA is final for both
+# root and intermediate"), so that is permanent for that tenant — the next
+# render cannot repair it, and an unconstrained tenant CA is accepted for any
+# other tenant's name by every peer that trusts it. The role's allowedDomains is
+# the opposite case and is deliberately left omittable: bao fails an empty role
+# closed and the next render fills it in.
+pcd_ok=0; pcd_detail=""
+pcd_dom() { # <manifest> -> permittedDnsDomains entries of the tenant CA
+  "$YQ" e -N 'select(.kind == "OpenBaoPKISecretEngineConfig" and .metadata.name == "team-a-pki-root")
+              | .spec.permittedDnsDomains // [] | .[]' "$1"
+}
+pcd_kinds() { # <manifest> -> sorted kind list
+  "$YQ" e -N 'select(.kind) | .kind' "$1" | sort -u
+}
+# a. the zero-labelled-namespace window: NO CA at all. The only constraint
+# derivable there is the templates' literal suffix — cluster-wide by default —
+# and a final CA would keep it forever.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
+  --set component=core > "$WORK/pcd-empty.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads render failed: $(head -1 "$WORK/pcd-empty.out" | cut -c1-90)]"; }
+grep -q '^kind: OpenBaoPKISecretEngineConfig' "$WORK/pcd-empty.out" \
+  && { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads emitted a CA: constraints \"$(pcd_dom "$WORK/pcd-empty.out" | tr '\n' ',')\" would be frozen cluster-wide]"; }
+# and the counterweight, or "emitted nothing at all" would be the pass path: the
+# mount and the role still render, so the CA is what waits, not the whole slice.
+for pcd_want in OpenBaoSecretEngine OpenBaoPKISecretEngineRole; do
+  pcd_kinds "$WORK/pcd-empty.out" | grep -qx "$pcd_want" \
+    || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads dropped $pcd_want too — the CA alone should wait]"; }
+done
+# b. with namespaces, the per-namespace union, and the CA appears.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core > "$WORK/pcd-full.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [values-full render failed]"; }
+pcd_full="$(pcd_dom "$WORK/pcd-full.out")" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [yq failed on the values-full render]"; }
+[ -n "$pcd_full" ] \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [populated tenant rendered no CA constraints]"; }
+grep -qx 'svc.cluster.local' <<<"$pcd_full" \
+  && { pcd_ok=1; pcd_detail="$pcd_detail [populated tenant fell back to a bare suffix instead of its namespaces]"; }
+# c. root mode is constrained too: under pki.crossTenant a peer trusts a
+# self-signed root directly, so nothing above it bounds an unconstrained one.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=core --set pki.hierarchy.enabled=false > "$WORK/pcd-root.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [root-mode render failed: $(head -1 "$WORK/pcd-root.out" | cut -c1-90)]"; }
+pcd_root="$(pcd_dom "$WORK/pcd-root.out")"
+[ -n "$pcd_root" ] \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [root mode rendered a CA with no permittedDnsDomains]"; }
+"$YQ" e -N 'select(.kind == "OpenBaoPKISecretEngineConfig") | .spec.type' "$WORK/pcd-root.out" \
+  | grep -qx root || { pcd_ok=1; pcd_detail="$pcd_detail [root-mode fixture did not render a type=root CA]"; }
+# d. a catalog that yields no domain for any namespace cannot constrain the CA,
+# so it fails at render rather than emitting an unconstrained one.
+cat > "$WORK/roles-nodomains.yaml" <<'YAML'
+pki:
+  roles:
+    - nameTemplate: "{tenant}-svc"
+      allowedDomainsTemplate: []
+YAML
+# Reuses pkirolenames' schema-stripped tree rather than making a second identical
+# copy — two copies drift the moment one changes how the schema is bypassed.
+if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  -f "$WORK/roles-nodomains.yaml" --set component=core > "$WORK/pcd-nd.out" 2>&1; then
+  pcd_ok=1; pcd_detail="$pcd_detail [a catalog with no allowedDomainsTemplate rendered an unconstrained CA]"
+else
+  grep -q 'no DNS name constraints' "$WORK/pcd-nd.out" \
+    || { pcd_ok=1; pcd_detail="$pcd_detail [empty domain catalog failed without explaining why: $(head -1 "$WORK/pcd-nd.out" | cut -c1-90)]"; }
+fi
+# e. an omitted pki.hierarchy renders root mode, as openbao.pkiMount reads it.
+# A chained deref on the absent block nil-pointers the whole core TI instead.
+printf 'pki:\n  hierarchy: null\n' > "$WORK/pcd-nilhier.yaml"
+if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  -f "$WORK/pcd-nilhier.yaml" --set component=core > "$WORK/pcd-nh.out" 2>&1; then
+  "$YQ" e -N 'select(.kind == "OpenBaoPKISecretEngineConfig") | .spec.type' "$WORK/pcd-nh.out" \
+    | grep -qx root \
+    || { pcd_ok=1; pcd_detail="$pcd_detail [a null pki.hierarchy did not render root mode]"; }
+else
+  pcd_ok=1; pcd_detail="$pcd_detail [a null pki.hierarchy failed the render: $(head -1 "$WORK/pcd-nh.out" | cut -c1-90)]"
+fi
+# f. §11's Bundle waits for the same window: its first source is <tenant>-ca,
+# which only the CA publishes, and its target selects this tenant's namespaces.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
+  --set component=trust --set pki.crossTenant.enabled=true > "$WORK/pcd-tr0.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads trust render failed]"; }
+grep -q '^kind: Bundle' "$WORK/pcd-tr0.out" \
+  && { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads emitted a Bundle sourcing a CA that does not exist yet]"; }
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set component=trust --set pki.crossTenant.enabled=true > "$WORK/pcd-tr1.out" 2>&1 \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [values-full trust render failed]"; }
+grep -q '^kind: Bundle' "$WORK/pcd-tr1.out" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [a populated tenant rendered no Bundle — the window gate is too wide]"; }
+[ "$pcd_ok" -eq 0 ] && check pkicadomains 0 || check pkicadomains 1 "$pcd_detail"
+
+# 36. parentplumb — the bootstrap passes the install-wide tenant knobs down its
+# child valuesTemplate. Both default to [], so without this the `with` branches
+# render in ZERO passes and a wrong nindent or nesting level ships green,
+# surfacing only as a failed child TI per tenant (no metric, no Event).
+# Parsed as YAML, not grepped, so "contains the key" cannot pass.
+pp_ok=0; pp_detail=""
+cat > "$WORK/parent-plumb.yaml" <<'YAML'
+parent:
+  pki:
+    roles:
+      - nameTemplate: "{tenant}-client"
+        allowedDomainsTemplate: ["{namespace}.svc.cluster.local"]
+        ttl: "24h"
+        serverFlag: false
+  sso:
+    allowedRedirectUris:
+      - "https://console.example.com/oidc/callback"
+YAML
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" -f "$WORK/parent-plumb.yaml" \
+  > "$WORK/pp.out" 2>&1 \
+  || { pp_ok=1; pp_detail="$pp_detail [bootstrap render failed: $(head -1 "$WORK/pp.out" | cut -c1-90)]"; }
+# The core child Template's valuesTemplate, parsed as the YAML the tenant chart
+# will receive. The gotemplate placeholders are scalars, so this parses.
+"$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")
+            | .spec.helm.valuesTemplate' "$WORK/pp.out" > "$WORK/pp-values.yaml" 2>/dev/null \
+  || { pp_ok=1; pp_detail="$pp_detail [could not extract the core valuesTemplate]"; }
+pp_get() { "$YQ" e -N "$1" "$WORK/pp-values.yaml" 2>/dev/null; }
+[ "$(pp_get '.pki.roles | length')" = 1 ] \
+  || { pp_ok=1; pp_detail="$pp_detail [parent.pki.roles did not reach the child values as a 1-entry list: got '$(pp_get '.pki.roles | length')']"; }
+[ "$(pp_get '.pki.roles[0].nameTemplate')" = '{tenant}-client' ] \
+  || { pp_ok=1; pp_detail="$pp_detail [role nameTemplate wrong: '$(pp_get '.pki.roles[0].nameTemplate')']"; }
+[ "$(pp_get '.pki.roles[0].serverFlag')" = false ] \
+  || { pp_ok=1; pp_detail="$pp_detail [a false pass-through field was lost: serverFlag='$(pp_get '.pki.roles[0].serverFlag')']"; }
+[ "$(pp_get '.sso.allowedRedirectUris[0]')" = 'https://console.example.com/oidc/callback' ] \
+  || { pp_ok=1; pp_detail="$pp_detail [sso.allowedRedirectUris did not reach the child values]"; }
+# The plumbed values must survive the tenant chart too, not just parse here.
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  -f <("$YQ" e -N '{"pki": {"roles": .pki.roles}, "sso": {"allowedRedirectUris": .sso.allowedRedirectUris}}' "$WORK/pp-values.yaml") \
+  --set component=core > "$WORK/pp-tenant.out" 2>&1 \
+  || { pp_ok=1; pp_detail="$pp_detail [tenant chart rejected the plumbed values: $(head -1 "$WORK/pp-tenant.out" | cut -c1-90)]"; }
+grep -q 'name: pki-team-a-client' "$WORK/pp-tenant.out" \
+  || { pp_ok=1; pp_detail="$pp_detail [plumbed role did not render in the tenant chart]"; }
+# Counterweight: left at its default the block is OMITTED, not emitted empty —
+# an empty pki.roles would trip the tenant chart's own guard for every tenant.
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" > "$WORK/pp-def.out" 2>&1 \
+  || { pp_ok=1; pp_detail="$pp_detail [default bootstrap render failed]"; }
+"$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")
+            | .spec.helm.valuesTemplate' "$WORK/pp-def.out" > "$WORK/pp-defvals.yaml" 2>/dev/null
+"$YQ" e -N 'has("pki") and (.pki | has("roles"))' "$WORK/pp-defvals.yaml" 2>/dev/null | grep -qx false \
+  || { pp_ok=1; pp_detail="$pp_detail [an unset parent.pki.roles still emitted a roles key, which would override the tenant chart default]"; }
+# And a nulled optional block must not nil-pointer the whole bootstrap render.
+printf 'parent:\n  pki: null\n  sso: null\n' > "$WORK/pp-null.yaml"
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" -f "$WORK/pp-null.yaml" > "$WORK/pp-null.out" 2>&1 \
+  || { pp_ok=1; pp_detail="$pp_detail [a nulled parent.pki/parent.sso failed the bootstrap render: $(head -1 "$WORK/pp-null.out" | cut -c1-90)]"; }
+[ "$pp_ok" -eq 0 ] && check parentplumb 0 || check parentplumb 1 "$pp_detail"
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust

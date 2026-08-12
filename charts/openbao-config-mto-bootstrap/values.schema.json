@@ -21,7 +21,8 @@
     }
   },
   "required": [
-    "operatorNamespace"
+    "operatorNamespace",
+    "parent"
   ],
   "properties": {
     "operatorNamespace": {
@@ -45,7 +46,10 @@
         "mode": {
           "description": "\"root\" is an online self-signed platform root; \"intermediate\" keeps the root offline. Enumerated because the template matches \"intermediate\" exactly, so any other value would otherwise render an online root.",
           "type": "string",
-          "enum": ["root", "intermediate"]
+          "enum": [
+            "root",
+            "intermediate"
+          ]
         }
       }
     },
@@ -73,10 +77,39 @@
           "properties": {
             "enabled": {
               "$ref": "#/definitions/boolish"
+            },
+            "issuerUrl": {
+              "type": "string"
+            },
+            "allowedRedirectUris": {
+              "description": "Tenant chart sso.allowedRedirectUris. Empty means the tenant chart's default loopback callback.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "pki": {
+          "description": "Tenant PKI settings rendered literally into the child valuesTemplate (install-wide, not per-tenant parameters).",
+          "type": "object",
+          "properties": {
+            "roles": {
+              "description": "Tenant chart pki.roles. Empty means the tenant chart's own default catalog. Validated structurally here only \u2014 the per-field constraints (and additionalProperties:false, which is what catches a misspelled pass-through field) live in the tenant chart's schema, and duplicating them here would let the two drift.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "nameTemplate",
+                  "allowedDomainsTemplate"
+                ]
+              }
             }
           }
         }
-      }
+      },
+      "description": "Parent Template defaults, passed through to every child TI. REQUIRED: a values file that nulls it deletes the key (helm drops null keys before schema validation), and every .Values.parent.<x> read then nil-pointers the whole bootstrap render with a Go template stack trace instead of naming the value."
     },
     "sync": {
       "type": "object",

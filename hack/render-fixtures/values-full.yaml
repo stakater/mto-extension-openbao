@@ -44,8 +44,12 @@ pki:
     enabled: true
   crossTenant:
     enabled: true
-  # Chart default plus allowBareDomains/allowGlobDomains, off by default and so
-  # rendered in no other fixture.
+  # Chart default plus every field the chart plumbs but the default role leaves
+  # unset — allowBareDomains/allowGlobDomains, and the hardening fields whose
+  # bao default is the permissive one. Each is a pass-through the chart omits
+  # when absent, so a field no fixture sets is a field crd-validate never sends
+  # through the apiserver: a rename or a wrong type on the operator side would
+  # not show up here at all.
   roles:
     - nameTemplate: "{tenant}-svc"
       allowedDomainsTemplate:
@@ -54,6 +58,19 @@ pki:
       allowBareDomains: true
       allowGlobDomains: true
       enforceHostnames: true
+      allowIpSans: false
+      allowAnyName: false
+      requireCN: true
+      noStore: false
+      generateLease: false
+      codeSigningFlag: false
+      emailProtection: false
+      keyUsage:
+        - DigitalSignature
+        - KeyEncipherment
+      extKeyUsage:
+        - ServerAuth
+        - ClientAuth
       ttl: "168h"
       maxTtl: "720h"
       serverFlag: true

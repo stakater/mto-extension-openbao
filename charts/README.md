@@ -692,6 +692,25 @@ There are two CA setups:
 
 > **Needs:** [cert-manager](https://cert-manager.io/) for certificate issuance through Kubernetes; the platform CA (from the bootstrap chart) for the default shared-trust setup.
 
+### What bounds a certificate, and what doesn't
+
+Two separate limits apply, and they behave differently over time.
+
+**The role** decides what it will issue: `allowedDomainsTemplate` becomes the role's allowed names, one entry per tenant namespace. The role is rewritten on every render, so it tracks namespaces as they come and go.
+
+**The tenant CA** carries *name constraints* — a limit baked into the CA certificate itself, which every verifier enforces on the whole chain. In shared-trust mode the chart sets them from the same domains. Unlike the role, **a CA's constraints are fixed when the CA is created**: OpenBao treats an existing CA as final (regenerating one would destroy its private key), so later renders cannot widen them. Two consequences worth knowing before you turn PKI on:
+
+- A namespace added to the tenant *after* the CA exists is not in the CA's constraints. The role will happily issue a certificate for it and every verifier will then reject the chain. If you add namespaces to a tenant that has been running a while and certificates start failing validation for the new namespace only, this is why — the fix is to re-create the tenant CA (which invalidates certificates already issued from it), so prefer creating the tenant's namespaces before enabling PKI.
+- **The CA waits for the tenant's first namespace.** A `Tenant` is normally created before its namespaces carry the tenant label, and in that window there are no per-namespace domains to constrain the CA with — the only limit derivable from the templates alone is their literal suffix (`{namespace}.svc.cluster.local` → `svc.cluster.local`), which permits every namespace in the cluster, including every other tenant's. Because constraints are fixed at creation that would be permanent, so the chart does not create the CA at all until the tenant has a namespace: the engine mount and the roles render, the CA follows on the next render. Nothing can issue in that window anyway. The cross-tenant trust `Bundle` waits with it, since it sources the CA's own ConfigMap.
+- **The same rule runs backwards, so un-labelling a tenant's last namespace is destructive.** A render cannot see that a CA already exists, so a running tenant whose namespaces stop matching — labels removed, `tenantLabelKey` changed, tenant scaled to zero namespaces — loses the CA object and the `<tenant>-ca` ConfigMap with it, and every peer trusting this tenant gets an unresolvable Bundle source. Whether the CA *in OpenBao* survives is down to `safety.deletionProtection` (on by default, which orphans rather than destroys it) — but if the namespaces come back the chart recomputes name constraints while OpenBao keeps the CA it already had, so the resource then advertises constraints nothing enforces.
+- The CA is constrained in **both** modes. A self-signed tenant root is not automatically safer than an intermediate: under cross-tenant trust a peer trusts it directly as an anchor, so there is nothing above it to bound what it signs. A catalog that yields no domains for any namespace fails the render rather than producing an unconstrained CA.
+
+Name constraints cover **DNS names only**. An IP address in a certificate is bounded by neither the CA's constraints nor `allowedDomains`, which is why the shipped role sets `allowIpSans: false` (OpenBao's own default is `true`). Turn it on only for a workload that genuinely presents certificates by IP.
+
+Everything in a `pki.roles[]` entry other than the two template fields is passed straight through to the role and **left out when you don't set it**, meaning OpenBao's default applies. `values.yaml` lists each field with that default; a misspelled key is rejected by the values schema rather than silently ignored.
+
+**Changing the catalog.** Set `parent.pki.roles` in the bootstrap chart (or `pki.roles` when using the per-tenant chart standalone) — the bootstrap value is passed straight through to every tenant, so the catalog is install-wide. Leave it empty to keep the shipped single-role default. `nameTemplate` must render a distinct, valid Kubernetes name per entry: it becomes the OpenBao role, the `OpenBaoPKISecretEngineRole` and the cert-manager `Issuer`, so the chart fails the render on a collision, on a name the API server would reject, and on one over 253 characters.
+
 ### Two ways to get a certificate
 
 **1. Through cert-manager (recommended).** Turn on `parent.certManager.enabled` in the bootstrap chart (or `pki.certManager.enabled` when using the per-tenant chart standalone). The chart creates a cert-manager `Issuer` (named after the tenant's PKI role) in each namespace that opts in, all inside a separate per-tenant render (`openbao-config-mto-<tenant>.certmanager`) — so a cluster without cert-manager fails only that render, never the tenant's core setup. Your app then requests a certificate the normal cert-manager way:
@@ -884,11 +903,25 @@ For each tier in `sso.tiers`, the chart creates a login role bound to an IdP gro
 
 | Tier | What a person can do |
 |---|---|
-| `super-admin` | Everything `admin` can, **plus** destroy/regenerate the tenant CA. Break-glass only. |
 | `admin` | Full KV (including delete), full Transit, issue certificates and manage roles. Cannot destroy the CA. |
 | `editor` | Read/create/update KV; encrypt/decrypt with Transit; issue certificates. |
 | `viewer` | Read KV; read Transit and PKI. No changes. |
 | `audit-read` | List KV names; list Transit keys; read PKI. No values. |
+
+**No tier can replace the tenant CA.** The CA's key and its name constraints are the tenant's whole PKI trust boundary, and every OpenBao path that can replace it is a way out of that boundary rather than just a destructive button: `root/sign-intermediate` and `root/sign-self-issued` sign a CSR the caller supplies, making the holder an issuer under the tenant CA, and `intermediate/set-signed` accepts a certificate from *any* issuer, so the holder could install an unconstrained CA of their own into the mount and then issue for a peer's names on a chain that peer trusts. Replacing a tenant CA is a platform-operator action against OpenBao, not an SSO tier. (A `super-admin` tier holding exactly these grants was removed.)
+
+> **Upgrade note — removing `super-admin` does not always revoke it.** Only relevant if SSO was already on before this tier was dropped; with `sso.enabled: false` (the default) it was never created and there is nothing to do. The chart stops rendering `sso-<tenant>-super-admin`, and the operator then deletes the OpenBao policy and OIDC role — *unless* `safety.grantDeletionProtection: true`, which renders grants as `deletionPolicy: Retain`, so the OpenBao objects are orphaned rather than removed and the login keeps working with its old grants. Check the live posture:
+>
+> ```bash
+> kubectl -n openbao-config-operator-system \
+>   get openbaopolicy,openbaojwtoidcauthengineroles \
+>   -o custom-columns=KIND:.kind,NAME:.metadata.name,DELETION:.spec.deletionPolicy \
+>   | grep super-admin
+> ```
+>
+> `Delete` (what the default `grantDeletionProtection: false` produces) means the upgrade revokes it and no action is needed. If it says `Retain`, set `safety.grantDeletionProtection: false` and let the CRs re-render as `Delete` *before* upgrading. Hand-patching the CR does not work: template-operator-v2 owns those fields via server-side apply and `sync.mode: revert` undoes it.
+
+**Redirect URIs.** OpenBao rejects an OIDC role with an empty `allowed_redirect_uris`, so the chart fails the render when SSO is on and the list is empty rather than emitting a role nobody can log in through. The default is the `bao` CLI's loopback listener (`http://localhost:8250/oidc/callback`); set `parent.sso.allowedRedirectUris` in the bootstrap chart to add a browser console callback.
 
 SSO tokens are short-lived (default 15 minutes, 1 hour max), because group changes in the IdP don't apply to tokens already handed out.
 
