@@ -24,6 +24,10 @@ spec:
   {{- end }}
   parameters:
     - name: tenants
+    {{- /* All namespaces, so the gotemplate can count the ones carrying
+           tenantLabelKey. No `name`, so t-op-v2 LISTs the GVK; the read is
+           already granted by the tenant-reader ClusterRole in 00-rbac.yaml. */}}
+    - name: tenantNamespaces
     - name: env
       value: {{ .Values.parent.env | quote }}
     - name: operatorNamespace

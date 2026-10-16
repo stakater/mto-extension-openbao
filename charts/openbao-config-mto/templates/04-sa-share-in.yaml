@@ -64,6 +64,7 @@ spec:
       - {{ $saNs }}
   policies:
     - {{ $shareInName }}
+  tokenType: {{ include "openbao.tokenType" $ }}
   {{- if $.Values.token.ttl }}
   tokenTTL: {{ $.Values.token.ttl }}
   {{- end }}

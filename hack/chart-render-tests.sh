@@ -101,6 +101,37 @@
 #                    hierarchy mode. An omitted field is not a null field, so
 #                    nullfields (31) passes on an unconstrained CA, and the
 #                    operator treats a present CA as final: empty is permanent.
+#  36. parentplumb — the bootstrap passes the install-wide tenant knobs down
+#                    its child valuesTemplate, and an unset knob is OMITTED
+#                    rather than emitted empty. t-op-v2 owns rendered fields via
+#                    SSA, so anything not plumbed is unreachable per tenant, and
+#                    an empty key would override the tenant chart's own default.
+#  38. ssorootlist — every SSO tier policy can LIST the kv mount root. A
+#                    prefix glob (kv/metadata/<env>/*) never covers the prefix
+#                    itself, so without an explicit rule the web UI's secrets
+#                    browser is refused on its first request and shows an empty
+#                    tree for every tier — the human path the tiers exist for.
+#
+#  39. nsgate     — the parent gates each tenant on namespaces carrying
+#                    tenantLabelKey, not on the Tenant spec list. MTO attaches a
+#                    namespace to a tenant two supported ways — listed in the
+#                    spec, or adopted by adding the label — and only the label is
+#                    set by both. Reading the spec skips an adopting tenant
+#                    entirely and silently, and also passes a spec listing
+#                    namespaces that do not exist yet, which is the failure the
+#                    gate exists to prevent. knownTenants uses the same count, so
+#                    a peer never holds a share grant for a tenant that renders
+#                    nothing.
+#
+#  37. tokentype  — every OpenBaoKubernetesAuthRole carries an explicit
+#                    tokenType, the value is enumerated, and batch is refused
+#                    alongside token.period. bao ACCEPTS numUses/period on a
+#                    batch token and silently ignores both (a use-limit=1 batch
+#                    token serves unlimited reads), so a periodic grant that is
+#                    not periodic would otherwise ship green. Checked with
+#                    values.schema.json removed, because the schema is
+#                    skippable and is not applied on every SDK render path.
+#
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -259,6 +290,21 @@ parameters:
     - metadata:
         name: empty-tenant
       spec: {}
+  # The gate counts namespaces carrying tenantLabelKey, so the fixture models
+  # namespaces rather than Tenant spec lists. empty-tenant deliberately has
+  # none. The unlabelled and foreign-labelled entries prove the filter is not
+  # just counting the whole list.
+  tenantNamespaces:
+    - metadata:
+        name: team-a-dev
+        labels:
+          stakater.com/tenant: team-a
+    - metadata:
+        name: no-label-ns
+    - metadata:
+        name: someone-elses-ns
+        labels:
+          stakater.com/tenant: other-tenant
 EOF
 
 emit() { # emit <eso> <certManager> <crossTenantPki> -> "name->templateRef" lines, sorted
@@ -1543,5 +1589,227 @@ templateset_case defaults  enabled  false false openbao-config-mto openbao-confi
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust
 templateset_case all-off   disabled false false openbao-config-mto
 templateset_case trust-only disabled false true openbao-config-mto openbao-config-mto-trust
+
+# 37. tokentype — the token type is explicit, enumerated, and cannot be
+# combined with a setting bao silently ignores. The auth role is the workload's
+# whole identity: an unpinned tokenType inherits the auth mount's tune (state
+# this chart does not own), and batch+period emits a grant that reads as
+# periodic while being fixed-TTL, because bao drops period on a batch token
+# without erroring.
+tt_ok=0; tt_detail=""
+
+# every rendered auth role pins the type, and the default is the safe one
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  > "$WORK/tt-default.out" 2>&1 \
+  || { tt_ok=1; tt_detail="$tt_detail [default render failed: $(head -1 "$WORK/tt-default.out" | cut -c1-90)]"; }
+tt_kinds="$("$YQ" e -N 'select(.kind == "OpenBaoKubernetesAuthRole") | .metadata.name' "$WORK/tt-default.out" 2>/dev/null | wc -l | tr -d ' ')"
+tt_typed="$("$YQ" e -N 'select(.kind == "OpenBaoKubernetesAuthRole") | .spec.tokenType' "$WORK/tt-default.out" 2>/dev/null | grep -cx 'service' || true)"
+# Counted, not hardcoded: the invariant is "every rendered role is pinned",
+# which must hold however many ServiceAccounts and shares the fixture grows.
+[ "${tt_kinds:-0}" -gt 0 ] \
+  || { tt_ok=1; tt_detail="$tt_detail [values-full rendered no auth roles at all, so this check proves nothing]"; }
+[ "$tt_typed" = "$tt_kinds" ] \
+  || { tt_ok=1; tt_detail="$tt_detail [only $tt_typed of $tt_kinds auth roles pinned tokenType: service — an unpinned role inherits the mount tune]"; }
+
+# batch reaches every role too (period cleared, since values-full sets it)
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set token.type=batch --set token.period= > "$WORK/tt-batch.out" 2>&1 \
+  || { tt_ok=1; tt_detail="$tt_detail [batch render failed: $(head -1 "$WORK/tt-batch.out" | cut -c1-90)]"; }
+tt_b="$("$YQ" e -N 'select(.kind == "OpenBaoKubernetesAuthRole") | .spec.tokenType' "$WORK/tt-batch.out" 2>/dev/null | grep -cx 'batch' || true)"
+[ "$tt_b" = "$tt_kinds" ] \
+  || { tt_ok=1; tt_detail="$tt_detail [batch reached only $tt_b of $tt_kinds auth roles]"; }
+
+# the two guards, with the schema REMOVED so the helper is verified alone
+cp -R "$CHART" "$WORK/chart-noschema"
+rm -f "$WORK/chart-noschema/values.schema.json"
+tt_enum_err="$("$HELM" template "$RELEASE" "$WORK/chart-noschema" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" --set token.type=default-batch 2>&1 || true)"
+grep -q 'token.type must be' <<<"$tt_enum_err" \
+  || { tt_ok=1; tt_detail="$tt_detail [schema-less render accepted token.type=default-batch: $(tr '\n' ' ' <<<"${tt_enum_err:0:160}")]"; }
+tt_period_err="$("$HELM" template "$RELEASE" "$WORK/chart-noschema" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" --set token.type=batch --set token.period=30m 2>&1 || true)"
+grep -q 'a batch token cannot be renewed' <<<"$tt_period_err" \
+  || { tt_ok=1; tt_detail="$tt_detail [batch + token.period rendered instead of failing: $(tr '\n' ' ' <<<"${tt_period_err:0:160}")]"; }
+# service + period must still be allowed — the guard is about batch only
+"$HELM" template "$RELEASE" "$WORK/chart-noschema" -n "$NS" \
+  -f "$FIXTURES/values-full.yaml" --set token.type=service --set token.period=30m \
+  > "$WORK/tt-svcperiod.out" 2>&1 \
+  || { tt_ok=1; tt_detail="$tt_detail [the batch guard also blocks service + period, which is valid]"; }
+
+# and the bootstrap plumbs it: unset emits NO token key (else it would null out
+# the tenant chart's own ttl/maxTTL defaults for every tenant)
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" > "$WORK/tt-boot-def.out" 2>&1 \
+  || { tt_ok=1; tt_detail="$tt_detail [default bootstrap render failed]"; }
+"$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")
+            | .spec.helm.valuesTemplate' "$WORK/tt-boot-def.out" > "$WORK/tt-boot-defvals.yaml" 2>/dev/null
+"$YQ" e -N 'has("token")' "$WORK/tt-boot-defvals.yaml" 2>/dev/null | grep -qx false \
+  || { tt_ok=1; tt_detail="$tt_detail [an unset parent.token still emitted a token key, which would override the tenant chart defaults]"; }
+printf 'parent:\n  token:\n    type: batch\n    ttl: "15m"\n' > "$WORK/tt-boot.yaml"
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" -f "$WORK/tt-boot.yaml" > "$WORK/tt-boot.out" 2>&1 \
+  || { tt_ok=1; tt_detail="$tt_detail [bootstrap render with parent.token failed: $(head -1 "$WORK/tt-boot.out" | cut -c1-90)]"; }
+"$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")
+            | .spec.helm.valuesTemplate' "$WORK/tt-boot.out" > "$WORK/tt-bootvals.yaml" 2>/dev/null
+[ "$("$YQ" e -N '.token.type' "$WORK/tt-bootvals.yaml" 2>/dev/null)" = batch ] \
+  || { tt_ok=1; tt_detail="$tt_detail [parent.token.type did not reach the child values]"; }
+[ "$("$YQ" e -N '.token.ttl' "$WORK/tt-bootvals.yaml" 2>/dev/null)" = 15m ] \
+  || { tt_ok=1; tt_detail="$tt_detail [parent.token.ttl did not reach the child values]"; }
+# maxTTL was not set, so it must be absent rather than null
+"$YQ" e -N '.token | has("maxTTL")' "$WORK/tt-bootvals.yaml" 2>/dev/null | grep -qx false \
+  || { tt_ok=1; tt_detail="$tt_detail [an unset parent.token.maxTTL emitted a null key]"; }
+# a nulled parent.token must not break the render
+printf 'parent:\n  token: null\n' > "$WORK/tt-boot-null.yaml"
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" -f "$WORK/tt-boot-null.yaml" > "$WORK/tt-null.out" 2>&1 \
+  || { tt_ok=1; tt_detail="$tt_detail [a nulled parent.token failed the bootstrap render: $(head -1 "$WORK/tt-null.out" | cut -c1-90)]"; }
+[ "$tt_ok" -eq 0 ] && check tokentype 0 || check tokentype 1 "$tt_detail"
+
+# 38. ssorootlist — the UI browser needs LIST on the mount root, and a glob on
+# kv/metadata/<env>/* does not grant it. Asserted per tier rather than once, so
+# a future per-tier refactor cannot drop it from the quiet ones (audit-read and
+# viewer are exactly the tiers a human is most likely to be given).
+sr_ok=0; sr_detail=""
+"$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  > "$WORK/sr.out" 2>&1 \
+  || { sr_ok=1; sr_detail="$sr_detail [render failed: $(tr '\n' ' ' <<<"$(head -1 "$WORK/sr.out")")]"; }
+sr_seen=0
+for tier in admin editor viewer audit-read; do
+  sr_pol="$("$YQ" e -N "select(.kind == \"OpenBaoPolicy\" and .metadata.name == \"sso-team-a-$tier\") | .spec.policy" "$WORK/sr.out" 2>/dev/null)"
+  [ -n "$sr_pol" ] || { sr_ok=1; sr_detail="$sr_detail [no policy rendered for tier $tier]"; continue; }
+  sr_seen=$((sr_seen+1))
+  # Line-anchored: an unanchored match also succeeds when the rule has been
+  # glued onto a trailing `#` comment by template whitespace trimming, which is
+  # exactly how this shipped inert the first time. A commented-out rule is not
+  # a rule, and bao returns 403 for it.
+  grep -qE '^[[:space:]]*path "kv/metadata" *\{ *capabilities *= *\["list"\] *\}' <<<"$sr_pol" \
+    || { sr_ok=1; sr_detail="$sr_detail [tier $tier has no ACTIVE kv/metadata list rule (missing, or commented out by whitespace trimming)]"; }
+done
+[ "$sr_seen" -eq 4 ] \
+  || { sr_ok=1; sr_detail="$sr_detail [expected 4 SSO tier policies, found $sr_seen]"; }
+# Counterweight: the root rule must be LIST only. read/create here would reach
+# across every env prefix on the mount, not just the tenant's own.
+sr_root="$("$YQ" e -N 'select(.kind == "OpenBaoPolicy" and .metadata.name == "sso-team-a-admin") | .spec.policy' "$WORK/sr.out" 2>/dev/null | grep 'path "kv/metadata"' || true)"
+grep -qv 'read\|create\|update\|delete' <<<"$sr_root" \
+  || { sr_ok=1; sr_detail="$sr_detail [the mount-root rule grants more than list: $sr_root]"; }
+[ "$sr_ok" -eq 0 ] && check ssorootlist 0 || check ssorootlist 1 "$sr_detail"
+
+# 39. nsgate — the label decides, not the Tenant spec. Rendered through the same
+# shim as `emission`, with the two cases the old spec-based gate got wrong.
+ng_ok=0; ng_detail=""
+ng_render() { # ng_render <valuesfile> -> manifest on stdout
+  "$HELM" template shim "$WORK/shim" -f "$1"
+}
+ng_tis() { "$YQ" e -N 'select(.kind == "TemplateInstance") | .metadata.name' - 2>/dev/null | sort | tr '\n' ' '; }
+ng_roster() {
+  "$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto-parent") | .spec.parameters' - 2>/dev/null
+}
+
+# Case A: the adopted-namespace tenant. Spec lists NOTHING, but two namespaces
+# carry its label. This is a supported MTO configuration and the child TI's
+# namespaceSelector would resolve both, so it must render.
+cat > "$WORK/ng-adopted.yaml" <<'YAML'
+parameters:
+  env: dev
+  operatorNamespace: openbao-config-operator-system
+  tokenReviewerSecretName: bao-token-reviewer
+  kubernetesHost: https://kubernetes.default.svc
+  childTemplateName: openbao-config-mto
+  tenantLabelKey: stakater.com/tenant
+  sharedTenantName: shared
+  ssoEnabled: "false"
+  ssoIssuerUrl: ""
+  eso: disabled
+  externalSecretRefreshInterval: "1h"
+  certManagerEnabled: "false"
+  crossTenantPkiEnabled: "false"
+  safetyDeletionProtection: "true"
+  tenants:
+    - metadata:
+        name: adopter
+      spec: {}
+  tenantNamespaces:
+    - metadata:
+        name: adopted-one
+        labels:
+          stakater.com/tenant: adopter
+    - metadata:
+        name: adopted-two
+        labels:
+          stakater.com/tenant: adopter
+YAML
+ng_a="$(ng_render "$WORK/ng-adopted.yaml" | ng_tis)"
+[ "$ng_a" = "openbao-config-mto-adopter " ] \
+  || { ng_ok=1; ng_detail="$ng_detail [a tenant whose namespaces are adopted by label rendered '$ng_a' instead of its core TI — this is the tenant-pe defect]"; }
+
+# Case B: the reverse. The spec lists a namespace, but no namespace carries the
+# label (MTO has not created it yet). The old gate passed this and the child then
+# failed NamespaceSelectorMatchedZero.
+cat > "$WORK/ng-declared-only.yaml" <<'YAML'
+parameters:
+  env: dev
+  operatorNamespace: openbao-config-operator-system
+  tokenReviewerSecretName: bao-token-reviewer
+  kubernetesHost: https://kubernetes.default.svc
+  childTemplateName: openbao-config-mto
+  tenantLabelKey: stakater.com/tenant
+  sharedTenantName: shared
+  ssoEnabled: "false"
+  ssoIssuerUrl: ""
+  eso: disabled
+  externalSecretRefreshInterval: "1h"
+  certManagerEnabled: "false"
+  crossTenantPkiEnabled: "false"
+  safetyDeletionProtection: "true"
+  tenants:
+    - metadata:
+        name: notyet
+      spec:
+        namespaces:
+          withTenantPrefix: [dev]
+  tenantNamespaces: []
+YAML
+ng_b="$(ng_render "$WORK/ng-declared-only.yaml" | ng_tis)"
+[ -z "$ng_b" ] \
+  || { ng_ok=1; ng_detail="$ng_detail [a tenant with a spec list but zero labelled namespaces still rendered '$ng_b'; its child would fail NamespaceSelectorMatchedZero]"; }
+
+# Case C: the roster must exclude a tenant that renders nothing, or its peer
+# keeps a Policy and Role pointing at an endpoint that does not exist.
+cat > "$WORK/ng-roster.yaml" <<'YAML'
+parameters:
+  env: dev
+  operatorNamespace: openbao-config-operator-system
+  tokenReviewerSecretName: bao-token-reviewer
+  kubernetesHost: https://kubernetes.default.svc
+  childTemplateName: openbao-config-mto
+  tenantLabelKey: stakater.com/tenant
+  sharedTenantName: shared
+  ssoEnabled: "false"
+  ssoIssuerUrl: ""
+  eso: disabled
+  externalSecretRefreshInterval: "1h"
+  certManagerEnabled: "false"
+  crossTenantPkiEnabled: "false"
+  safetyDeletionProtection: "true"
+  tenants:
+    - metadata:
+        name: real
+      spec: {}
+    - metadata:
+        name: ghost
+      spec:
+        namespaces:
+          withTenantPrefix: [dev]
+  tenantNamespaces:
+    - metadata:
+        name: real-ns
+        labels:
+          stakater.com/tenant: real
+YAML
+ng_c="$(ng_render "$WORK/ng-roster.yaml")"
+ng_known="$("$YQ" e -N 'select(.kind == "TemplateInstance") | .spec.parameters[] | select(.name == "knownTenants") | .value' <<<"$ng_c" 2>/dev/null | head -1)"
+[ "$ng_known" = "real" ] \
+  || { ng_ok=1; ng_detail="$ng_detail [knownTenants was '$ng_known', expected just 'real' — a tenant the parent renders nothing for must not attract a peer's share grant]"; }
+# And the label filter must not count a namespace belonging to someone else.
+grep -q 'openbao-config-mto-ghost' <<<"$ng_c" \
+  && { ng_ok=1; ng_detail="$ng_detail [a tenant with no labelled namespace got a TI]"; }
+[ "$ng_ok" -eq 0 ] && check nsgate 0 || check nsgate 1 "$ng_detail"
 
 exit "$fail"

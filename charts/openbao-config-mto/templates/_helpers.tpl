@@ -694,3 +694,49 @@ never silently stops. Call with $ inside ranges.
 {{- ternary "Retain" "Delete" (eq $s "true") -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Token type stamped on every OpenBaoKubernetesAuthRole this chart renders.
+
+  service  bao persists the token. It can be renewed and, crucially, REVOKED,
+           and it shows up in auth/token/accessors so live grants are
+           enumerable. Measured on raft storage: 4 fsync'd writes and ~72ms of
+           bao time per login.
+  batch    an HMAC-derived token that is never written to storage: 0 writes,
+           ~0.3ms per login. It cannot be renewed and has no accessor, so it
+           cannot be revoked or listed — its TTL is the only way to retire it.
+
+Why this knob exists: ESO re-authenticates on EVERY ExternalSecret refresh, so
+the login cost is paid per secret, per workload, per interval. That cost is
+what forces externalSecretRefreshInterval up (default 1h) and therefore bounds
+how quickly a rotated secret reaches a workload. Under batch the same refresh
+is nearly free, which is what makes a short interval affordable.
+
+The default stays `service` deliberately: flipping it silently removes
+revocability from every existing tenant's workload identities, which is a
+change to the security posture rather than a tuning change. Opt in.
+
+Pair batch with a SHORT token.ttl — with no revocation path, ttl is the whole
+containment story for a leaked token.
+
+token.period is rejected with batch rather than passed through: bao ACCEPTS
+numUses and period on a batch token and then silently ignores them (verified —
+a batch token created with use-limit=1 served three reads), so a grant that
+reads as bounded would not be. Failing the render is the only way that cannot
+ship green. token.numUses is deliberately not exposed by this chart at all,
+for the same reason.
+*/}}
+{{- define "openbao.tokenType" -}}
+{{- $token := .Values.token | default dict -}}
+{{- $t := "service" -}}
+{{- if hasKey $token "type" -}}
+{{- $t = get $token "type" | toString -}}
+{{- end -}}
+{{- if not (has $t (list "service" "batch")) -}}
+{{- fail (printf "token.type must be \"service\" or \"batch\" — got %q. bao also accepts default/default-service/default-batch, which resolve against the auth mount's tune and so make the token semantics depend on state this chart does not own; they are rejected here." $t) -}}
+{{- end -}}
+{{- if and (eq $t "batch") (get $token "period") -}}
+{{- fail (printf "token.type=batch with token.period=%q: a batch token cannot be renewed, and bao silently ignores period on one, so the render would emit a periodic grant that is not periodic. Set token.period to \"\" or use token.type=service." (get $token "period" | toString)) -}}
+{{- end -}}
+{{- $t -}}
+{{- end -}}

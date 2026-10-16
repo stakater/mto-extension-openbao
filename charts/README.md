@@ -328,6 +328,15 @@ bao read "${VAULT_KV_APP_PATH}postgres"
 
 > The `bao kv get`/`bao kv put` shortcuts also work, but they take the path **without** `/data/` (e.g. `bao kv get -mount=kv dev/team-a-api/web/postgres`). The `VAULT_KV_APP_PATH` variable is the raw-API form (`kv/data/...`), which `bao read`/`bao write` use directly. The same applies in the OpenBao web UI: open the `kv` mount and browse `dev/team-a-api/web/` — no `/data/` segment.
 
+### When your token expires, log in again — don't renew it
+
+Your token is short-lived (`token.ttl`, 1h by default). A long-running process has two ways to cope, and only one of them is portable:
+
+- **Log in again.** Re-run step 1 when the token is close to expiry, or when a call returns `403`. Always works.
+- **Renew it** (`auth/token/renew-self`). Works only while the install uses `service` tokens. If the platform sets `token.type: batch` — which it may, because it makes secret delivery much cheaper — renewal starts failing with `batch tokens cannot be renewed`, and your app stops being able to read secrets about an hour later.
+
+Watch out for renewal you didn't write: the official Vault SDKs (Go's `LifetimeWatcher` and its equivalents in Java and Python) renew in the background by default. If you use one, configure it to re-authenticate rather than renew.
+
 ### What's in the ConfigMap
 
 The first four rows are always present (`VAULT_CACERT` only when the install ships a CA bundle); the four KV rows appear when `kv` is enabled. Sharing, Transit, and PKI add more (shown in each feature section).
@@ -1142,7 +1151,22 @@ A few defaults are tuned for trying things out, not for production:
 - **Operator credentials.** The operator deployment defaults to Kubernetes auth: the operator logs into OpenBao with its own ServiceAccount and stores no token anywhere. This needs a one-time bootstrap per OpenBao server (auth mount + policy + role) — see the [operator README](https://github.com/stakater-ab/openbao-config-operator#openbao-authentication). Never give the operator the root token; the legacy static-token mode (`BAO_AUTH_METHOD=token` + a `VAULT_TOKEN` env) exists only for local development and migration.
 - **Use TLS.** Set `baoServer` to an `https://` address. If OpenBao uses a private CA, also set `baoCABundle`.
 - **Token lifetimes.** Workload tokens default to 1h / 4h max (`token.*`); SSO tokens to 15m / 1h (`ssoToken.*`). Shorten high-privilege tiers if your IdP can't revoke tokens.
-- **Secret refresh.** `externalSecretRefreshInterval` defaults to `1h`. Lower values mean more frequent OpenBao logins.
+- **Secret refresh.** `externalSecretRefreshInterval` defaults to `1h`. Lower values mean more frequent OpenBao logins. ESO re-authenticates on *every* refresh, so the cost is one login per secret, per workload, per interval — read the next item before lowering it.
+- **Workload token type.** `token.type` is `service` by default: OpenBao persists each token, which makes it renewable, revocable, and visible in `auth/token/accessors`. Measured against Raft storage, a `service` login costs **4 fsync'd storage writes and ~72ms** of OpenBao time; a `batch` login costs **0 writes and ~0.3ms**. At 500 workloads on a 30s refresh that is the difference between ~240,000 storage writes an hour and none, so `batch` is what makes a short refresh interval affordable.
+
+  What you give up with `batch`: the token has no accessor, so it **cannot be revoked or listed**. Its TTL is the only way to retire a leaked one, so shorten `token.ttl` (10–15m) when you set it. `token.period` is rejected together with `batch` — OpenBao accepts it on a batch token and then silently ignores it, so the chart fails the render rather than emit a periodic grant that is not periodic.
+
+  **Tell your tenants before switching this on.** A batch token cannot be renewed:
+
+  ```console
+  $ # with the token from auth/kubernetes/login
+  $ curl -X POST -H "X-Vault-Token: $VAULT_TOKEN" .../v1/auth/token/renew-self
+  {"errors":["batch tokens cannot be renewed"]}
+  ```
+
+  That only affects workloads reading OpenBao **directly** (not through ESO), and only those that log in once and then extend the token instead of logging in again. It is an easy pattern to be using without knowing: the official Vault SDKs renew for you in the background (Go's `LifetimeWatcher` and its equivalents), so an app can depend on renewal without its author ever writing a renewal call.
+
+  The failure is delayed rather than immediate — everything works until the first renewal attempt, then the app either logs the error and runs on until the token expires into `403 permission denied`, or its renewal loop gives up. The fix in the app is to re-run the login instead of renewing. `ESO` and `cert-manager` are unaffected: both were verified to log in per operation.
 - **Key rotation.** Transit keys rotate every 90 days by default (`transit.defaultAutoRotatePeriod`).
 - **Network policy.** Turn on `networkPolicy.enabled` to restrict workload traffic to OpenBao and the API server (needs a CNI that enforces NetworkPolicies).
 - **Monitoring.** Turn on `monitoring.enabled` to ship alerts for failed resources (needs the Prometheus operator).

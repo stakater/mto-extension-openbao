@@ -15,11 +15,36 @@
        "false" disables protection — anything unexpected fails toward
        Retain; the shared namespace holds every tenant's shared data. */ -}}
 {{- $dataPolicy := ternary "Delete" "Retain" (eq .parameters.safetyDeletionProtection "false") }}
-{{- /* Comma-separated roster of all real tenant names. Passed to each child so
-       its chart can skip cross-tenant shares whose peer is not a real tenant
-       (no dangling Policy/Role; self-heals when the peer appears). */ -}}
+{{- /* Namespaces per tenant, counted from the <tenantLabel> label.
+       This is the ONLY fact MTO and this chart both agree on. MTO puts that
+       label on a namespace by either supported route: one listed in the Tenant
+       spec (withTenantPrefix/withoutTenantPrefix), and one adopted by adding
+       the label to a namespace that already exists. Reading spec.namespaces
+       instead sees only the first route, so a tenant that adopts namespaces by
+       label renders nothing at all — and the child TI, which resolves through a
+       namespaceSelector on this same label, would have worked fine. It is also
+       wrong the other way: a spec that lists namespaces MTO has not created yet
+       passes, and the child then fails NamespaceSelectorMatchedZero, which is
+       the very failure the gate exists to prevent. */ -}}
+{{- $nsCount := dict }}
+{{- range $ns := (default list .parameters.tenantNamespaces) }}
+{{- $owner := dig "metadata" "labels" $tenantLabel "" $ns }}
+{{- if $owner }}
+{{- $_ := set $nsCount $owner (add1 (int (get $nsCount $owner))) }}
+{{- end }}
+{{- end }}
+{{- /* Comma-separated roster of tenant names a share can usefully target.
+       Gated on the same count as the render loop below: a tenant this parent
+       emits nothing for cannot consume a share, so listing it would leave the
+       peer holding a Policy and Role for an endpoint that does not exist. It
+       self-heals — the peer re-renders when that tenant gets its first
+       labelled namespace. */ -}}
 {{- $tenantNames := list }}
-{{- range $t := .parameters.tenants }}{{- $tenantNames = append $tenantNames $t.metadata.name }}{{- end }}
+{{- range $t := .parameters.tenants }}
+{{- if gt (int (get $nsCount $t.metadata.name)) 0 }}
+{{- $tenantNames = append $tenantNames $t.metadata.name }}
+{{- end }}
+{{- end }}
 {{- $knownTenants := join "," $tenantNames }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -57,15 +82,16 @@ spec:
   kubernetesCaCertRef: { name: {{ $tokenReviewerSecret }}, key: ca.crt }
 {{- range $t := .parameters.tenants }}
 {{- $name := $t.metadata.name }}
-{{- /* Skip tenants that declare no namespaces. The child TI resolves
-       serviceAccounts/deployments via a namespaceSelector
-       (<tenantLabel>=<name>); with zero matching namespaces t-op-v2 fails
-       parameter validation (NamespaceSelectorMatchedZero) and the child TI
-       goes Failed. Emitting no child TI for an empty tenant keeps the parent
-       green; it self-heals — the parent re-renders and emits the child once
-       the tenant declares its first namespace. */ -}}
-{{- $tns := default dict $t.spec.namespaces }}
-{{- $hasNs := or (gt (len (default list $tns.withTenantPrefix)) 0) (gt (len (default list $tns.withoutTenantPrefix)) 0) }}
+{{- /* Skip a tenant with no labelled namespace. The child TI resolves
+       serviceAccounts/deployments via a namespaceSelector (<tenantLabel>=
+       <name>); with zero matching namespaces t-op-v2 fails parameter
+       validation (NamespaceSelectorMatchedZero) and the child TI goes Failed.
+       Emitting no child TI for an empty tenant keeps the parent green; it
+       self-heals — the parent re-renders and emits the child once the tenant
+       gets its first labelled namespace. Counted above from the label, not
+       from spec.namespaces, so this asks exactly the question the child will
+       answer. */ -}}
+{{- $hasNs := gt (int (get $nsCount $name)) 0 }}
 {{- if $hasNs }}
 {{- /* One TI per enabled component, so a disabled integration has no TI at
        all. Optional suffixes use a dot because tenant names are RFC1123
