@@ -156,6 +156,9 @@
 #                    booleans and the quoted strings alike.
 #  46. selftest   — the shared helpers (err_line, expect_fail, must_*, check,
 #                    report, yqe, yq_count) on known inputs; it runs first.
+#  47. sharedlinks — each bao-apps ConfigMap links exactly the shared-space
+#                    folders the tenant's SSO policy opens, with the UI address
+#                    when a UI callback is set, and no entry with the login off.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -2263,6 +2266,52 @@ for pg_case in "--set:true:1" "--set:false:0" "--set-string:true:1" "--set-strin
   fi
 done
 report platformgate
+
+# 47. sharedlinks — every bao-apps ConfigMap of the tenant links exactly the
+# shared-space folders its SSO policy opens, so a person reaches them without a
+# list. With a UI callback the links carry its address; with the login or SSO
+# off there is no entry.
+detail=""
+SL_SEL='select(.kind == "ConfigMap" and .metadata.name == "bao-apps")'
+sl_links() { # sl_links <file> -> "<ns> <received|sent> <peer> <link>" per link
+  yqe "$SL_SEL"' | select(.data._sharedSpace != null) | .metadata.namespace as $ns | (.data._sharedSpace | from_yaml) as $s
+       | ((($s.received // {}) | to_entries | .[] | $ns + " received " + .key + " " + .value),
+          (($s.sent // {}) | to_entries | .[] | $ns + " sent " + .key + " " + .value))' "$1"
+}
+if core_render sl-on -f "$FIXTURES/values-full.yaml"; then
+  sl_apps="$(yq_count "$SL_SEL | .metadata.name" "$WORK/sl-on.yaml")"
+  sl_with="$(yq_count "$SL_SEL | select(.data._sharedSpace != null) | .metadata.name" "$WORK/sl-on.yaml")"
+  [ "$sl_apps" != 0 ] && [ "$sl_with" = "$sl_apps" ] || detail="$detail [values-full: $sl_with of $sl_apps bao-apps ConfigMaps have _sharedSpace]"
+  sl_got="$(sl_links "$WORK/sl-on.yaml" | awk '{print $2 " " $3}' | sort -u | tr '\n' ',')"
+  [ "$sl_got" = "received team-c,sent team-b," ] || detail="$detail [values-full: links for '$sl_got', want received team-c and sent team-b]"
+  sl_pol="$(yqe 'select(.kind == "OpenBaoPolicy" and .metadata.name == "sso-team-a-viewer.shared") | .spec.policy' "$WORK/sl-on.yaml")"
+  while read -r _ sl_kind sl_peer sl_link; do
+    [ -n "$sl_link" ] || continue
+    sl_path="${sl_link#/ui/vault/secrets/kv/list/}"; sl_path="${sl_path%\?namespace=shared}"
+    grep -qF "path \"kv/metadata/${sl_path}*\"" <<<"$sl_pol" \
+      || detail="$detail [the $sl_kind link for $sl_peer opens $sl_path, which sso-team-a-viewer does not grant]"
+  done <<<"$(sl_links "$WORK/sl-on.yaml")"
+else
+  detail="$detail [values-full render failed: $(err_line "$WORK/sl-on.err")]"
+fi
+if core_render sl-ui -f "$FIXTURES/values-full.yaml" --set 'sso.allowedRedirectUris={http://localhost:8250/oidc/callback,https://bao.example.com/ui/vault/auth/oidc/oidc/callback}'; then
+  sl_login="$(yqe "$SL_SEL"' | .data._sharedSpace | from_yaml | .login' "$WORK/sl-ui.yaml" | sort -u)"
+  [ "$sl_login" = "https://bao.example.com/ui/vault/auth?namespace=shared&with=oidc" ] || detail="$detail [with a UI callback: login link '$sl_login']"
+  sl_first="$(sl_links "$WORK/sl-ui.yaml" | awk 'NR == 1 {print $4}')"
+  case "$sl_first" in https://bao.example.com/ui/vault/secrets/kv/list/dev/*) ;; *) detail="$detail [with a UI callback: share link '$sl_first']" ;; esac
+else
+  detail="$detail [render with a UI callback failed: $(err_line "$WORK/sl-ui.err")]"
+fi
+for sl_case in "--set sso.sharedSpace.enabled=false" "--set-string sso.sharedSpace.enabled=false" "--set-string sso.enabled=false"; do
+  # shellcheck disable=SC2086 # the case is a flag and its value
+  if core_render sl-off -f "$FIXTURES/values-full.yaml" $sl_case; then
+    [ "$(yq_count "$SL_SEL | .metadata.name" "$WORK/sl-off.yaml")" != 0 ] || detail="$detail [$sl_case: no bao-apps at all, so the absence proves nothing]"
+    [ "$(yq_count "$SL_SEL | select(.data._sharedSpace != null) | .metadata.name" "$WORK/sl-off.yaml")" = 0 ] || detail="$detail [$sl_case: a bao-apps still has _sharedSpace]"
+  else
+    detail="$detail [$sl_case: render failed: $(err_line "$WORK/sl-off.err")]"
+  fi
+done
+report sharedlinks
 
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso

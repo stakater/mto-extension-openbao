@@ -426,6 +426,7 @@ spec:
        serviceAccountName -> bao-config-<sa>. A signpost, never an input —
        editing it changes no access. */ -}}
 {{- if $renderCore }}
+{{- $sharedLinks := include "openbao.sharedSpaceLinks" $ }}
 {{- $idxNs := dict }}
 {{- range $ns, $_x := $idxHealthy }}{{- $_ := set $idxNs $ns true }}{{- end }}
 {{- range $ns, $_x := $idxErrs }}{{- $_ := set $idxNs $ns true }}{{- end }}
@@ -451,6 +452,10 @@ data:
     {{- if hasKey $idxHasTransit $ns }}
     transitNsKey: {{ include "openbao.transitNsKeyName" (dict "ns" $ns "env" $env) }}
     {{- end }}
+  {{- end }}
+  {{- with $sharedLinks }}
+  _sharedSpace: |
+    {{- . | nindent 4 }}
   {{- end }}
   {{- range $appName, $entry := $healthy }}
   {{ $appName | quote }}: |

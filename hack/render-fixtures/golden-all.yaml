@@ -1999,6 +1999,14 @@ data:
   _namespace: |
     sharedOutPath: kv/data/dev/_shared/from-team-a-dev/
     transitNsKey: team-a-dev-dev
+  _sharedSpace: |
+    namespace: shared
+    login: "/ui/vault/auth?namespace=shared&with=oidc"
+    roles: "sso-team-a-admin, sso-team-a-editor, sso-team-a-viewer, sso-team-a-audit-read"
+    received:
+      team-c: "/ui/vault/secrets/kv/list/dev/from-team-c/to-team-a/?namespace=shared"
+    sent:
+      team-b: "/ui/vault/secrets/kv/list/dev/from-team-a/to-team-b/?namespace=shared"
   _usage: One entry per app that uses OpenBao in this namespace. Paths are API data paths; in the OpenBao UI open the kv mount and browse <env>/<namespace>/<app>/. The bao-config-<serviceaccount> ConfigMap holds the full environment for one app.
   app-c: |
     serviceAccount: "app-c"
@@ -2127,6 +2135,14 @@ data:
   _namespace: |
     sharedOutPath: kv/data/dev/_shared/from-team-a-tools/
     transitNsKey: team-a-tools-dev
+  _sharedSpace: |
+    namespace: shared
+    login: "/ui/vault/auth?namespace=shared&with=oidc"
+    roles: "sso-team-a-admin, sso-team-a-editor, sso-team-a-viewer, sso-team-a-audit-read"
+    received:
+      team-c: "/ui/vault/secrets/kv/list/dev/from-team-c/to-team-a/?namespace=shared"
+    sent:
+      team-b: "/ui/vault/secrets/kv/list/dev/from-team-a/to-team-b/?namespace=shared"
   _usage: One entry per app that uses OpenBao in this namespace. Paths are API data paths; in the OpenBao UI open the kv mount and browse <env>/<namespace>/<app>/. The bao-config-<serviceaccount> ConfigMap holds the full environment for one app.
   app-b: |
     serviceAccount: "app-b"

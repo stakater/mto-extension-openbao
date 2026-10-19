@@ -157,6 +157,49 @@ Usage:  {{ $peers := include "openbao.ssoSharePeers" $ | fromYaml }}
 {{- end -}}
 
 {{/*
+The _sharedSpace entry of bao-apps: one web UI link per partner tenant, to what
+it sent this tenant and to what this tenant sends it. People cannot browse to
+these folders, because a list of <env>/ or of a partner's folder shows other
+tenants' shares, and an OpenBao list cannot be filtered. Empty unless SSO and
+the shared-space login are on and the tenant has a share. The UI address is the
+first sso.allowedRedirectUris entry that is the UI callback, without the
+callback path; with none, the links start at /ui/.
+Usage:  {{ include "openbao.sharedSpaceLinks" $ }}
+*/}}
+{{- define "openbao.sharedSpaceLinks" -}}
+{{- if and (include "openbao.ssoEnabled" .) (include "openbao.ssoSharedSpaceEnabled" .) -}}
+{{- $peers := include "openbao.ssoSharePeers" . | fromYaml -}}
+{{- if or $peers.exports $peers.imports -}}
+{{- $tenant := .Values.tenant -}}
+{{- $shared := .Values.sharedTenant.name -}}
+{{- $callback := "/ui/vault/auth/oidc/oidc/callback" -}}
+{{- $base := "" -}}
+{{- range $u := (.Values.sso.allowedRedirectUris | default list) -}}
+{{- if and (not $base) (hasSuffix $callback (toString $u)) -}}{{- $base = trimSuffix $callback (toString $u) -}}{{- end -}}
+{{- end -}}
+{{- $roles := list -}}
+{{- range $t := .Values.sso.tiers -}}{{- $roles = append $roles (include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $t)) -}}{{- end -}}
+{{- $list := printf "%s/ui/vault/secrets/kv/list/%s" $base .Values.env -}}
+namespace: {{ $shared }}
+login: {{ printf "%s/ui/vault/auth?namespace=%s&with=oidc" $base $shared | quote }}
+roles: {{ join ", " $roles | quote }}
+{{- with $peers.imports }}
+received:
+{{- range $p := . }}
+  {{ $p }}: {{ printf "%s/from-%s/to-%s/?namespace=%s" $list $p $tenant $shared | quote }}
+{{- end }}
+{{- end }}
+{{- with $peers.exports }}
+sent:
+{{- range $p := . }}
+  {{ $p }}: {{ printf "%s/from-%s/to-%s/?namespace=%s" $list $tenant $p $shared | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Splits a comma-separated annotation value into a trimmed, non-empty list of
 strings. Returns an empty list when input is empty.
 Usage:  {{ range include "openbao.splitCsv" "team-a, team-b" | fromYamlArray }}

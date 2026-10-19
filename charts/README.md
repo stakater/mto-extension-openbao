@@ -405,7 +405,7 @@ kvPath: kv/data/dev/team-a-api/web/
 requestedSecrets: "postgres"
 ```
 
-One entry per app, keyed by app name. `serviceAccount`, `tier` and `engines` are always present; `kvPath` and `requestedSecrets` appear when `kv` is on, `transitKey` when transit is on — a PKI-only app has just the first three. `requestedSecrets` lists the leaves the app's Deployments currently *request* via `kv-secret.*` annotations; a request is listed even while its Deployment has a reported error, so treat it as intent, not as proof an ExternalSecret rendered. The `_namespace` entry carries the shared-folder path (when the namespace has a kv app) and the namespace transit key (when it has a transit app); a namespace with neither — PKI-only, say — has no `_namespace` entry at all. An app whose annotations are invalid appears under `<serviceaccount>.error`, pointing at its error ConfigMap. The `_format` key versions this layout (`v1`); the field names and these presence rules are covered by the stability promise above.
+One entry per app, keyed by app name. `serviceAccount`, `tier` and `engines` are always present; `kvPath` and `requestedSecrets` appear when `kv` is on, `transitKey` when transit is on — a PKI-only app has just the first three. `requestedSecrets` lists the leaves the app's Deployments currently *request* via `kv-secret.*` annotations; a request is listed even while its Deployment has a reported error, so treat it as intent, not as proof an ExternalSecret rendered. The `_namespace` entry carries the shared-folder path (when the namespace has a kv app) and the namespace transit key (when it has a transit app); a namespace with neither — PKI-only, say — has no `_namespace` entry at all. An app whose annotations are invalid appears under `<serviceaccount>.error`, pointing at its error ConfigMap. While the shared-space login is on and the tenant has a cross-tenant share, a `_sharedSpace` entry holds web UI links to those shares (see [See your tenant's shares in the web UI](#see-your-tenants-shares-in-the-web-ui)). The `_format` key versions this layout (`v1`); the field names and these presence rules are covered by the stability promise above.
 
 Paths in `bao-apps` are API data paths. In the OpenBao web UI, open the `kv` mount and browse `<env>/<namespace>/<app>/` — the `/data/` segment is an API artifact.
 
@@ -1022,7 +1022,7 @@ parent:
       enabled: true
 ```
 
-This adds one OIDC mount to the shared space, on the same IdP client as the tenant mounts (see [The IdP client](#how-access-maps) above). Each tenant then gets one role per tier there, with the **same name and the same IdP group** as its tenant role. The bootstrap chart fails the render if `issuerUrl`, `clientId`, either `clientSecretRef` key or `audience` is empty, or if `openbaoConfigMto.version` names a tenant chart older than 0.21.0 (one that renders no shared-space role).
+This adds one OIDC mount to the shared space, on the same IdP client as the tenant mounts (see [The IdP client](#how-access-maps) above). Each tenant then gets one role per tier there, with the **same name and the same IdP group** as its tenant role. The bootstrap chart fails the render if `issuerUrl`, `clientId`, `clientSecretRef.name`, `clientSecretRef.key` or `audience` is empty, or if `openbaoConfigMto.version` names a tenant chart older than 0.21.0 (one that renders no shared-space role).
 
 **Log in.** In the web UI: set **Namespace** to `shared`, **Method** to OIDC, and **Role** to your tier's role, for example `sso-team-a-viewer`. With the CLI:
 
@@ -1030,7 +1030,20 @@ This adds one OIDC mount to the shared space, on the same IdP client as the tena
 bao login -method=oidc -namespace=shared role=sso-team-a-viewer
 ```
 
-**Open a share by its path.** A person cannot browse `dev/`: that list would show which tenants share with which, and an OpenBao list cannot be filtered. Open the folder directly:
+**Open a share by its link.** A person cannot browse `dev/`: that list would show which tenants share with which, and an OpenBao list cannot be filtered. Every `bao-apps` ConfigMap of the tenant has a `_sharedSpace` entry with the login link, the tenant's role names, and one link per partner tenant:
+
+```console
+$ kubectl get cm bao-apps -n team-a-worker -o jsonpath='{.data._sharedSpace}'
+namespace: shared
+login: "https://openbao.example.com/ui/vault/auth?namespace=shared&with=oidc"
+roles: "sso-team-a-admin, sso-team-a-editor, sso-team-a-viewer, sso-team-a-audit-read"
+received:
+  team-b: "https://openbao.example.com/ui/vault/secrets/kv/list/dev/from-team-b/to-team-a/?namespace=shared"
+sent:
+  team-b: "https://openbao.example.com/ui/vault/secrets/kv/list/dev/from-team-a/to-team-b/?namespace=shared"
+```
+
+The address is the UI callback in `sso.allowedRedirectUris` without its path. Without a UI callback there, the links start at `/ui/`. The entry exists while the shared-space login is on and the tenant has a share, and it follows the share annotations. The folders, by path:
 
 | You want | Path | Web UI address |
 |---|---|---|
