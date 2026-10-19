@@ -106,11 +106,10 @@ token:
   maxTTL: "4h"
   period: ""
 
-# SSO token TTLs — usually shorter than workload tokens because group
-# membership in the IdP isn't enforced live on already-issued bao tokens.
-# Default 15m / 1h gives operators ~15 minutes of stale-group-grant
-# exposure after a user is removed from an IdP group. Tune lower for
-# higher-privilege admin tiers if your IdP can't push token revocation.
+# SSO token TTLs — shorter than workload tokens, because a group change in the
+# IdP applies only at the next login. A person removed from an IdP group keeps
+# the old grants until the bao token expires: up to maxTTL (1h by default) if
+# they renew it.
 ssoToken:
   ttl: "15m"
   maxTTL: "1h"
@@ -356,11 +355,24 @@ sso:
     fallback: deny                 # deny | viewer | editor | admin | audit-read
 
   audience: openbao
+  # One web UI entry, https://<bao>/ui/vault/auth/oidc/oidc/callback, serves
+  # every namespace, the shared space included (charts/README.md → Redirect URIs).
   allowedRedirectUris:
     - "http://localhost:8250/oidc/callback"
 
-  # Tiers to emit SSO roles for. Every tier named here must have a tierCaps
-  # entry. No tier can replace the tenant CA: those grants are a way out of
+  # Login to the shared space, where cross-tenant KV shares live (§7b). When
+  # on, each tier gets a role there for the peers that the tenant's own
+  # kv-export-tenant / kv-import-tenant annotations name: viewer, editor and
+  # admin read the shares the tenant receives and get their tierCaps on the
+  # shares it sends; audit-read lists names only. Needs the shared space's oidc
+  # mount, which the bootstrap chart renders with parent.sso.sharedSpace.enabled.
+  sharedSpace:
+    enabled: false
+
+  # Tiers to emit SSO roles for: any of admin, editor, viewer, audit-read, each
+  # with a tierCaps entry. Other names are rejected (openbao.assertSsoTier in
+  # templates/_helpers.tpl says why).
+  # No tier can replace the tenant CA: those grants are a way out of
   # the tenant's PKI trust boundary rather than a destructive button, so CA
   # replacement is a platform-operator action against bao. See §7.
   tiers:

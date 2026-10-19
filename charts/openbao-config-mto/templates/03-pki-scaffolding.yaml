@@ -36,16 +36,17 @@ the SA — see 04-sa-own-tenant.yaml. Apps using cert-manager Issuer injection
 (pki.certManager.enabled=true) don't need that annotation; cert-manager talks
 to bao directly via its own dedicated SA.
 */}}
-{{- if .Values.pki.enabled }}
+{{- if include "openbao.on" (dict "ctx" . "path" "pki.enabled") }}
 {{- include "openbao.pkiAssertRoleNamesUnique" . }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- /* Optional block, read through a variable: the chained form
        `.Values.pki.hierarchy.enabled` nil-pointers the whole render when it is
        nulled. A nil block means root mode, as openbao.pkiMount also reads it. */ -}}
 {{- $hier := default (dict) .Values.pki.hierarchy }}
+{{- $hierOn := include "openbao.on" (dict "ctx" . "path" "pki.hierarchy.enabled") }}
 {{- $mount := include "openbao.pkiMount" . }}
 {{- $labels := include "openbao.labels" . }}
-{{- if $hier.enabled }}
+{{- if $hierOn }}
 {{- if not $hier.platformNamespace }}
 {{- fail "pki.hierarchy.enabled requires pki.hierarchy.platformNamespace — cross-namespace signing cannot target a platform CA in the bao root namespace" }}
 {{- end }}
@@ -123,7 +124,7 @@ spec:
     {{- range $allDomains }}
     - {{ . | quote }}
     {{- end }}
-  {{- if $hier.enabled }}
+  {{- if $hierOn }}
   type: intermediate
   internalSign:
     name: {{ $hier.platformMount }}

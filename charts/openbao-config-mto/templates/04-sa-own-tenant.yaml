@@ -80,7 +80,7 @@ Access is opt-in per engine, and a tier says how much:
 {{- /* $renderCore too: this file also renders the eso slice, and unqualified a
        PKI-only typo hard-failed the tenant's ESO SecretStores with it. §10 keeps
        its own call for the certManager slice. */ -}}
-{{- if and $renderCore .Values.pki.enabled }}{{ include "openbao.pkiAssertRoleNamesUnique" . }}{{ end }}
+{{- if and $renderCore (include "openbao.on" (dict "ctx" . "path" "pki.enabled")) }}{{ include "openbao.pkiAssertRoleNamesUnique" . }}{{ end }}
 {{- /* Index accumulators: healthy entries keyed by resolved app, error entries
        by ServiceAccount name (the resolved app may be the invalid part). */ -}}
 {{- $idxHealthy := dict }}

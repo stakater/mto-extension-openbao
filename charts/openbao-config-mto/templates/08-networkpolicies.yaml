@@ -15,7 +15,7 @@ Requires a CNI that honors NetworkPolicies (Calico, Cilium, OpenShift
 OVN-Kubernetes). The default `kindnet` CNI on kind clusters does NOT
 enforce NPs — these manifests will apply but be no-ops.
 */}}
-{{- if .Values.networkPolicy.enabled }}
+{{- if include "openbao.on" (dict "ctx" . "path" "networkPolicy.enabled") }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $labels := include "openbao.labels" . }}
 {{- $namespaces := dict }}

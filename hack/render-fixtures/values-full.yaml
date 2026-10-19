@@ -2,9 +2,12 @@
 # annotation path exercised, all of it valid — misconfiguration cases live in
 # values-guards.yaml. Used by hack/chart-render-tests.sh to compare
 # component slices against the full render. Tenant team-a owns namespaces
-# team-a-dev and team-a-tools; team-b is a known peer for every share flavor.
+# team-a-dev and team-a-tools. team-b is a known peer for every share flavor
+# except the KV import, which comes from team-c: the two KV directions name
+# different peers, so a swapped export/import shows up as a wrong peer. team-d
+# is in the roster with no share at all, the control for roster-built grants.
 tenant: team-a
-knownTenants: "team-a,team-b"
+knownTenants: "team-a,team-b,team-c,team-d"
 
 eso: enabled
 
@@ -15,6 +18,10 @@ baoCABundle: |
 
 sso:
   enabled: true
+  # Renders the shared-space SSO roles (§7b) from app-a's KV shares, so
+  # crd-validate and the golden cover them.
+  sharedSpace:
+    enabled: true
   dex:
     issuerUrl: "https://dex.example.com"
     # Renders spec.oidcDiscoveryCaPem — a field behind an opt-in is invisible to
@@ -87,7 +94,7 @@ serviceAccounts:
         bao.stakater.com/app: payments
         bao.stakater.com/kv-subscribe-ns: team-a-tools
         bao.stakater.com/kv-export-tenant: team-b
-        bao.stakater.com/kv-import-tenant: team-b
+        bao.stakater.com/kv-import-tenant: "team-x, team-c"   # team-x is not in the roster; the space tests the trim
         bao.stakater.com/transit: "true"
         bao.stakater.com/transit-export-tenant: team-b
         bao.stakater.com/transit-import-tenant: team-b
@@ -103,6 +110,9 @@ serviceAccounts:
         bao.stakater.com/kv: "true"
         bao.stakater.com/transit: "true"
         bao.stakater.com/tier: admin
+        # a second app sending to the same peer: the people's grants in the
+        # shared space must still name team-b once (ssoshared counts the rules)
+        bao.stakater.com/kv-export-tenant: team-b
   # Read-only tier. No app annotation, so its app is its own name.
   - metadata:
       name: app-c
@@ -126,7 +136,7 @@ deployments:
         bao.stakater.com/kv-secret.web-db: "db-creds#password"
         bao.stakater.com/kv-secret.web-cfg: "app-config"
         bao.stakater.com/kv-subscribe.tools-shared: "team-a-tools/shared-item"
-        bao.stakater.com/kv-import.partner-data: "team-b/exported-item"
+        bao.stakater.com/kv-import.partner-data: "team-c/exported-item"
     spec:
       template:
         spec:

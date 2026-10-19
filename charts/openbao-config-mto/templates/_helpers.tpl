@@ -20,6 +20,23 @@ Usage:  {{ if include "openbao.componentEnabled" (dict "component" "eso" "ctx" $
 {{- if hasKey .ctx.Values "defaultCapability" -}}
 {{- fail "defaultCapability was removed: OpenBao access is now opt-in per engine. Annotate each ServiceAccount with bao.stakater.com/kv, /transit or /pki set to \"true\" plus bao.stakater.com/tier, and delete defaultCapability from your values" -}}
 {{- end -}}
+{{- /* A tenant with the shared space's name would BE the shared space: the same
+       bao namespace, and CRs named <name>-kv, <name>-kubernetes, <name>-oidc —
+       the parent's own shared objects. Failing here fails that one tenant's
+       TemplateInstance; every other tenant and the shared space are unaffected. */ -}}
+{{- $sharedName := toString (dig "name" "" (.ctx.Values.sharedTenant | default dict)) -}}
+{{- if and $sharedName (eq (toString .ctx.Values.tenant) $sharedName) -}}
+{{- fail (printf "tenant %q has the name of the shared space (parent.sharedTenantName in the bootstrap chart, sharedTenant.name here): its OpenBao namespace and its CRs would be the shared space's own. Rename the tenant, or, before any tenant shares data, give the shared space another name. See \"Upgrading\" in the charts README." $sharedName) -}}
+{{- end -}}
+{{- /* The same for the platform CA's namespace, which exists when the hierarchy
+       is on: the bootstrap chart's OpenBaoNamespace CR has that name, and the
+       tenant's CRs would target the namespace that holds the platform CA. */ -}}
+{{- if eq (include "openbao.on" (dict "ctx" .ctx "path" "pki.hierarchy.enabled")) "true" -}}
+{{- $platformName := trimSuffix "/" (toString (dig "hierarchy" "platformNamespace" "" (.ctx.Values.pki | default dict))) -}}
+{{- if and $platformName (eq (toString .ctx.Values.tenant) $platformName) -}}
+{{- fail (printf "tenant %q has the name of the platform CA's namespace (platformPki.openbaoNamespace in the bootstrap chart, pki.hierarchy.platformNamespace here): its OpenBao namespace and its OpenBaoNamespace CR would be the platform CA's. Rename the tenant, or, before the platform CA is issued, put the platform CA in another namespace. See \"Upgrading\" in the charts README." $platformName) -}}
+{{- end -}}
+{{- end -}}
 {{- /* A sliced render only happens under the bootstrap's per-tenant
        TemplateInstance convention (openbao-config-mto-<tenant>[.suffix]),
        and template-operator-v2 stamps that TI name as a label value on every
@@ -111,6 +128,35 @@ true
 {{- end -}}
 
 {{/*
+The cross-tenant KV peers this tenant's workloads hold grants for, as
+{exports: [...], imports: [...]}, sorted and de-duplicated. It uses the same
+ServiceAccounts, conditions and roster filter as 04-sa-share-out.yaml and
+04-sa-share-in.yaml, so the SSO grants in the shared space name exactly the
+peers a workload of the tenant can reach.
+Usage:  {{ $peers := include "openbao.ssoSharePeers" $ | fromYaml }}
+*/}}
+{{- define "openbao.ssoSharePeers" -}}
+{{- $tenantNamespaces := include "openbao.tenantNamespaces" . | fromYaml -}}
+{{- $appClaims := include "openbao.appClaims" . | fromYaml -}}
+{{- $found := dict "exports" (list) "imports" (list) -}}
+{{- range $sa := (ternary .Values.serviceAccounts (list) (kindIs "slice" .Values.serviceAccounts)) -}}
+{{- $f := include "openbao.saFacts" (dict "sa" $sa "ctx" $ "tenantNamespaces" $tenantNamespaces "appClaims" $appClaims) | fromYaml -}}
+{{- if and $f.kvOn (not $f.errors) $f.name $f.ns -}}
+{{- range $dir := list (list "exports" "kv-export-tenant") (list "imports" "kv-import-tenant") -}}
+{{- $raw := dig "metadata" "annotations" (printf "bao.stakater.com/%s" (index $dir 1)) "" $sa -}}
+{{- range $peer := splitList "," $raw -}}
+{{- $peer = trim $peer -}}
+{{- if include "openbao.peerEmittable" (dict "peer" $peer "knownCsv" $.Values.knownTenants) -}}
+{{- $_ := set $found (index $dir 0) (append (get $found (index $dir 0)) $peer) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml (dict "exports" ($found.exports | uniq | sortAlpha) "imports" ($found.imports | uniq | sortAlpha)) -}}
+{{- end -}}
+
+{{/*
 Splits a comma-separated annotation value into a trimmed, non-empty list of
 strings. Returns an empty list when input is empty.
 Usage:  {{ range include "openbao.splitCsv" "team-a, team-b" | fromYamlArray }}
@@ -156,6 +202,132 @@ Usage:  {{ include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $tier) }}
 */}}
 {{- define "openbao.ssoRoleName" -}}
 {{- printf "sso-%s-%s" .tenant .tier -}}
+{{- end -}}
+
+{{/*
+Fails the render unless the tier is one of the four the templates know. The
+templates match tier names exactly, so an unknown tier falls through to the
+plain tierCaps grant. It also makes role names ambiguous: tier "read" of tenant
+"x-audit" and tier "audit-read" of tenant "x" both give sso-x-audit-read. Every
+tenant's SSO CRs share operatorNamespace, and in the shared space every
+tenant's bao roles and policies sit side by side, so the collision crosses
+tenants. values.schema.json carries the same enum.
+Usage:  {{- include "openbao.assertSsoTier" $tier }}
+*/}}
+{{- define "openbao.assertSsoTier" -}}
+{{- $known := list "admin" "editor" "viewer" "audit-read" -}}
+{{- if not (has . $known) -}}
+{{- fail (printf "sso.tiers includes %q, which is not one of %s — role names are sso-<tenant>-<tier>, so a custom tier can collide with another tenant's role" (toString .) (join ", " $known)) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Reads a boolean value strictly: a YAML boolean or the string "true"/"false".
+Returns "true" or "false", or "" when the key is absent or null, so each caller
+picks its own default. Anything else fails the render with .name and .why, so
+the guard also works with --skip-schema-validation. `{{ if .Values.x }}` is not
+enough: the schema accepts the string "false", and a non-empty string is
+truthy. Callers: openbao.on and the two deletion-policy helpers.
+Usage:  {{ include "openbao.strictBool" (dict "from" .Values.safety "key" "deletionProtection" "name" "safety.deletionProtection" "why" "turn deletion protection off") }}
+*/}}
+{{- define "openbao.strictBool" -}}
+{{- $m := .from | default dict -}}
+{{- /* hasKey first: sprig get returns "" (not nil) for a missing key. */ -}}
+{{- if and (hasKey $m .key) (not (kindIs "invalid" (get $m .key))) -}}
+{{- $s := toString (get $m .key) -}}
+{{- if not (has $s (list "true" "false")) -}}
+{{- fail (printf "%s must be a boolean true or false — got %q. Quoted \"true\"/\"false\" also work; anything else (yes, on, 1, True) is rejected so a typo cannot silently %s." .name $s .why) -}}
+{{- end -}}
+{{- $s -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns "true" when the switch at .path (dot-separated, under .Values) is on, ""
+when not. Absent or null, at the switch or at a block above it, is off. A block
+that is not a map fails, as does a value that strictBool rejects. .why ends the
+error message; it defaults to "turn <path> on or off". Every boolean switch of
+the chart is read through here, except safety.*, whose defaults the
+deletion-policy helpers set.
+Usage:  {{ if include "openbao.on" (dict "ctx" $ "path" "pki.hierarchy.enabled") }}
+*/}}
+{{- define "openbao.on" -}}
+{{- $parts := splitList "." .path -}}
+{{- $m := .ctx.Values -}}
+{{- $walked := list -}}
+{{- range $p := initial $parts -}}
+{{- $walked = append $walked $p -}}
+{{- if and (hasKey $m $p) (not (kindIs "invalid" (get $m $p))) -}}
+{{- if not (kindIs "map" (get $m $p)) -}}
+{{- fail (printf "%s must be a map — got %q. The switch is %s, and a value here is not read as on or off." (join "." $walked) (toString (get $m $p)) $.path) -}}
+{{- end -}}
+{{- $m = get $m $p -}}
+{{- else -}}
+{{- $m = dict -}}
+{{- end -}}
+{{- end -}}
+{{- $why := .why | default (printf "turn %s on or off" .path) -}}
+{{- if eq (include "openbao.strictBool" (dict "from" $m "key" (last $parts) "name" .path "why" $why)) "true" -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Returns "true" when sso.enabled is on, "" when not; absent or null is off.
+*/}}
+{{- define "openbao.ssoEnabled" -}}
+{{- include "openbao.on" (dict "ctx" . "path" "sso.enabled" "why" "turn SSO on") -}}
+{{- end -}}
+
+{{/*
+Returns "true" when people may log in to the shared space (sso.sharedSpace.
+enabled), "" when not; absent or null is off. Does not include sso.enabled —
+callers check both.
+*/}}
+{{- define "openbao.ssoSharedSpaceEnabled" -}}
+{{- include "openbao.on" (dict "ctx" . "path" "sso.sharedSpace.enabled" "why" "change who can read another tenant's shares") -}}
+{{- end -}}
+
+{{/*
+The spec of an SSO OIDC role, shared by §7 (the tenant namespace) and §7b (the
+shared space), so the two logins cannot drift. It fails closed: a role binds
+its .group, and only "unbound" true renders a role with no group (§7's
+fallback). An empty .group without "unbound" fails the render.
+Usage:  spec:
+          {{- include "openbao.ssoRoleSpec" (dict "ctx" $ "name" $n "namespace" "team-a/" "group" $g "policy" $n) | nindent 2 }}
+*/}}
+{{- define "openbao.ssoRoleSpec" -}}
+deletionPolicy: {{ include "openbao.grantDeletionPolicy" .ctx }}
+name: {{ .name }}
+path: oidc
+openbaoNamespace: {{ .namespace }}
+roleType: oidc
+userClaim: email
+groupsClaim: groups
+oidcScopes:
+  - email
+  - profile
+  - groups
+boundAudiences:
+  - {{ .ctx.Values.sso.audience | quote }}
+{{- if .unbound }}
+{{- else if .group }}
+boundClaims:
+  groups:
+    - {{ .group | quote }}
+{{- else }}
+{{- fail (printf "openbao.ssoRoleSpec: role %s has an empty IdP group and is not marked unbound — rendered, any IdP user could log in with it" .name) }}
+{{- end }}
+tokenPolicies:
+  - {{ .policy }}
+allowedRedirectUris:
+  {{- range $uri := .ctx.Values.sso.allowedRedirectUris }}
+  - {{ $uri | quote }}
+  {{- end }}
+{{- if .ctx.Values.ssoToken.ttl }}
+tokenTtl: {{ .ctx.Values.ssoToken.ttl }}
+{{- end }}
+{{- if .ctx.Values.ssoToken.maxTTL }}
+tokenMaxTtl: {{ .ctx.Values.ssoToken.maxTTL }}
+{{- end }}
 {{- end -}}
 
 {{/*
@@ -223,7 +395,7 @@ Usage (root context): {{ include "openbao.pkiMount" . }}
 */}}
 {{- define "openbao.pkiMount" -}}
 {{- $pki := .Values.pki -}}
-{{- if and $pki.hierarchy $pki.hierarchy.enabled -}}
+{{- if include "openbao.on" (dict "ctx" . "path" "pki.hierarchy.enabled") -}}
 {{- $pki.hierarchy.mountPath -}}
 {{- else -}}
 {{- $pki.mountPath -}}
@@ -421,6 +593,8 @@ Usage:
 {{- end -}}
 {{- $sa := .sa -}}
 {{- $v := .ctx.Values -}}
+{{- $transitEngine := eq (include "openbao.on" (dict "ctx" .ctx "path" "transit.enabled")) "true" -}}
+{{- $pkiEngine := eq (include "openbao.on" (dict "ctx" .ctx "path" "pki.enabled")) "true" -}}
 {{- $p := "bao.stakater.com/" -}}
 {{- $known := include "openbao.saAnnotationKeys" . | fromYamlArray -}}
 {{- $name := dig "metadata" "name" "" $sa -}}
@@ -503,13 +677,13 @@ Usage:
 
 {{- /* An engine switched off chart-wide can never be granted, so opting in is
        a request that silently returns nothing. */ -}}
-{{- if and $transitReq (not $v.transit.enabled) -}}
+{{- if and $transitReq (not $transitEngine) -}}
 {{- $errs = append $errs (printf "%stransit is enabled on this ServiceAccount but the transit engine is disabled for the whole install (transit.enabled=false)" $p) -}}
 {{- end -}}
-{{- if and $pkiReq (not $v.pki.enabled) -}}
+{{- if and $pkiReq (not $pkiEngine) -}}
 {{- $errs = append $errs (printf "%spki is enabled on this ServiceAccount but the PKI engine is disabled for the whole install (pki.enabled=false)" $p) -}}
 {{- end -}}
-{{- if and $pkiReq $v.pki.enabled (not $v.pki.roles) -}}
+{{- if and $pkiReq $pkiEngine (not $v.pki.roles) -}}
 {{- $errs = append $errs (printf "%spki is enabled but pki.roles is empty — define at least one role under pki.roles" $p) -}}
 {{- end -}}
 
@@ -574,8 +748,8 @@ Usage:
 {{- $out := dict
       "name" $name "ns" $ns "app" $app "tier" $tier
       "kvOn" $kvOn
-      "transitOn" (and $transitReq $v.transit.enabled)
-      "pkiOn" (and $pkiReq $v.pki.enabled)
+      "transitOn" (and $transitReq $transitEngine)
+      "pkiOn" (and $pkiReq $pkiEngine)
       "caps" $caps "transitCaps" $transitCaps
       "errors" $errs -}}
 {{- toYaml $out -}}
@@ -652,25 +826,15 @@ Usage (root context): {{ include "openbao.tenantNamespaces" . | fromYaml }}
 
 {{/*
 deletionPolicy for data-bearing kinds, from safety.deletionProtection:
-true (default) -> Retain, false -> Delete. Boolish values accepted;
-absent/null falls to Retain (the safe direction); anything else fails
-the render — the guard survives --skip-schema-validation, and a typo
+true (default) -> Retain, false -> Delete. Read through openbao.strictBool:
+a boolean or "true"/"false"; absent/null falls to Retain (the safe
+direction); anything else fails the render — the guard survives
+--skip-schema-validation, and a typo
 must never silently change the posture. Call with $ inside ranges.
 */}}
 {{- define "openbao.deletionPolicy" -}}
-{{- $safety := .Values.safety | default dict -}}
-{{- /* hasKey first: sprig get returns "" (not nil) for a missing key,
-       which would otherwise hit the loud-fail path below. */ -}}
-{{- if or (not (hasKey $safety "deletionProtection")) (kindIs "invalid" (get $safety "deletionProtection")) -}}
-{{- "Retain" -}}
-{{- else -}}
-{{- $raw := get $safety "deletionProtection" -}}
-{{- $s := toString $raw -}}
-{{- if not (has $s (list "true" "false")) -}}
-{{- fail (printf "safety.deletionProtection must be a boolean true or false — got %q. Quoted \"true\"/\"false\" also work; anything else (yes, on, 1, True) is rejected so a typo cannot silently change the deletion posture." $s) -}}
-{{- end -}}
+{{- $s := include "openbao.strictBool" (dict "from" .Values.safety "key" "deletionProtection" "name" "safety.deletionProtection" "why" "change the deletion posture") -}}
 {{- ternary "Delete" "Retain" (eq $s "false") -}}
-{{- end -}}
 {{- end -}}
 
 {{/*
@@ -680,17 +844,6 @@ opposite safe direction: absent/null falls to Delete so revocation
 never silently stops. Call with $ inside ranges.
 */}}
 {{- define "openbao.grantDeletionPolicy" -}}
-{{- $safety := .Values.safety | default dict -}}
-{{- /* hasKey first: sprig get returns "" (not nil) for a missing key,
-       which would otherwise hit the loud-fail path below. */ -}}
-{{- if or (not (hasKey $safety "grantDeletionProtection")) (kindIs "invalid" (get $safety "grantDeletionProtection")) -}}
-{{- "Delete" -}}
-{{- else -}}
-{{- $raw := get $safety "grantDeletionProtection" -}}
-{{- $s := toString $raw -}}
-{{- if not (has $s (list "true" "false")) -}}
-{{- fail (printf "safety.grantDeletionProtection must be a boolean true or false — got %q. Quoted \"true\"/\"false\" also work; anything else (yes, on, 1, True) is rejected so a typo cannot silently change the revocation posture." $s) -}}
-{{- end -}}
+{{- $s := include "openbao.strictBool" (dict "from" .Values.safety "key" "grantDeletionProtection" "name" "safety.grantDeletionProtection" "why" "change the revocation posture") -}}
 {{- ternary "Retain" "Delete" (eq $s "true") -}}
-{{- end -}}
 {{- end -}}

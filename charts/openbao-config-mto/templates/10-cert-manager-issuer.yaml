@@ -27,7 +27,7 @@ App teams then create Certificate CRs referencing the Issuer:
 cert-manager handles renewal automatically. Requires cert-manager CRDs
 in the cluster — the chart doesn't install cert-manager itself.
 */}}
-{{- if and .Values.pki.enabled .Values.pki.certManager.enabled (include "openbao.componentEnabled" (dict "component" "certManager" "ctx" .)) }}
+{{- if and (include "openbao.on" (dict "ctx" . "path" "pki.enabled")) (include "openbao.on" (dict "ctx" . "path" "pki.certManager.enabled")) (include "openbao.componentEnabled" (dict "component" "certManager" "ctx" .)) }}
 {{- include "openbao.pkiAssertRoleNamesUnique" . }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $labels := include "openbao.labels" . }}
