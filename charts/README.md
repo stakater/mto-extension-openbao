@@ -14,7 +14,7 @@ When you create an MTO `Tenant`, the charts automatically create:
 
 Each application then opts in to what it needs by adding a few annotations to its `ServiceAccount` and `Deployment`. The charts turn those annotations into OpenBao policies, roles, and Kubernetes resources.
 
-> **You need the operator first.** These charts only describe configuration. The [OpenBao Config Operator](https://github.com/stakater-ab/openbao-config-operator) is what actually talks to OpenBao and applies it. Install the operator before the charts.
+> **You need the operator first.** These charts only describe configuration. The [OpenBao Config Operator](https://github.com/stakater/openbao-config-operator) is what actually talks to OpenBao and applies it. Install the operator before the charts.
 
 ---
 
@@ -44,7 +44,7 @@ Each application then opts in to what it needs by adding a few annotations to it
 ## The charts
 
 This repo holds the two MTO charts. The operator's own install chart lives with
-the operator, in [stakater-ab/openbao-config-operator](https://github.com/stakater-ab/openbao-config-operator).
+the operator, in [stakater/openbao-config-operator](https://github.com/stakater/openbao-config-operator).
 
 | Chart | Install it? | What it does |
 |---|---|---|
@@ -143,7 +143,7 @@ Install these in the cluster first. The charts do **not** install them for you.
 
 | Dependency | Needed for | Always required? |
 |---|---|---|
-| [OpenBao Config Operator](https://github.com/stakater-ab/openbao-config-operator) | Everything | Yes |
+| [OpenBao Config Operator](https://github.com/stakater/openbao-config-operator) | Everything | Yes |
 | [Multi-Tenant Operator (MTO)](https://github.com/stakater/multi-tenant-operator) | Provides `Tenant` CRs and labels tenant namespaces | Yes |
 | [template-operator-v2](https://github.com/stakater/template-operator) | Renders the per-tenant chart | Yes |
 | [External Secrets Operator (ESO)](https://external-secrets.io/) | Delivering secrets as Kubernetes Secrets | Only if `eso=enabled` (the default) |
@@ -157,7 +157,7 @@ MTO must label each tenant namespace with `stakater.com/tenant=<tenant-name>`. T
 
 ## Install
 
-Install the operator first (see the [operator README](https://github.com/stakater-ab/openbao-config-operator)), then the bootstrap chart:
+Install the operator first (see the [operator README](https://github.com/stakater/openbao-config-operator)), then the bootstrap chart:
 
 ```bash
 helm install openbao-config-mto-bootstrap \
@@ -948,7 +948,7 @@ OpenBao supports several login methods. **These charts set up two:**
 | JWT | No | — |
 | cert | No | — |
 
-The operator itself can manage JWT and cert login too, but the charts don't generate them. If you need those, create the resources yourself (see the [operator README](https://github.com/stakater-ab/openbao-config-operator) and [CRD reference](https://github.com/stakater-ab/openbao-config-operator/blob/main/docs/crd-reference.md)).
+The operator itself can manage JWT and cert login too, but the charts don't generate them. If you need those, create the resources yourself (see the [operator README](https://github.com/stakater/openbao-config-operator) and [CRD reference](https://github.com/stakater/openbao-config-operator/blob/main/docs/crd-reference.md)).
 
 ---
 
@@ -1139,7 +1139,7 @@ Both files have comments on every setting.
 
 A few defaults are tuned for trying things out, not for production:
 
-- **Operator credentials.** The operator deployment defaults to Kubernetes auth: the operator logs into OpenBao with its own ServiceAccount and stores no token anywhere. This needs a one-time bootstrap per OpenBao server (auth mount + policy + role) — see the [operator README](https://github.com/stakater-ab/openbao-config-operator#openbao-authentication). Never give the operator the root token; the legacy static-token mode (`BAO_AUTH_METHOD=token` + a `VAULT_TOKEN` env) exists only for local development and migration.
+- **Operator credentials.** The operator deployment defaults to Kubernetes auth: the operator logs into OpenBao with its own ServiceAccount and stores no token anywhere. This needs a one-time bootstrap per OpenBao server (auth mount + policy + role) — see the [operator README](https://github.com/stakater/openbao-config-operator#openbao-authentication). Never give the operator the root token; the legacy static-token mode (`BAO_AUTH_METHOD=token` + a `VAULT_TOKEN` env) exists only for local development and migration.
 - **Use TLS.** Set `baoServer` to an `https://` address. If OpenBao uses a private CA, also set `baoCABundle`.
 - **Token lifetimes.** Workload tokens default to 1h / 4h max (`token.*`); SSO tokens to 15m / 1h (`ssoToken.*`). Shorten high-privilege tiers if your IdP can't revoke tokens.
 - **Secret refresh.** `externalSecretRefreshInterval` defaults to `1h`. Lower values mean more frequent OpenBao logins.

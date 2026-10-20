@@ -1,6 +1,6 @@
 // Schema validator for the OpenBao* custom resources the charts render.
 //
-// The charts emit CRs against CRDs owned by stakater-ab/openbao-config-operator.
+// The charts emit CRs against CRDs owned by stakater/openbao-config-operator.
 // Nothing else in this repo reads those schemas, so a field renamed on either
 // side — here by a typo, there by an API change — still renders and still
 // passes every yq assertion.
