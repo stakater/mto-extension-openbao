@@ -13,7 +13,7 @@
       "matchStrings": [
         "OPERATOR_CHART_VERSION\\s*\\?=\\s*(?<currentValue>\\S+)"
       ],
-      "depNameTemplate": "ghcr.io/stakater/charts/openbao-config-operator",
+      "depNameTemplate": "ghcr.io/stakater/public/charts/openbao-config-operator",
       "datasourceTemplate": "docker",
       "versioningTemplate": "semver"
     }
@@ -22,7 +22,7 @@
     {
       "description": "A bump edits only the Makefile, and helm-release on main fails closed on an already-published chart version \u2014 so without [skip-ci] every merged bump reddens main and pages the release webhook. The PR run already validated against the new CRDs.",
       "matchDepNames": [
-        "ghcr.io/stakater/charts/openbao-config-operator"
+        "ghcr.io/stakater/public/charts/openbao-config-operator"
       ],
       "commitMessageSuffix": "[skip-ci]"
     }

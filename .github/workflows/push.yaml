@@ -24,11 +24,8 @@ jobs:
 
       - name: Lint, version pin, render tests, CRD schema check
         run: make all
-        # crd-validate pulls the operator CRDs from a private chart, so this step
-        # needs the credential too — not just the release step below.
-        env:
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        # crd-validate pulls the operator CRDs from its public chart, so only
+        # the release step below needs the credential.
 
       # check-tag-free in the Makefile refuses a version that is already
       # published — helm push itself would overwrite it.

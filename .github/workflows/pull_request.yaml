@@ -28,11 +28,5 @@ jobs:
           go-version: "1.27"
       - name: Lint, version pin, render tests, CRD schema check
         run: make all
-        # crd-validate pulls the operator CRDs from its published (private)
-        # chart, so this needs a package-read credential; without it the pull
-        # fails the job rather than skipping the schema check. Same token
-        # push.yaml pushes with — deliberate, rather than a second credential to
-        # manage. A fork PR gets no secrets and would fail here.
-        env:
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        # crd-validate pulls the operator CRDs from its public chart, so this
+        # needs no credential, and a fork PR runs it too.

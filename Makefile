@@ -13,7 +13,7 @@ DOCKER_REPO_BASE ?= ghcr.io/stakater
 ifeq ($(strip $(DOCKER_REPO_BASE)),)
 DOCKER_REPO_BASE := ghcr.io/stakater
 endif
-HELM_REGISTRY ?= $(DOCKER_REPO_BASE)/charts
+HELM_REGISTRY ?= $(DOCKER_REPO_BASE)/public/charts
 
 MTO_BOOTSTRAP_CHART_DIR ?= charts/openbao-config-mto-bootstrap
 MTO_CHART_DIR           ?= charts/openbao-config-mto
@@ -64,7 +64,7 @@ helm-render-test: helm yq ## Verify the tenant chart's component slices (golden,
 #
 # Bump OPERATOR_CHART_VERSION to adopt new CRDs. It is the one place the operator
 # version this repo validates against is written down.
-OPERATOR_CHART         ?= oci://ghcr.io/stakater/charts/openbao-config-operator
+OPERATOR_CHART         ?= oci://ghcr.io/stakater/public/charts/openbao-config-operator
 OPERATOR_CHART_VERSION ?= 0.0.6
 # Pulled into bin/ (gitignored), so a stale fetch is cleared by `make clean-crds`
 # and never reviewed as a source change.
@@ -100,10 +100,8 @@ $(CRD_STAMP): | helm
 	$(HELM) pull $(OPERATOR_CHART) --version $(OPERATOR_CHART_VERSION) --untar --untardir $$tmp \
 		|| { echo ""; \
 		     echo "Could not pull $(OPERATOR_CHART):$(OPERATOR_CHART_VERSION)."; \
-		     echo "The chart is private, so this needs a credential that can read packages:"; \
-		     echo "  export GHCR_TOKEN=<token with read:packages>   (CI sets this already)"; \
-		     echo "  or GIT_TOKEN, the local override this Makefile also accepts"; \
-		     echo "  or: helm registry login ghcr.io -u <user>"; \
+		     echo "The chart is public, so this is not a login problem. Check that the operator"; \
+		     echo "released this version: a vX.Y.Z tag in stakater/openbao-config-operator publishes it."; \
 		     exit 1; }; \
 	src=$$tmp/openbao-config-operator/crds; \
 	[ -d "$$src" ] || { echo "chart $(OPERATOR_CHART_VERSION) has no crds/ directory — the operator's chart build no longer passes helmify -crd-dir"; exit 1; }; \

@@ -35,7 +35,7 @@ templateOperator:
 # CR at render time. Bump `version` to roll the per-tenant config shape
 # without touching the operator or the bootstrap install.
 openbaoConfigMto:
-  registry: oci://ghcr.io/stakater/charts
+  registry: oci://ghcr.io/stakater/public/charts
   name: openbao-config-mto
   version: 0.18.0
   releaseName: openbao-config-mto

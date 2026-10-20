@@ -161,7 +161,7 @@ Install the operator first (see the [operator README](https://github.com/stakate
 
 ```bash
 helm install openbao-config-mto-bootstrap \
-  oci://ghcr.io/stakater/charts/openbao-config-mto-bootstrap \
+  oci://ghcr.io/stakater/public/charts/openbao-config-mto-bootstrap \
   -n openbao-config-operator-system
 ```
 
