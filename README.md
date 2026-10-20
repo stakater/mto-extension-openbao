@@ -6,7 +6,7 @@ Helm charts that give every [Multi-Tenant Operator](https://github.com/stakater/
 
 The charts only *describe* configuration. They emit `OpenBao*` custom resources. The thing that talks to OpenBao and makes those resources real is a separate operator:
 
-**[stakater-ab/openbao-config-operator](https://github.com/stakater-ab/openbao-config-operator)** — the controllers, the CRDs, and the operator's own install chart.
+**[stakater/openbao-config-operator](https://github.com/stakater/openbao-config-operator)** — the controllers, the CRDs, and the operator's own install chart.
 
 Install the operator first, then the bootstrap chart from here.
 

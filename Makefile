@@ -3,7 +3,7 @@
 # This repo holds the two hand-maintained charts that template-operator-v2
 # renders once per MTO Tenant. The operator that reconciles the OpenBao* CRs
 # they emit, its CRDs and its install chart live in
-# github.com/stakater-ab/openbao-config-operator.
+# github.com/stakater/openbao-config-operator.
 
 # Each chart publishes at its own Chart.yaml version.
 MTO_BOOTSTRAP_VERSION := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto-bootstrap/Chart.yaml)
