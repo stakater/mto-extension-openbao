@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
-  "title": "openbao-config-mto values",
+  "title": "mto-extension-openbao values",
   "description": "Deliberately minimal. This chart is normally rendered by template-operator-v2 from the bootstrap chart's valuesTemplate, so any constraint here has to accept everything t-op-v2 can send -- including serviceAccounts/deployments arriving as JSON null when a tenant has no workloads yet. Only the switches consumed as string comparisons are constrained, because a near-miss there (yes / on / True / 1) silently disables a feature. serviceAccounts, deployments, tierCaps, transit.tierCaps and sso.tiers are left entirely unconstrained on purpose. pki.roles is the exception: it is constrained field-by-field, for the reason given on that key. The boolean forms mirror the bootstrap chart's _helpers.tpl: a boolean, or the quoted strings \"true\"/\"false\".",
   "type": "object",
   "definitions": {

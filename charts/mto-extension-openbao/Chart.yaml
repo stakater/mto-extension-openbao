@@ -1,16 +1,16 @@
 apiVersion: v2
-name: openbao-config-mto
+name: mto-extension-openbao
 description: |
   OpenBao config for one MTO Tenant: KV / transit / PKI mounts, kubernetes
   auth config, optional OIDC SSO, per-SA Policy + Role, per-SA intra-tenant
   and cross-tenant sharing, per-Deployment ExternalSecrets.
 
-  Rendered once per Tenant CR by the openbao-config-mto-bootstrap parent
+  Rendered once per Tenant CR by the mto-extension-openbao-bootstrap parent
   Template. Pulled from OCI by template-operator-v2 — not installed
   standalone.
 
   Requires: the OpenBao config operator installed (provides the OpenBao*
   CRDs this chart emits).
 type: application
-version: 0.18.0
+version: 0.19.0
 appVersion: "0.4.0"

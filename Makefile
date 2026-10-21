@@ -6,8 +6,8 @@
 # github.com/stakater/openbao-config-operator.
 
 # Each chart publishes at its own Chart.yaml version.
-MTO_BOOTSTRAP_VERSION := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto-bootstrap/Chart.yaml)
-MTO_VERSION           := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto/Chart.yaml)
+MTO_BOOTSTRAP_VERSION := $(shell awk '/^version:/{print $$2; exit}' charts/mto-extension-openbao-bootstrap/Chart.yaml)
+MTO_VERSION           := $(shell awk '/^version:/{print $$2; exit}' charts/mto-extension-openbao/Chart.yaml)
 
 DOCKER_REPO_BASE ?= ghcr.io/stakater
 ifeq ($(strip $(DOCKER_REPO_BASE)),)
@@ -15,8 +15,8 @@ DOCKER_REPO_BASE := ghcr.io/stakater
 endif
 HELM_REGISTRY ?= $(DOCKER_REPO_BASE)/charts
 
-MTO_BOOTSTRAP_CHART_DIR ?= charts/openbao-config-mto-bootstrap
-MTO_CHART_DIR           ?= charts/openbao-config-mto
+MTO_BOOTSTRAP_CHART_DIR ?= charts/mto-extension-openbao-bootstrap
+MTO_CHART_DIR           ?= charts/mto-extension-openbao
 
 # Defined here rather than under ##@ Tools because CRD_STAMP below uses it in a
 # target position, which make expands as it reads the rule — a later definition
@@ -204,20 +204,20 @@ fi
 endef
 
 .PHONY: helm-release-mto-bootstrap
-helm-release-mto-bootstrap: helm helm-login ## Lint, package and push openbao-config-mto-bootstrap.
+helm-release-mto-bootstrap: helm helm-login ## Lint, package and push mto-extension-openbao-bootstrap.
 	$(HELM) lint $(MTO_BOOTSTRAP_CHART_DIR) --strict
-	$(call check-tag-free,openbao-config-mto-bootstrap,$(MTO_BOOTSTRAP_VERSION))
+	$(call check-tag-free,mto-extension-openbao-bootstrap,$(MTO_BOOTSTRAP_VERSION))
 	@mkdir -p dist
 	$(HELM) package $(MTO_BOOTSTRAP_CHART_DIR) -d dist
-	$(HELM) push dist/openbao-config-mto-bootstrap-$(MTO_BOOTSTRAP_VERSION).tgz oci://$(HELM_REGISTRY)
+	$(HELM) push dist/mto-extension-openbao-bootstrap-$(MTO_BOOTSTRAP_VERSION).tgz oci://$(HELM_REGISTRY)
 
 .PHONY: helm-release-mto
-helm-release-mto: helm helm-login ## Lint, package and push openbao-config-mto (per-Tenant chart pulled by t-op-v2).
+helm-release-mto: helm helm-login ## Lint, package and push mto-extension-openbao (per-Tenant chart pulled by t-op-v2).
 	$(HELM) lint $(MTO_CHART_DIR) --strict --set tenant=lint-only
-	$(call check-tag-free,openbao-config-mto,$(MTO_VERSION))
+	$(call check-tag-free,mto-extension-openbao,$(MTO_VERSION))
 	@mkdir -p dist
 	$(HELM) package $(MTO_CHART_DIR) -d dist
-	$(HELM) push dist/openbao-config-mto-$(MTO_VERSION).tgz oci://$(HELM_REGISTRY)
+	$(HELM) push dist/mto-extension-openbao-$(MTO_VERSION).tgz oci://$(HELM_REGISTRY)
 
 # t-op-v2 pulls the tenant chart at the exact version openbaoConfigMto.version
 # names. Bumping Chart.yaml without the pin leaves tenants on the old chart;

@@ -651,7 +651,7 @@ Captured per tier against its own prefix.
 | `admin` | OK | OK | OK | OK | OK | OK | + rotate, datakey, sign, verify, key read |
 
 Underlying values: `tierCaps` and `transit.tierCaps` in
-`charts/openbao-config-mto/values.yaml`. `viewer` and `audit-read` have `'[]'`
+`charts/mto-extension-openbao/values.yaml`. `viewer` and `audit-read` have `'[]'`
 transit caps, which is why S26 is a rejection rather than a silent no-op.
 
 ---
@@ -899,7 +899,7 @@ whose tenant name exceeds the label budget renders nothing and reports
 ```text
 Rendered  False  TemplateExecutionFailed
    helm template render failed ... execution error at
-   (openbao-config-mto/templates/11-pki-cross-tenant-trust.yaml:29:64):
+   (mto-extension-openbao/templates/11-pki-cross-tenant-trust.yaml:29:64):
    tenant name "xxx…" (50 chars) makes TemplateInstance name ...
 Ready     False  TemplateExecutionFailed
 ```
@@ -934,7 +934,7 @@ operator, and put the workload ServiceAccounts in an existing tenant-labelled
 namespace:
 
 ```bash
-helm template att charts/openbao-config-mto \
+helm template att charts/mto-extension-openbao \
   -n mto-extension-openbao-system \
   -f <fixture>.yaml --set component=core > render.yaml
 kubectl apply -f render.yaml

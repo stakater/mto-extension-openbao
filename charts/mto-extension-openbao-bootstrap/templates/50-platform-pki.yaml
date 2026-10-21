@@ -35,7 +35,7 @@ metadata:
   namespace: {{ .Values.operatorNamespace }}
 spec:
   name: {{ $ns }}
-  deletionPolicy: {{ include "openbao-config-mto-bootstrap.deletionPolicy" $ }}
+  deletionPolicy: {{ include "mto-extension-openbao-bootstrap.deletionPolicy" $ }}
 {{- end }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -49,7 +49,7 @@ spec:
   openbaoNamespace: {{ $ns }}/
   {{- end }}
   pki: {}
-  deletionPolicy: {{ include "openbao-config-mto-bootstrap.deletionPolicy" $ }}
+  deletionPolicy: {{ include "mto-extension-openbao-bootstrap.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPKISecretEngineConfig
