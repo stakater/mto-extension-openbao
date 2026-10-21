@@ -37,7 +37,7 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.18.0
+  version: 0.20.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.
@@ -109,6 +109,27 @@ parent:
   sharedTenantName: shared
   eso: enabled
   externalSecretRefreshInterval: "1h"
+  # Workload token settings (tenant chart value `token`). Install-wide: every
+  # tenant gets the same. Empty here means the tenant chart's own defaults
+  # apply — t-op-v2 owns rendered CR fields via SSA, so anything not plumbed
+  # here is unreachable for every tenant, which is why these are exposed at all.
+  #
+  # `type` is the lever paired with externalSecretRefreshInterval above. ESO
+  # re-authenticates on every refresh, and on raft storage a `service` login
+  # costs 4 fsync'd writes and ~72ms of bao time against ~0.3ms and zero writes
+  # for `batch`. Lowering the refresh interval without setting batch multiplies
+  # that cost by the number of workloads.
+  #
+  # batch tokens cannot be renewed or revoked (no accessor), so `ttl` becomes
+  # the only way to retire a leaked one — shorten it when setting batch. See
+  # the tenant chart's values.yaml for the full trade-off.
+  #
+  # token.period is deliberately NOT exposed: bao silently ignores it on a
+  # batch token, and the tenant chart fails the render on that combination.
+  token: {}
+  #  type: batch
+  #  ttl: "15m"
+  #  maxTTL: "1h"
   # cert-manager Issuer wiring (chart value pki.certManager.enabled). When
   # true, each tenant with a PKI-opted-in ServiceAccount gets an
   # `openbao-config-mto-<tenant>.certmanager` TemplateInstance rendering the

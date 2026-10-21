@@ -33,9 +33,15 @@ make crd-validate
 
 `make` with no target runs exactly what CI runs. There is no help-only default: a contributor who types `make`, sees green, and pushes has actually tested the change.
 
+```bash
+make e2e-kind           # a kind cluster with every dependency, then the E2E suite
+```
+
+`make e2e-kind` is the one thing `make` does not run: it builds a whole cluster — cert-manager, trust-manager, External Secrets, OpenBao, template-operator-v2, the openbao-config-operator — serves this checkout's tenant chart from inside it, and runs [tests/e2e](tests/e2e), which installs the bootstrap chart, creates Tenants, opts workloads in and then acts **as those workloads** against bao. It is the only layer where anything reconciles. It needs `GHCR_TOKEN` (the operator's chart and image are private) or `OPERATOR_SRC=../openbao-config-operator` to build the operator locally. [docs/e2e.md](docs/e2e.md) has the walkthrough; in CI it runs on approval, on the `ok-to-test/kubernetes` label, or on dispatch.
+
 [hack/chart-render-tests.sh](hack/chart-render-tests.sh) is the real test suite — a golden object-set, slice disjointness, RBAC scope, name budgets, hostile-input handling, and an apiserver-acceptance check. Run it after any change under [charts/openbao-config-mto/](charts/openbao-config-mto/). An intentional change to the rendered output means regenerating [hack/render-fixtures/golden-all.yaml](hack/render-fixtures/golden-all.yaml); the command is in the script's header.
 
-The apiserver check shells out to `go run ./hack/render-validate`, which decodes rendered YAML through the same path client-go uses and runs apimachinery's validators over names, labels and ConfigMap keys. `yq` can't stand in for it — go-yaml v3 keeps `no` a string where the apiserver reads a boolean. That helper and [hack/crd-validate/](hack/crd-validate/) are the only Go in this repo, and the only reason there is a `go.mod`.
+The apiserver check shells out to `go run ./hack/render-validate`, which decodes rendered YAML through the same path client-go uses and runs apimachinery's validators over names, labels and ConfigMap keys. `yq` can't stand in for it — go-yaml v3 keeps `no` a string where the apiserver reads a boolean. That helper, [hack/crd-validate/](hack/crd-validate/) and the E2E suite under [tests/e2e/](tests/e2e/) are the only Go in this repo, and the only reason there is a `go.mod`.
 
 If the Go toolchain is missing the script downgrades that one check to a skip rather than failing, so CI installs Go explicitly.
 

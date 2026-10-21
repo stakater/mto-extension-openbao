@@ -158,6 +158,7 @@ spec:
       - {{ $ns }}
   policies:
     - {{ $authRoleName }}
+  tokenType: {{ include "openbao.tokenType" $ }}
   {{- if $.Values.token.ttl }}
   tokenTTL: {{ $.Values.token.ttl }}
   {{- end }}

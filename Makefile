@@ -308,3 +308,317 @@ yq: ## Ensure a yq binary of at least $(YQ_MIN) is available.
 	if [ "$$(printf '%s\n%s\n' "$(YQ_MIN)" "$$have" | sort -V | head -1)" != "$(YQ_MIN)" ]; then \
 		echo "yq $$have is older than the required $(YQ_MIN) — splitDoc is unavailable ($(YQ_BIN))"; exit 1; \
 	fi
+
+##@ E2E (kind)
+
+# `make e2e-kind` builds the whole stack from nothing — a kind cluster,
+# cert-manager, trust-manager, External Secrets, OpenBao in dev mode, MTO's
+# Tenant CRD, template-operator-v2, the openbao-config-operator and an in-cluster
+# chart repository serving THIS checkout's tenant chart — then runs tests/e2e,
+# which installs and uninstalls the bootstrap chart itself. Everything is
+# idempotent, so re-running after a failure reuses what is already up.
+# docs/e2e.md is the walkthrough; hack/e2e/README.md says why each piece is there.
+#
+# Namespaces and release names below are the CHART DEFAULTS on purpose:
+# operatorNamespace, parent.baoServer and templateOperator.{namespace,
+# serviceAccountName} all come out as what a customer gets, so the suite installs
+# the bootstrap chart with only the values it is actually testing.
+
+CONTAINER_TOOL ?= docker
+KUBECTL ?= kubectl
+KIND ?= $(LOCALBIN)/kind
+KIND_VERSION ?= v0.30.0
+KIND_CONFIG ?= hack/e2e/kind-config.yaml
+TEST_CLUSTER_NAME ?= openbao-mto-e2e
+
+# Not `kubectl config use-context`: the suite refuses to run against the ambient
+# current-context, and every target here is equally explicit.
+E2E_CONTEXT ?= kind-$(TEST_CLUSTER_NAME)
+KC = $(KUBECTL) --context $(E2E_CONTEXT)
+
+E2E_OPERATOR_NS   ?= openbao-config-operator-system
+E2E_TOV2_NS       ?= stakater-template-operator
+E2E_BAO_NS        ?= openbao
+E2E_BAO_POD       ?= openbao-0
+E2E_CHART_REPO_NS ?= chart-repo
+E2E_CHART_REPO_URL ?= http://chart-repo.$(E2E_CHART_REPO_NS).svc.cluster.local
+
+CERT_MANAGER_VERSION  ?= v1.20.0
+CERT_MANAGER_URL      ?= https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.yaml
+TRUST_MANAGER_VERSION ?= v0.24.0
+ESO_CHART_VERSION     ?= 2.9.0
+OPENBAO_CHART_VERSION ?= 0.29.2
+
+# template-operator-v2's PUBLIC release — chart and image are anonymous pulls.
+#
+# The release name MUST be template-operator-v2, and it is not the name the
+# bootstrap chart's templateOperator.serviceAccountName default assumes
+# (template-operator-template-operator-v2, i.e. release `template-operator`).
+# Measured on the published 0.0.7: its Certificate hardcodes
+# issuerRef.name=template-operator-v2-selfsigned-issuer while the Issuer it
+# ships is named <fullname>-selfsigned-issuer, so under any other release name
+# the webhook cert is never issued, the Secret never appears and the controller
+# pod sits in ContainerCreating for ever. The suite therefore installs the
+# bootstrap with templateOperator.{namespace,serviceAccountName} taken from
+# E2E_TOV2_SA rather than the defaults — the one value it cannot leave alone.
+TOV2_RELEASE       ?= template-operator-v2
+TOV2_CHART         ?= oci://ghcr.io/stakater/public/charts/template-operator-v2
+TOV2_CHART_VERSION ?= 0.0.7
+# fullname collapses to the release name because it contains the chart name.
+TOV2_FULLNAME      := $(TOV2_RELEASE)
+# The chart prefixes the ServiceAccount and the webhook with the fullname but
+# NOT the Deployment, so this cannot be derived either.
+TOV2_DEPLOYMENT    ?= template-operator-v2-controller-manager
+
+# The operator. Chart and image are PRIVATE, so the default lane needs the same
+# GHCR credential crd-validate needs — and installs the version crd-validate
+# validates against, one pin (OPERATOR_CHART_VERSION) for both. OPERATOR_SRC=<checkout>
+# is the alternative: build the image from a sibling checkout, load it into kind
+# and install that checkout's chart. It needs no credential, and it is the only
+# way to test an unreleased operator against these charts.
+OPERATOR_RELEASE   ?= openbao-config-operator
+OPERATOR_SRC       ?=
+OPERATOR_IMG_LOCAL ?= openbao-config-operator:e2e-local
+
+# `kubectl wait --for=condition=Established` on a CRD created moments earlier
+# fails outright rather than waiting ("<nil> is of the type <nil>, expected
+# []interface{}"): the object exists but has no status yet. Retrying is the
+# documented workaround. The success flag is load-bearing — a bare for-loop's
+# exit status is the last command's (the sleep), so exhausting the retries would
+# read as success and surface later as a missing kind, blamed on whatever ran next.
+define wait-crd
+	@ok=""; for i in 1 2 3; do \
+		$(KC) wait crd $(1) --for=condition=Established --timeout=60s && { ok=1; break; }; \
+		echo "  CRDs not established yet, retrying ($$i/3)"; sleep 5; \
+	done; \
+	if [ -z "$$ok" ]; then echo "error: CRDs $(1) never became Established" >&2; exit 1; fi
+endef
+
+# A release left in pending-install/pending-upgrade by an interrupted run blocks
+# every later upgrade with "another operation is in progress", and one whose
+# first install FAILED (an apiserver timeout under load is enough) makes
+# `upgrade --install` refuse with "has no deployed releases". Nothing in either
+# is worth keeping, so clear it and let the target install afresh.
+# $(1) release, $(2) namespace.
+define clear-stuck-release
+	@st=$$($(HELM) status $(1) --kube-context $(E2E_CONTEXT) -n $(2) -o json 2>/dev/null | jq -r '.info.status // empty'); \
+	case "$$st" in \
+		pending*|failed|uninstalling) \
+			echo "clearing $(1) release stuck in status $$st"; \
+			$(HELM) uninstall $(1) --kube-context $(E2E_CONTEXT) -n $(2) --wait --timeout 3m || true ;; \
+	esac
+endef
+
+.PHONY: kind
+kind: $(KIND) ## Download kind locally if necessary.
+$(KIND): | $(LOCALBIN)
+	@# -f, or an HTTP error page is saved as the kind "binary" with exit 0 and
+	@# the failure surfaces later as "cannot execute binary file".
+	curl -fsSLo $(KIND) "https://kind.sigs.k8s.io/dl/$(KIND_VERSION)/kind-$$(go env GOOS)-$$(go env GOARCH)"
+	chmod +x $(KIND)
+
+.PHONY: cluster
+cluster: | $(LOCALBIN) ## Create the kind cluster (idempotent). Shared with the other Stakater repos.
+	@# Fetched to a file, then run — never `curl | bash`: piping executes whatever
+	@# partial output curl produced before failing. Pinned to a commit, not
+	@# refs/heads/main, so a push to stakater/.github cannot change what this
+	@# target executes; the SHA is stakater/.github main as of 2026-08-21.
+	curl -fsSL -o $(LOCALBIN)/setup-kind-cluster.sh \
+		https://raw.githubusercontent.com/stakater/.github/77c4bea83766c7dbf77fb3107df9efb9a07eb0e4/.github/scripts/setup-kind-cluster.sh
+	TEST_CLUSTER_NAME=$(TEST_CLUSTER_NAME) \
+	CONTAINER_TOOL=$(CONTAINER_TOOL) \
+	KIND_VERSION=$(KIND_VERSION) \
+	KIND_CONFIG=$(KIND_CONFIG) \
+	LOCALBIN=$(LOCALBIN) \
+	bash $(LOCALBIN)/setup-kind-cluster.sh cluster
+
+.PHONY: cluster-delete
+cluster-delete: kind ## Delete the kind cluster.
+	$(KIND) delete cluster --name $(TEST_CLUSTER_NAME)
+
+.PHONY: e2e-cert-manager
+e2e-cert-manager: ## Install cert-manager: template-operator-v2's webhook cert, the .certmanager slice's Issuers.
+	$(KC) apply -f $(CERT_MANAGER_URL)
+	$(KC) wait deployment.apps/cert-manager-webhook --for=condition=Available -n cert-manager --timeout=300s
+	$(call wait-crd,certificates.cert-manager.io issuers.cert-manager.io)
+	@# Available=True is not the same as "the webhook answers". Issuing a
+	@# throwaway Issuer is the only check that proves it; without it the tov2
+	@# install races and fails with "connection refused". On exhaustion the
+	@# target FAILS and re-runs the probe visibly: the loop discards the error
+	@# text on every attempt, and a silent exit 0 here would surface two targets
+	@# later as the exact race this probe exists to prevent.
+	@ok=""; for i in $$(seq 1 30); do \
+		echo '{"apiVersion":"cert-manager.io/v1","kind":"Issuer","metadata":{"name":"cm-readiness-probe","namespace":"cert-manager"},"spec":{"selfSigned":{}}}' | $(KC) apply -f - >/dev/null 2>&1 && \
+		$(KC) delete issuer cm-readiness-probe -n cert-manager >/dev/null 2>&1 && { ok=1; break; }; \
+		echo "  cert-manager webhook not ready yet ($$i/30)"; sleep 4; \
+	done; \
+	if [ -z "$$ok" ]; then \
+		echo "error: cert-manager webhook never became ready after 30 probes; the last attempt said:" >&2; \
+		echo '{"apiVersion":"cert-manager.io/v1","kind":"Issuer","metadata":{"name":"cm-readiness-probe","namespace":"cert-manager"},"spec":{"selfSigned":{}}}' | $(KC) apply -f - 1>&2 || true; \
+		$(KC) delete issuer cm-readiness-probe -n cert-manager >/dev/null 2>&1 || true; \
+		exit 1; \
+	fi
+
+.PHONY: e2e-trust-manager
+e2e-trust-manager: helm ## Install trust-manager with the operator namespace as its trust namespace (the .trust slice's Bundle sources live there).
+	@# The trust namespace must exist before the install; it is the operator's,
+	@# which nothing else has created yet at this point in e2e-deps.
+	$(KC) create namespace $(E2E_OPERATOR_NS) --dry-run=client -o yaml | $(KC) apply -f -
+	$(call clear-stuck-release,trust-manager,cert-manager)
+	$(HELM) upgrade --install trust-manager oci://quay.io/jetstack/charts/trust-manager \
+		--version $(TRUST_MANAGER_VERSION) \
+		--kube-context $(E2E_CONTEXT) -n cert-manager --reset-values \
+		--set app.trust.namespace=$(E2E_OPERATOR_NS) --wait --timeout 5m
+	$(call wait-crd,bundles.trust.cert-manager.io)
+
+.PHONY: e2e-eso
+e2e-eso: helm ## Install External Secrets Operator (the .eso slice's SecretStore/ExternalSecret).
+	$(HELM) repo add external-secrets https://charts.external-secrets.io --force-update >/dev/null
+	$(call clear-stuck-release,external-secrets,external-secrets)
+	$(HELM) upgrade --install external-secrets external-secrets/external-secrets \
+		--version $(ESO_CHART_VERSION) \
+		--kube-context $(E2E_CONTEXT) -n external-secrets --create-namespace --reset-values \
+		--wait --timeout 5m
+	$(call wait-crd,secretstores.external-secrets.io externalsecrets.external-secrets.io)
+
+.PHONY: e2e-openbao
+e2e-openbao: helm ## Install OpenBao in dev mode: in-memory, root token "root". Restarting the pod wipes it.
+	$(HELM) repo add openbao https://openbao.github.io/openbao-helm --force-update >/dev/null
+	$(call clear-stuck-release,openbao,$(E2E_BAO_NS))
+	$(HELM) upgrade --install openbao openbao/openbao --version $(OPENBAO_CHART_VERSION) \
+		--kube-context $(E2E_CONTEXT) -n $(E2E_BAO_NS) --create-namespace --reset-values \
+		--set server.dev.enabled=true --set server.dev.devRootToken=root \
+		--set injector.enabled=false
+	@# Not `rollout status`: the chart's StatefulSet uses the OnDelete update
+	@# strategy, which kubectl refuses to report on. Wait on the pod itself.
+	@ok=""; for i in $$(seq 1 60); do \
+		[ "$$($(KC) -n $(E2E_BAO_NS) get pod $(E2E_BAO_POD) -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null)" = "true" ] && { ok=1; break; }; \
+		echo "  openbao pod not ready yet ($$i/60)"; sleep 5; \
+	done; \
+	if [ -z "$$ok" ]; then echo "error: pod $(E2E_BAO_POD) never became ready:" >&2; $(KC) -n $(E2E_BAO_NS) get pod -o wide 1>&2; $(KC) -n $(E2E_BAO_NS) describe pod $(E2E_BAO_POD) 1>&2 || true; exit 1; fi
+	@# Ready is not answering. `bao status` exits 0 only once the server is up
+	@# and unsealed (dev mode auto-unseals), and the operator bootstrap that
+	@# follows writes to it immediately.
+	@ok=""; for i in $$(seq 1 30); do \
+		$(KC) -n $(E2E_BAO_NS) exec $(E2E_BAO_POD) -- bao status >/dev/null 2>&1 && { ok=1; break; }; \
+		echo "  openbao not answering yet ($$i/30)"; sleep 2; \
+	done; \
+	if [ -z "$$ok" ]; then echo "error: openbao never answered bao status:" >&2; $(KC) -n $(E2E_BAO_NS) exec $(E2E_BAO_POD) -- bao status 1>&2 || true; exit 1; fi
+
+.PHONY: e2e-mto
+e2e-mto: ## Install MTO's Tenant CRD. NOT the operator — see hack/e2e/README.md.
+	$(KC) apply -f hack/e2e/crds/tenantoperator.stakater.com_tenants.yaml
+	$(call wait-crd,tenants.tenantoperator.stakater.com)
+
+.PHONY: e2e-tov2
+e2e-tov2: helm ## Install template-operator-v2 from its public chart.
+	$(KC) create namespace $(E2E_TOV2_NS) --dry-run=client -o yaml | $(KC) apply -f -
+	$(call clear-stuck-release,$(TOV2_RELEASE),$(E2E_TOV2_NS))
+	@# --reset-values: `helm upgrade` reuses the previous release's values when
+	@# given none, so a chart-version bump here would otherwise keep whatever
+	@# image a previous run had set.
+	$(HELM) upgrade --install $(TOV2_RELEASE) $(TOV2_CHART) --version $(TOV2_CHART_VERSION) \
+		--kube-context $(E2E_CONTEXT) -n $(E2E_TOV2_NS) --reset-values
+	@# BEFORE waiting for the rollout, and that order is not negotiable: an
+	@# unscoped sync-enforcement webhook deadlocks the cluster hard enough that the
+	@# rollout can never finish. The script explains the mechanism; on the
+	@# published chart it is a no-op that confirms the scoping is present.
+	KUBECTL=$(KUBECTL) E2E_CONTEXT=$(E2E_CONTEXT) \
+		WEBHOOK_NAME=$(TOV2_FULLNAME)-template-operator-v2-sync-enforcement \
+		./hack/e2e/scope-tov2-webhook.sh
+	$(KC) -n $(E2E_TOV2_NS) rollout status deploy/$(TOV2_DEPLOYMENT) --timeout=300s
+
+.PHONY: e2e-operator
+e2e-operator: helm kind ## Install the openbao-config-operator and bootstrap its bao login. OPERATOR_SRC=<checkout> builds from source.
+	$(KC) create namespace $(E2E_OPERATOR_NS) --dry-run=client -o yaml | $(KC) apply -f -
+	$(call clear-stuck-release,$(OPERATOR_RELEASE),$(E2E_OPERATOR_NS))
+ifneq ($(OPERATOR_SRC),)
+	@# From-source lane. The Dockerfile declares GIT_USER/GIT_TOKEN for private Go
+	@# modules the operator no longer has, so dummies satisfy the ARGs. The tag is
+	@# fixed rather than derived from git state: kind caches by tag, and a moving
+	@# tag makes "did my rebuild land?" unanswerable.
+	$(CONTAINER_TOOL) build --build-arg GIT_USER=none --build-arg GIT_TOKEN=none \
+		-t $(OPERATOR_IMG_LOCAL) $(OPERATOR_SRC)
+	$(KIND) load docker-image $(OPERATOR_IMG_LOCAL) --name $(TEST_CLUSTER_NAME)
+	$(HELM) upgrade --install $(OPERATOR_RELEASE) $(OPERATOR_SRC)/charts/openbao-config-operator \
+		--kube-context $(E2E_CONTEXT) -n $(E2E_OPERATOR_NS) --reset-values \
+		--set controllerManager.manager.image.repository=$(firstword $(subst :, ,$(OPERATOR_IMG_LOCAL))) \
+		--set controllerManager.manager.image.tag=$(lastword $(subst :, ,$(OPERATOR_IMG_LOCAL)))
+else
+	@# Registry lane — the default, and it needs the credential. GHCR_* is what CI
+	@# sets, GIT_* the local override the rest of this Makefile honours. Read with
+	@# $$ from the environment, never expanded by make, so `make -n` cannot print
+	@# a live token. The image is private too, hence the pull secret.
+	@set -e; tok="$${GHCR_TOKEN:-$$GIT_TOKEN}"; usr="$${GHCR_USERNAME:-$${GIT_USER:-stakater-user}}"; \
+	if [ -z "$$tok" ]; then \
+		echo "e2e-operator: the operator chart and image are private packages."; \
+		echo "  export GHCR_TOKEN=<token with read:packages>  (CI sets this already)"; \
+		echo "  or OPERATOR_SRC=<sibling checkout> to build the operator from source instead"; \
+		exit 1; \
+	fi; \
+	printf '%s' "$$tok" | $(HELM) registry login ghcr.io -u "$$usr" --password-stdin >/dev/null; \
+	$(KC) -n $(E2E_OPERATOR_NS) create secret docker-registry ghcr-pull \
+		--docker-server=ghcr.io --docker-username="$$usr" --docker-password="$$tok" \
+		--dry-run=client -o yaml | $(KC) apply -f - >/dev/null; \
+	$(HELM) upgrade --install $(OPERATOR_RELEASE) $(OPERATOR_CHART) --version $(OPERATOR_CHART_VERSION) \
+		--kube-context $(E2E_CONTEXT) -n $(E2E_OPERATOR_NS) --reset-values \
+		--set 'imagePullSecrets[0].name=ghcr-pull'
+endif
+	$(call wait-crd,openbaopolicies.security.mto.stakater.com openbaonamespaces.security.mto.stakater.com)
+	@# Before the rollout wait, not after: an operator without its bao identity
+	@# stays Running but fails every reconcile, and the script reads the
+	@# ServiceAccount and audience it binds from the Deployment that now exists.
+	KUBECTL=$(KUBECTL) E2E_CONTEXT=$(E2E_CONTEXT) E2E_BAO_NS=$(E2E_BAO_NS) E2E_BAO_POD=$(E2E_BAO_POD) \
+		E2E_OPERATOR_NS=$(E2E_OPERATOR_NS) ./hack/e2e/bootstrap-operator-auth.sh
+	$(KC) -n $(E2E_OPERATOR_NS) rollout status deploy/$(OPERATOR_RELEASE)-controller-manager --timeout=300s
+
+.PHONY: e2e-chart-repo
+e2e-chart-repo: helm ## Serve THIS checkout's tenant chart from an in-cluster HTTP repo for template-operator-v2 to pull.
+	$(KC) apply -f hack/e2e/chart-repo.yaml
+	$(KC) -n $(E2E_CHART_REPO_NS) rollout status deploy/chart-repo --timeout=120s
+	KUBECTL=$(KUBECTL) HELM=$(HELM) E2E_CONTEXT=$(E2E_CONTEXT) E2E_CHART_REPO_NS=$(E2E_CHART_REPO_NS) \
+		CHART_DIR=$(MTO_CHART_DIR) ./hack/e2e/chart-repo-publish.sh
+
+.PHONY: e2e-deps
+e2e-deps: e2e-cert-manager e2e-openbao e2e-mto e2e-tov2 e2e-trust-manager e2e-eso e2e-operator e2e-chart-repo ## Everything the charts need, onto an existing cluster.
+
+.PHONY: e2e-up
+e2e-up: cluster e2e-deps ## Cluster plus dependencies. Leaves it running for repeated e2e-test runs.
+
+.PHONY: e2e-test
+e2e-test: helm ## Run tests/e2e against a live cluster. Needs KUBE_CONTEXT and the E2E_* variables e2e-kind sets (see docs/e2e.md).
+	@# HELM pinned here for the same reason every other target sets it: the suite
+	@# installs the bootstrap chart, and a bare `go test` would do that with
+	@# whatever helm is on PATH.
+	E2E=1 HELM=$(HELM) KUBECTL=$(KUBECTL) go test ./tests/e2e/... -v -timeout 45m -count=1
+
+.PHONY: e2e-kind
+e2e-kind: ## Build the whole stack in kind and run the suite. The one command to remember.
+	@# Recursive rather than prerequisites so a failure ANYWHERE in the chain —
+	@# the cluster build, a dependency install, or the suite — still dumps
+	@# diagnostics before exiting.
+	$(MAKE) e2e-up && $(MAKE) e2e-test \
+		KUBE_CONTEXT=$(E2E_CONTEXT) \
+		E2E_OPERATOR_NAMESPACE=$(E2E_OPERATOR_NS) \
+		E2E_BAO_NAMESPACE=$(E2E_BAO_NS) \
+		E2E_BAO_POD=$(E2E_BAO_POD) \
+		E2E_CHART_REPO_URL=$(E2E_CHART_REPO_URL) \
+		E2E_TOV2_SA=system:serviceaccount:$(E2E_TOV2_NS):$(TOV2_FULLNAME) \
+		|| { $(MAKE) e2e-diagnostics; exit 1; }
+
+.PHONY: e2e-diagnostics
+e2e-diagnostics: ## Dump cluster state into ./e2e-logs. CI uploads this on failure.
+	mkdir -p e2e-logs
+	-$(KC) -n $(E2E_TOV2_NS) logs deploy/$(TOV2_DEPLOYMENT) --tail=6000 > e2e-logs/tov2.log 2>&1
+	-$(KC) -n $(E2E_OPERATOR_NS) logs deploy/$(OPERATOR_RELEASE)-controller-manager --tail=6000 > e2e-logs/operator.log 2>&1
+	-$(KC) -n $(E2E_OPERATOR_NS) logs deploy/$(OPERATOR_RELEASE)-controller-manager --previous --tail=3000 > e2e-logs/operator-previous.log 2>&1
+	-$(KC) get templates.templates.v2.stakater.com,templateinstances.templates.v2.stakater.com -A -o yaml > e2e-logs/template-objects.yaml 2>&1
+	-$(KC) get openbaonamespaces,openbaosecretengines,openbaoauthmethods,openbaokubernetesauthengineconfigs,openbaokubernetesauthroles,openbaopolicies,openbaotransitkeys,openbaopkisecretengineconfigs,openbaopkisecretengineroles -A -o yaml > e2e-logs/openbao-crs.yaml 2>&1
+	-$(KC) get secretstores,externalsecrets,issuers,certificates,bundles -A -o yaml > e2e-logs/integration-objects.yaml 2>&1
+	-$(KC) get tenants.tenantoperator.stakater.com -o yaml > e2e-logs/tenants.yaml 2>&1
+	-$(KC) get configmaps -A -l app.kubernetes.io/name=openbao-config-mto -o yaml > e2e-logs/rendered-configmaps.yaml 2>&1
+	-$(KC) get ns --show-labels > e2e-logs/namespaces.txt 2>&1
+	-$(KC) get pods -A -o wide > e2e-logs/pods.txt 2>&1
+	-$(KC) get events -A --sort-by=.lastTimestamp > e2e-logs/events.txt 2>&1
+	-$(KC) -n $(E2E_BAO_NS) exec $(E2E_BAO_POD) -- env BAO_TOKEN=root sh -c 'bao namespace list; bao auth list; bao secrets list; bao policy list' > e2e-logs/bao.txt 2>&1
+	-$(KC) -n $(E2E_CHART_REPO_NS) exec deploy/chart-repo -- wget -qO- http://localhost:8080/index.yaml > e2e-logs/chart-repo-index.yaml 2>&1
