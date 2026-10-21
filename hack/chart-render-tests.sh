@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render tests for the openbao-config-mto component split.
+# Render tests for the mto-extension-openbao component split.
 #
 # The chart renders one of four disjoint slices per pass (values.component:
 # core | eso | certManager | trust; default all). These tests pin the
@@ -107,15 +107,15 @@
 # the constructs the gotemplate uses (range/dict/list/append/eq).
 #
 # Regenerating the golden after an INTENTIONAL chart change:
-#   helm template openbao-config-mto charts/openbao-config-mto \
+#   helm template openbao-config-mto charts/mto-extension-openbao \
 #     -n openbao-config-operator-system -f hack/render-fixtures/values-full.yaml \
 #     | yq ea -P '[.] | sort_by(.apiVersion + "|" + .kind + "|" + (.metadata.namespace // "") + "|" + .metadata.name) | .[] | sort_keys(..) | splitDoc' \
 #     > hack/render-fixtures/golden-all.yaml
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHART="$REPO_ROOT/charts/openbao-config-mto"
-BOOTSTRAP="$REPO_ROOT/charts/openbao-config-mto-bootstrap"
+CHART="$REPO_ROOT/charts/mto-extension-openbao"
+BOOTSTRAP="$REPO_ROOT/charts/mto-extension-openbao-bootstrap"
 FIXTURES="$REPO_ROOT/hack/render-fixtures"
 HELM="${HELM:-$(command -v "$REPO_ROOT/bin/helm" || command -v helm)}"
 YQ="${YQ:-$(command -v "$REPO_ROOT/bin/yq" || command -v yq)}"
