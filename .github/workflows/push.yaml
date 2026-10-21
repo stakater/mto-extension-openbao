@@ -27,7 +27,7 @@ jobs:
         # crd-validate pulls the operator CRDs from a private chart, so this step
         # needs the credential too — not just the release step below.
         env:
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_USERNAME: stakater-user
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
 
       # check-tag-free in the Makefile refuses a version that is already
@@ -35,7 +35,7 @@ jobs:
       - name: Package and push charts
         run: make helm-release
         env:
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_USERNAME: stakater-user
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
 
       # The shared operator_push.yaml this job replaced sent this.
