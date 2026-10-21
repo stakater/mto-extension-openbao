@@ -23,6 +23,16 @@
 {{- $eso := include "openbao-config-mto-bootstrap.esoMode" . }}
 {{- $certManager := include "openbao-config-mto-bootstrap.certManagerEnabled" . }}
 {{- $crossTenantPki := include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" . }}
+{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml }}
+{{- /* parent.sso and parent.pki.roles are written literally into the child
+       valuesTemplate, which template-operator-v2 renders as a Go template, so a
+       `{{` in any of their values would break the render of every tenant. */ -}}
+{{- if contains "{{" (toYaml $sso) }}
+{{- fail "parent.sso must not contain \"{{\" in any value — the child Templates write it into a valuesTemplate that template-operator-v2 renders as a template" }}
+{{- end }}
+{{- if contains "{{" (toYaml (((.Values.parent | default dict).pki | default dict).roles | default list)) }}
+{{- fail "parent.pki.roles must not contain \"{{\" in any value — the child Templates write it into a valuesTemplate that template-operator-v2 renders as a template" }}
+{{- end }}
 {{- $slices := list (dict "component" "core" "nameSuffix" "") }}
 {{- if eq $eso "enabled" }}
 {{- $slices = append $slices (dict "component" "eso" "nameSuffix" "-eso") }}
@@ -66,7 +76,7 @@ spec:
     - name: ssoEnabled
       value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" $ | quote }}
     - name: ssoIssuerUrl
-      value: {{ (include "openbao-config-mto-bootstrap.parentSso" $ | fromYaml).issuerUrl | default "" | quote }}
+      value: {{ $sso.issuerUrl | default "" | quote }}
     - name: sharedTenantName
       value: {{ $.Values.parent.sharedTenantName | quote }}
     - name: tenantLabelKey
@@ -338,9 +348,31 @@ spec:
         name: {{ `{{ .parameters.sharedTenantName }}` }}
       sso:
         enabled: {{ `{{ .parameters.ssoEnabled }}` }}
+        {{- /* The same helper feeds the parent's ssoSharedSpace parameter, so
+               the shared oidc mount and these roles are on or off together. */}}
+        sharedSpace:
+          enabled: {{ include "openbao-config-mto-bootstrap.ssoSharedSpaceEnabled" $ }}
+        {{- /* The IdP client, the same values as the parent's shared oidc mount.
+               An empty value is left out, and the tenant chart's default
+               applies; with SSO on, ssoClientCheck has already failed the
+               render on an empty client or audience. sso.dex.perTenantClient is
+               not passed, so every mount uses the same client ID. */}}
+        {{- with $sso.audience }}
+        audience: {{ . | quote }}
+        {{- end }}
         dex:
           issuerUrl: {{ `{{ .parameters.ssoIssuerUrl | quote }}` }}
-        {{- with (include "openbao-config-mto-bootstrap.parentSso" $ | fromYaml).allowedRedirectUris }}
+          {{- with $sso.clientId }}
+          clientId: {{ . | quote }}
+          {{- end }}
+          {{- with $sso.clientSecretRef }}
+          clientSecretRef:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $sso.caBundlePem }}
+          caBundlePem: {{ . | toJson }}
+          {{- end }}
+        {{- with $sso.allowedRedirectUris }}
         allowedRedirectUris:
           {{- toYaml . | nindent 10 }}
         {{- end }}

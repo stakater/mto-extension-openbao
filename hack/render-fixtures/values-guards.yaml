@@ -36,6 +36,9 @@ serviceAccounts:
   - metadata: { name: g-claimer, namespace: team-a-dev, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: admin, bao.stakater.com/app: g-claimed } }
   # sharing annotation whose engine is off
   - metadata: { name: g-orphan-share, namespace: team-a-dev, annotations: { bao.stakater.com/transit: "true", bao.stakater.com/tier: editor, bao.stakater.com/kv-export-tenant: team-b } }
+  # kv on and a real roster peer both ways, but a broken tier: no share grant for
+  # the workload, so none for people in the shared space either (ssoshared)
+  - metadata: { name: g-share-err, namespace: team-a-dev, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: editorr, bao.stakater.com/kv-export-tenant: team-b, bao.stakater.com/kv-import-tenant: team-b } }
   # the default ServiceAccount
   - metadata: { name: default, namespace: team-a-dev, annotations: { bao.stakater.com/kv: "true", bao.stakater.com/tier: editor } }
   # subscribing to a namespace outside the tenant

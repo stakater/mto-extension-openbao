@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "openbao-config-mto-bootstrap values",
-  "description": "Constrains only the switches whose values are consumed as string comparisons downstream, where a near-miss (yes / on / True / 1) would otherwise disable an integration silently. Everything else is intentionally unconstrained: this chart is wrapped by other charts and the schema must not become a second place to keep in sync. The accepted forms mirror templates/_helpers.tpl exactly -- a boolean, or the strings \"true\"/\"false\" so that --set-string and wrapper charts passing stringified values still work. If you change one, change the other.",
+  "description": "Constrains only the switches whose values are consumed as string comparisons downstream, where a near-miss (yes / on / True / 1) would otherwise disable an integration silently. Everything else is intentionally unconstrained: this chart is wrapped by other charts and the schema must not become a second place to keep in sync. The exceptions, each for the reason given on its key: platformPki.mode and sync.mode are enums, parent.pki.roles is checked structurally, the IdP client values under parent.sso (clientId, both clientSecretRef keys, audience) must not be empty, and parent.sso.sharedSpace is closed. The accepted forms mirror templates/_helpers.tpl exactly -- a boolean, or the strings \"true\"/\"false\" so that --set-string and wrapper charts passing stringified values still work. If you change one, change the other.",
   "type": "object",
   "definitions": {
     "boolish": {
@@ -80,6 +80,40 @@
             },
             "issuerUrl": {
               "type": "string"
+            },
+            "clientId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientSecretRef": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "caBundlePem": {
+              "type": "string"
+            },
+            "audience": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sharedSpace": {
+              "description": "Closed: a misspelled key inside it (enable, Enabled) fails the render instead of leaving the login off without a word. A misspelled sharedSpace key itself is not caught, because parent.sso stays open for wrapper charts; it reads as off, the safe direction.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "$ref": "#/definitions/boolish"
+                }
+              }
             },
             "allowedRedirectUris": {
               "description": "Tenant chart sso.allowedRedirectUris. Empty means the tenant chart's default loopback callback.",

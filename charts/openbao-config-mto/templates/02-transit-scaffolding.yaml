@@ -15,7 +15,7 @@ Gated by transit.enabled. Every key inherits
 transit.defaultAutoRotatePeriod. Workload grants (all three keys) are issued in
 04-sa-own-tenant.yaml.
 */}}
-{{- if .Values.transit.enabled }}
+{{- if include "openbao.on" (dict "ctx" . "path" "transit.enabled") }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $mount := .Values.transit.mountPath }}

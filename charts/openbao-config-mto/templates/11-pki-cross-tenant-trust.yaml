@@ -22,7 +22,7 @@ REQUIRES trust-manager installed with its trust namespace = operatorNamespace
 trust-manager. Bundles are cluster-scoped + chart-authored — tenants cannot
 self-grant trust.
 */}}
-{{- if and .Values.pki.enabled .Values.pki.crossTenant.enabled (include "openbao.componentEnabled" (dict "component" "trust" "ctx" .)) }}
+{{- if and (include "openbao.on" (dict "ctx" . "path" "pki.enabled")) (include "openbao.on" (dict "ctx" . "path" "pki.crossTenant.enabled")) (include "openbao.componentEnabled" (dict "component" "trust" "ctx" .)) }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $labels := include "openbao.labels" . }}
 {{- $known := .Values.knownTenants }}

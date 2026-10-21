@@ -12,5 +12,5 @@ description: |
   >= 0.0.5 (child TemplateInstances need namespaceSelector; >= 0.0.6 for
   sync.mode=strict), and the OpenBao config operator installed.
 type: application
-version: 0.14.0
+version: 0.17.0
 appVersion: "0.4.0"

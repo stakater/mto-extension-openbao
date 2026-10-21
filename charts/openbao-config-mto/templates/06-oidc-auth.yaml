@@ -14,7 +14,7 @@ Section 6 — per-tenant OIDC scaffolding for human SSO.
 
 Gated by sso.enabled.
 */}}
-{{- if .Values.sso.enabled }}
+{{- if include "openbao.ssoEnabled" . }}
 {{- if not .Values.sso.dex.issuerUrl }}
 {{- fail "sso.enabled=true requires sso.dex.issuerUrl to be set" }}
 {{- end }}
@@ -22,7 +22,7 @@ Gated by sso.enabled.
 {{- $labels := include "openbao.labels" . }}
 {{- $clientId := .Values.sso.dex.clientId }}
 {{- $secretName := .Values.sso.dex.clientSecretRef.name }}
-{{- if .Values.sso.dex.perTenantClient }}
+{{- if include "openbao.on" (dict "ctx" . "path" "sso.dex.perTenantClient") }}
 {{- $clientId = printf "%s-%s" $name $clientId }}
 {{- $secretName = printf "%s-%s" $name $secretName }}
 {{- end }}
