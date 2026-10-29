@@ -374,6 +374,20 @@ func isReady(obj *unstructured.Unstructured) bool {
 	return s == "True"
 }
 
+// tiParam reads one of a TemplateInstance's spec.parameters, "" when the
+// parameter is absent.
+func tiParam(obj *unstructured.Unstructured, name string) string {
+	params, _, _ := unstructured.NestedSlice(obj.Object, "spec", "parameters")
+	for _, p := range params {
+		pm, _ := p.(map[string]any)
+		if pm["name"] == name {
+			v, _ := pm["value"].(string)
+			return v
+		}
+	}
+	return ""
+}
+
 // describeCondition is what a timed-out wait prints: the condition the object
 // actually carries, so the failure names the cause instead of just the wait.
 func describeCondition(gvr schema.GroupVersionResource, ns, name string, obj *unstructured.Unstructured, typ string) string {

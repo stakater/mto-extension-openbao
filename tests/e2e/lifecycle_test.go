@@ -130,48 +130,44 @@ func TestLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("a tenant whose namespaces are not labelled yet fails only itself, and heals when the label lands", func(t *testing.T) {
+	t.Run("a tenant with no labelled namespace gets no TemplateInstance, and gets one when the label lands", func(t *testing.T) {
 		// This is the state MTO puts every new tenant in between creating the
-		// Tenant and labelling its namespaces. The parent emits gamma's
-		// TemplateInstance (the Tenant declares a namespace), the child's
-		// namespaceSelector matches nothing, and template-operator-v2 refuses to
-		// resolve its parameters. Pinned here: the failure is gamma's alone.
+		// Tenant and labelling its namespaces. gamma's Tenant declares a
+		// namespace and the namespace exists, but it carries no tenant label, so
+		// the parent counts zero namespaces for gamma and emits no child: a
+		// child whose namespaceSelector matches nothing would fail
+		// NamespaceSelectorMatchedZero.
+		//
+		// The absence rides on alpha's render. knownTenants is the parent's
+		// roster of tenants with a labelled namespace, written by the same
+		// render that would emit gamma's TemplateInstances, and every Tenant
+		// exists before the chart is installed — so that render saw gamma's
+		// Tenant and left it out.
+		roster := strings.Split(tiParam(mustGet(t, gvrTemplateInstance, operatorNS, tiPrefix+tenantAlpha), "knownTenants"), ",")
+		if !contains(roster, tenantAlpha) {
+			t.Fatalf("alpha's knownTenants = %v does not list alpha, so it says nothing about gamma", roster)
+		}
+		if contains(roster, tenantGamma) {
+			t.Errorf("alpha's knownTenants = %v lists gamma, which has no labelled namespace", roster)
+		}
 		ti := tiPrefix + tenantGamma
-		waitState(t, "gamma's TemplateInstance to report Ready=False", func() string {
-			obj := get(t, gvrTemplateInstance, operatorNS, ti)
-			s, _, _, ok := condition(obj, "Ready")
-			switch {
-			case obj == nil:
-				return "absent"
-			case !ok:
-				return "no Ready condition yet"
-			case s == "True":
-				return "Ready=True — expected the unlabelled window to fail this child"
+		for _, suffix := range []string{"", ".eso", ".certmanager", ".trust"} {
+			if get(t, gvrTemplateInstance, operatorNS, ti+suffix) != nil {
+				t.Errorf("the parent emitted %s for a tenant with no labelled namespace", ti+suffix)
 			}
-			return ""
-		})
-		_, reason, message, _ := condition(mustGet(t, gvrTemplateInstance, operatorNS, ti), "Ready")
-		t.Logf("gamma before its namespace is labelled: reason=%s message=%q", reason, message)
-
+		}
 		if !isReady(get(t, gvrTemplateInstance, operatorNS, parentName)) {
 			t.Error("the parent went Ready=False over one tenant's unlabelled window")
 		}
-		if !isReady(get(t, gvrTemplateInstance, operatorNS, tiPrefix+tenantAlpha)) {
-			t.Error("alpha went Ready=False over gamma's unlabelled window")
-		}
-		// The parent's roll-up names the broken tenant — the one place a
-		// platform operator can see it without reading every child.
-		outputs, _, _ := unstructured.NestedMap(mustGet(t, gvrTemplateInstance, operatorNS, parentName).Object, "status", "outputs")
-		tiReady, _ := outputs["tiReady"].(map[string]any)
-		if v, _ := tiReady[ti].(string); v == "" || strings.Contains(v, "True") {
-			t.Errorf("parent outputs.tiReady[%s] = %q, want a False entry; outputs keys: %v", ti, v, keysOf(outputs))
-		}
 
-		// MTO labels the namespace. Nothing is re-applied by hand: the child's
-		// Namespace informer sees the label and the render goes through.
+		// MTO labels the namespace. Nothing is re-applied by hand: the parent
+		// sees the label, emits gamma's children, and adds gamma to the roster.
 		labelNamespace(t, nsGammaAPI, tenantGamma)
 		waitReady(t, gvrTemplateInstance, operatorNS, ti)
 		waitReady(t, gvrBaoNamespace, operatorNS, tenantGamma)
+		waitFor(t, "alpha's knownTenants to list gamma", func() bool {
+			return contains(strings.Split(tiParam(mustGet(t, gvrTemplateInstance, operatorNS, tiPrefix+tenantAlpha), "knownTenants"), ","), tenantGamma)
+		})
 	})
 
 	t.Run("tenant scaffolding reconciles into bao with a platform-signed, name-constrained CA", func(t *testing.T) {
