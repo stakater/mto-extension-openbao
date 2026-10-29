@@ -41,7 +41,7 @@ jobs:
       # The shared operator_push.yaml this job replaced sent this.
       - name: Notify on failure
         if: failure()
-        uses: slackapi/slack-github-action@v1.27.1
+        uses: slackapi/slack-github-action@v4.0.0
         with:
           payload: |
             {
