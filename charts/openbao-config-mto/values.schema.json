@@ -248,6 +248,29 @@
           "$ref": "#/definitions/boolish"
         }
       }
+    },
+    "token": {
+      "type": "object",
+      "description": "Workload token defaults stamped onto every OpenBaoKubernetesAuthRole. `type` is enumerated because bao's default/default-service/default-batch resolve against the auth mount's tune, making token semantics depend on state this chart does not own. numUses is deliberately absent: bao accepts it on a batch token and silently ignores it.",
+      "properties": {
+        "ttl": {
+          "type": "string"
+        },
+        "maxTTL": {
+          "type": "string"
+        },
+        "period": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "service",
+            "batch"
+          ],
+          "description": "service persists the token (renewable, revocable, enumerable, 4 storage writes per login). batch is HMAC-derived and never stored (0 writes, but no renewal and no revocation). Pair batch with a short ttl."
+        }
+      }
     }
   }
 }

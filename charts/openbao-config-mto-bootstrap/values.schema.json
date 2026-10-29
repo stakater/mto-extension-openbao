@@ -141,6 +141,28 @@
               }
             }
           }
+        },
+        "token": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Tenant chart `token`. Install-wide. Empty means the tenant chart's own defaults apply. period is deliberately not exposed: bao silently ignores it on a batch token.",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "service",
+                "batch"
+              ]
+            },
+            "ttl": {
+              "type": "string"
+            },
+            "maxTTL": {
+              "type": "string"
+            }
+          }
         }
       },
       "description": "Parent Template defaults, passed through to every child TI. REQUIRED: a values file that nulls it deletes the key (helm drops null keys before schema validation), and every .Values.parent.<x> read then nil-pointers the whole bootstrap render with a Go template stack trace instead of naming the value."

@@ -1,6 +1,6 @@
 // Schema validator for the OpenBao* custom resources the charts render.
 //
-// The charts emit CRs against CRDs owned by stakater-ab/openbao-config-operator.
+// The charts emit CRs against CRDs owned by stakater/openbao-config-operator.
 // Nothing else in this repo reads those schemas, so a field renamed on either
 // side — here by a typo, there by an API change — still renders and still
 // passes every yq assertion.
@@ -88,6 +88,11 @@ func main() {
 		os.Exit(2)
 	}
 
+	// The apiserver passes the request context. Validation reads one key from
+	// it, set only by WithAllDeclarativeEnforcedForTest; a request never
+	// carries it, so a root context validates exactly as the apiserver does.
+	ctx := context.Background()
+
 	var problems []string
 	checked := 0
 	for i, doc := range docs {
@@ -145,7 +150,7 @@ func main() {
 			metaObj, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")) {
 			problems = append(problems, fmt.Sprintf("%s: %s", id, e.Error()))
 		}
-		for _, e := range schemaobjectmeta.Validate(nil, admitted, entry.structural, true) {
+		for _, e := range schemaobjectmeta.Validate(ctx, nil, admitted, entry.structural, true) {
 			problems = append(problems, fmt.Sprintf("%s: %s", id, e.Error()))
 		}
 		// 2. OpenAPI — types, required, enums, patterns, formats.
@@ -159,7 +164,7 @@ func main() {
 		}
 		// 3. CEL — the cross-field invariants a schema cannot express, e.g.
 		//    "exactly one of spec.kvV2, spec.transit, spec.pki must be set".
-		celErrs, _ := entry.cel.Validate(context.TODO(), nil, entry.structural,
+		celErrs, _ := entry.cel.Validate(ctx, nil, entry.structural,
 			admitted, nil, celconfig.RuntimeCELCostBudget)
 		for _, e := range celErrs {
 			problems = append(problems, fmt.Sprintf("%s: %s", id, e.Error()))

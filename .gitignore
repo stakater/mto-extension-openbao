@@ -51,3 +51,6 @@ docs/adr/
 # Compiled helper binaries — `go build ./hack/<helper>` drops these at the root.
 /crd-validate
 /render-validate
+
+# Cluster state dumped by `make e2e-diagnostics`; CI uploads it as an artifact.
+e2e-logs/

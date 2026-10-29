@@ -105,6 +105,29 @@ token:
   ttl: "1h"
   maxTTL: "4h"
   period: ""
+  # service | batch. See the openbao.tokenType helper for the full rationale.
+  #
+  # ESO re-authenticates on EVERY ExternalSecret refresh, so the login cost is
+  # paid per secret, per workload, per interval — which is what forces
+  # externalSecretRefreshInterval up (default 1h) and bounds how fast a rotated
+  # secret reaches a workload. Measured against raft storage, per login:
+  #
+  #   service   4 fsync'd storage writes, ~72ms of bao time
+  #   batch     0 storage writes,         ~0.3ms of bao time
+  #
+  # At 500 workloads on a 30s interval that is ~240k fsync'd writes an hour and
+  # over a core of bao spent minting tokens, versus effectively nothing.
+  #
+  # The cost of batch: the token cannot be renewed and has no accessor, so it
+  # cannot be revoked or enumerated. ttl becomes the only way to retire a leaked
+  # token — shorten it (10-15m) if you set batch. Apps using the direct API path
+  # that call auth/token/renew-self will break; ESO and cert-manager do not
+  # (both verified to log in per operation).
+  #
+  # Left at `service` so an upgrade cannot silently remove revocability from
+  # every tenant's workload identities. Setting batch is a deliberate posture
+  # change, not a tuning knob.
+  type: service
 
 # SSO token TTLs — shorter than workload tokens, because a group change in the
 # IdP applies only at the next login. A person removed from an IdP group keeps

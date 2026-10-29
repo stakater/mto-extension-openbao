@@ -63,6 +63,15 @@ spec:
   openbaoNamespace: {{ $tenant }}/
   policy: |
     # SSO tier {{ $tier }} for tenant {{ $tenant }}.
+    {{- /* The mount root, listed on its own line because `kv/metadata/<env>/*`
+           does NOT match `kv/metadata/` — a prefix glob never covers the prefix
+           itself. Without this the web UI's secrets browser is refused on its
+           very first request and renders an empty tree for every tier, even
+           though every path beneath is readable; the only way in is to type a
+           full path, which pushes people to the root token instead. Costs the
+           tier sight of the top-level key names on the mount (the env prefixes
+           — `dev/`, `prod/`), not their contents. */}}
+    path "kv/metadata" { capabilities = ["list"] }
     # KV — audit-read gets metadata list only; everyone else gets data.
     {{- if eq $tier "audit-read" }}
     path "kv/metadata/{{ $env }}/*" { capabilities = ["list"] }

@@ -20,3 +20,14 @@ spec:
           apiVersion: tenantoperator.stakater.com/v1beta3
           kind: Tenant
           jsonPath: .items
+    {{- /* Cluster-wide namespace list. The parent gates each tenant on the
+           count of namespaces carrying tenantLabelKey, which is the same fact
+           the child TI's namespaceSelector resolves against — and the only one
+           set by BOTH ways MTO attaches a namespace to a tenant (listed in the
+           Tenant spec, or adopted by label). */}}
+    - name: tenantNamespaces
+      valueFrom:
+        objectFieldRef:
+          apiVersion: v1
+          kind: Namespace
+          jsonPath: .items

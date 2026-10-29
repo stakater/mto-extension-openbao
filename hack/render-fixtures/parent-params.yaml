@@ -31,3 +31,10 @@ parameters:
       spec:
         namespaces:
           withTenantPrefix: [dev]
+  # The parent gates each tenant on namespaces that carry tenantLabelKey, so
+  # team-a needs one here or the render emits no child TemplateInstance.
+  tenantNamespaces:
+    - metadata:
+        name: team-a-dev
+        labels:
+          stakater.com/tenant: team-a

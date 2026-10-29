@@ -893,6 +893,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-share-out.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -922,6 +923,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-share-out.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -951,6 +953,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-transit-share-in.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -980,6 +983,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-transit-share-out.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1009,6 +1013,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-own-tenant.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1038,6 +1043,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-own-tenant.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1067,6 +1073,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/04-sa-own-tenant.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1096,6 +1103,7 @@ spec:
   tokenMaxTTL: 4h
   tokenPeriod: 30m
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/10-cert-manager-issuer.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1124,6 +1132,7 @@ spec:
     - bao-cert-manager
   tokenMaxTTL: 4h
   tokenTTL: 1h
+  tokenType: service
 ---
 # Source: openbao-config-mto/templates/01-tenant-scaffolding.yaml
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -1347,6 +1356,7 @@ spec:
   openbaoNamespace: team-a/
   policy: |
     # SSO tier admin for tenant team-a.
+    path "kv/metadata" { capabilities = ["list"] }
     # KV — audit-read gets metadata list only; everyone else gets data.
     path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
     path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "patch", "delete", "list"] }
@@ -1418,6 +1428,7 @@ spec:
   openbaoNamespace: team-a/
   policy: |
     # SSO tier audit-read for tenant team-a.
+    path "kv/metadata" { capabilities = ["list"] }
     # KV — audit-read gets metadata list only; everyone else gets data.
     path "kv/metadata/dev/*" { capabilities = ["list"] }
     # Transit — humans get tier-appropriate access to every tenant key.
@@ -1476,6 +1487,7 @@ spec:
   openbaoNamespace: team-a/
   policy: |
     # SSO tier editor for tenant team-a.
+    path "kv/metadata" { capabilities = ["list"] }
     # KV — audit-read gets metadata list only; everyone else gets data.
     path "kv/data/dev/*"     { capabilities = ["create", "read", "update", "patch", "list"] }
     path "kv/metadata/dev/*" { capabilities = ["create", "read", "update", "patch", "list"] }
@@ -1543,6 +1555,7 @@ spec:
   openbaoNamespace: team-a/
   policy: |
     # SSO tier viewer for tenant team-a.
+    path "kv/metadata" { capabilities = ["list"] }
     # KV — audit-read gets metadata list only; everyone else gets data.
     path "kv/data/dev/*"     { capabilities = ["read", "list"] }
     path "kv/metadata/dev/*" { capabilities = ["read", "list"] }
