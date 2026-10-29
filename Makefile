@@ -632,4 +632,4 @@ e2e-diagnostics: ## Dump cluster state into ./e2e-logs. CI uploads this on failu
 	-$(KC) get pods -A -o wide > e2e-logs/pods.txt 2>&1
 	-$(KC) get events -A --sort-by=.lastTimestamp > e2e-logs/events.txt 2>&1
 	-$(KC) -n $(E2E_BAO_NS) exec $(E2E_BAO_POD) -- env BAO_TOKEN=root sh -c 'bao namespace list; bao auth list; bao secrets list; bao policy list' > e2e-logs/bao.txt 2>&1
-	-$(KC) -n $(E2E_CHART_REPO_NS) exec deploy/chart-repo -- wget -qO- http://localhost:8080/index.yaml > e2e-logs/chart-repo-index.yaml 2>&1
+	-$(KC) -n $(E2E_CHART_REPO_NS) exec deploy/chart-repo -- wget -qO- http://127.0.0.1:8080/index.yaml > e2e-logs/chart-repo-index.yaml 2>&1
