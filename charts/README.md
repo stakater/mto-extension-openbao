@@ -48,8 +48,8 @@ the operator, in [stakater/openbao-config-operator](https://github.com/stakater/
 
 | Chart | Install it? | What it does |
 |---|---|---|
-| [`openbao-config-mto-bootstrap`](openbao-config-mto-bootstrap/) | Yes | Sets up the MTO integration once per cluster. Watches `Tenant` CRs and fans out to one render per tenant. |
-| [`openbao-config-mto`](openbao-config-mto/) | No (pulled automatically) | The per-tenant template. The bootstrap chart pulls it from a registry and renders it once per tenant. You don't install this one by hand. |
+| [`mto-extension-openbao-bootstrap`](mto-extension-openbao-bootstrap/) | Yes | Sets up the MTO integration once per cluster. Watches `Tenant` CRs and fans out to one render per tenant. |
+| [`mto-extension-openbao`](mto-extension-openbao/) | No (pulled automatically) | The per-tenant template. The bootstrap chart pulls it from a registry and renders it once per tenant. You don't install this one by hand. |
 
 So in practice you install **two** charts: the operator from its own repo, then
 the bootstrap chart from here.
@@ -62,7 +62,7 @@ the bootstrap chart from here.
 MTO Tenant
    │
    ▼
-bootstrap chart (installed once)  ──one render per tenant──▶  openbao-config-mto (pulled from registry)
+bootstrap chart (installed once)  ──one render per tenant──▶  mto-extension-openbao (pulled from registry)
                                                                    │
                                                                    ▼
                                               per-tenant OpenBao CRs + ConfigMaps + ExternalSecrets
@@ -160,12 +160,12 @@ MTO must label each tenant namespace with `stakater.com/tenant=<tenant-name>`. T
 Install the operator first (see the [operator README](https://github.com/stakater/openbao-config-operator)), then the bootstrap chart:
 
 ```bash
-helm install openbao-config-mto-bootstrap \
-  oci://ghcr.io/stakater/charts/openbao-config-mto-bootstrap \
+helm install mto-extension-openbao-bootstrap \
+  oci://ghcr.io/stakater/charts/mto-extension-openbao-bootstrap \
   -n openbao-config-operator-system
 ```
 
-Set cluster-wide defaults (OpenBao address, environment name, SSO on/off, and so on) under `parent.*` in the bootstrap [values.yaml](openbao-config-mto-bootstrap/values.yaml). Set the per-tenant engine details (transit keys, PKI roles, tier permissions, SSO tiers) in the per-tenant chart's [values.yaml](openbao-config-mto/values.yaml).
+Set cluster-wide defaults (OpenBao address, environment name, SSO on/off, and so on) under `parent.*` in the bootstrap [values.yaml](mto-extension-openbao-bootstrap/values.yaml). Set the per-tenant engine details (transit keys, PKI roles, tier permissions, SSO tiers) in the per-tenant chart's [values.yaml](mto-extension-openbao/values.yaml).
 
 After a tenant exists, see what was created for it:
 
@@ -185,6 +185,24 @@ the per-workload sync status (`externalSecretSync`) shows on that render's
 `TemplateInstance` status, not on the core one.
 
 ### Upgrading
+
+To mto-extension-openbao 0.22.0 and mto-extension-openbao-bootstrap 0.18.0:
+
+- **The charts have new names.** Up to bootstrap 0.17.0, the charts were
+  `openbao-config-mto-bootstrap` and `openbao-config-mto`. Upgrade in place,
+  keeping your release name; only the chart's address changes. Pass your values
+  with `-f`, or use `--reset-then-reuse-values` (Helm 3.14+). Plain
+  `--reuse-values` keeps the old chart's defaults, so template-operator-v2
+  would go on pulling `openbao-config-mto`.
+
+  ```bash
+  helm upgrade openbao-config-mto-bootstrap \
+    oci://ghcr.io/stakater/charts/mto-extension-openbao-bootstrap \
+    -n openbao-config-operator-system -f my-values.yaml
+  ```
+
+  Resource names and the per-tenant release name didn't change, so nothing is
+  deleted or re-created.
 
 To openbao-config-mto 0.21.0 and openbao-config-mto-bootstrap 0.17.0:
 
@@ -1338,8 +1356,8 @@ CRs you applied by hand, outside t-op-v2.
 
 ## Configuration
 
-- Cluster-wide defaults: [`openbao-config-mto-bootstrap/values.yaml`](openbao-config-mto-bootstrap/values.yaml) (under `parent.*`, `platformPki.*`, and `sync.*` — see [Drift protection](#drift-protection)).
-- Per-tenant engine settings: [`openbao-config-mto/values.yaml`](openbao-config-mto/values.yaml) (KV tiers, `transit.*`, `pki.*`, `sso.*`).
+- Cluster-wide defaults: [`mto-extension-openbao-bootstrap/values.yaml`](mto-extension-openbao-bootstrap/values.yaml) (under `parent.*`, `platformPki.*`, and `sync.*` — see [Drift protection](#drift-protection)).
+- Per-tenant engine settings: [`mto-extension-openbao/values.yaml`](mto-extension-openbao/values.yaml) (KV tiers, `transit.*`, `pki.*`, `sso.*`).
 - Deletion-policy posture: `safety.*` in both charts — see [Deletion policy](#deletion-policy-safety-guardrails).
 
 Both files have comments on every setting.

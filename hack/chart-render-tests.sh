@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render tests for the openbao-config-mto component split.
+# Render tests for the mto-extension-openbao component split.
 #
 # The chart renders one of four disjoint slices per pass (values.component:
 # core | eso | certManager | trust; default all). These tests pin the
@@ -191,15 +191,15 @@
 # the constructs the gotemplate uses (range/dict/list/append/eq).
 #
 # Regenerating the golden after an INTENTIONAL chart change:
-#   helm template openbao-config-mto charts/openbao-config-mto \
+#   helm template openbao-config-mto charts/mto-extension-openbao \
 #     -n openbao-config-operator-system -f hack/render-fixtures/values-full.yaml \
 #     | yq ea -P '[.] | sort_by(.apiVersion + "|" + .kind + "|" + (.metadata.namespace // "") + "|" + .metadata.name) | .[] | sort_keys(..) | splitDoc' \
 #     > hack/render-fixtures/golden-all.yaml
 set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CHART="$REPO_ROOT/charts/openbao-config-mto"
-BOOTSTRAP="$REPO_ROOT/charts/openbao-config-mto-bootstrap"
+CHART="$REPO_ROOT/charts/mto-extension-openbao"
+BOOTSTRAP="$REPO_ROOT/charts/mto-extension-openbao-bootstrap"
 FIXTURES="$REPO_ROOT/hack/render-fixtures"
 HELM="${HELM:-$(command -v "$REPO_ROOT/bin/helm" || command -v helm)}"
 YQ="${YQ:-$(command -v "$REPO_ROOT/bin/yq" || command -v yq)}"
@@ -2031,10 +2031,10 @@ curly redirect-ssooff '  sso:\n    enabled: false\n    allowedRedirectUris: ["ht
 curly secretref-key '  sso:\n    clientSecretRef: { name: s, key: k, extra: "{{x" }' 'parent.sso must not contain'
 curly pki-roles     '  pki:\n    roles:\n      - nameTemplate: "{{tenant}}-client"\n        allowedDomainsTemplate: ["a.example.com"]' 'parent.pki.roles must not contain'
 ON=(--set parent.sso.enabled=true --set parent.sso.issuerUrl=https://dex.example.com --set parent.sso.sharedSpace.enabled=true)
-must_fail "shared login, tenant chart 0.18.0" 'needs openbao-config-mto 0.21.0 or later' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.18.0
+must_fail "shared login, tenant chart 0.18.0" 'needs mto-extension-openbao 0.21.0 or later' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.18.0
 must_fail "shared login, tenant chart not semver" 'is not a semantic version' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=latest
 must_fail "shared login, tenant chart 0.19.0abc" 'is not a semantic version' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.19.0abc
-must_fail "shared login, tenant chart 0.20.0 (no shared-space roles)" 'needs openbao-config-mto 0.21.0 or later' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.20.0
+must_fail "shared login, tenant chart 0.20.0 (no shared-space roles)" 'needs mto-extension-openbao 0.21.0 or later' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.20.0
 must_render "shared login, tenant chart 0.21.0" "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.21.0
 must_render "shared login, tenant chart 0.21.0-rc.1" "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.21.0-rc.1
 must_render "SSO off, shared login on (the version gate is inactive)" "$BOOTSTRAP" --set parent.sso.sharedSpace.enabled=true --set-string openbaoConfigMto.version=0.18.0

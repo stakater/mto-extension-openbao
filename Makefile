@@ -6,8 +6,8 @@
 # github.com/stakater/openbao-config-operator.
 
 # Each chart publishes at its own Chart.yaml version.
-MTO_BOOTSTRAP_VERSION := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto-bootstrap/Chart.yaml)
-MTO_VERSION           := $(shell awk '/^version:/{print $$2; exit}' charts/openbao-config-mto/Chart.yaml)
+MTO_BOOTSTRAP_VERSION := $(shell awk '/^version:/{print $$2; exit}' charts/mto-extension-openbao-bootstrap/Chart.yaml)
+MTO_VERSION           := $(shell awk '/^version:/{print $$2; exit}' charts/mto-extension-openbao/Chart.yaml)
 
 DOCKER_REPO_BASE ?= ghcr.io/stakater
 ifeq ($(strip $(DOCKER_REPO_BASE)),)
@@ -15,8 +15,8 @@ DOCKER_REPO_BASE := ghcr.io/stakater
 endif
 HELM_REGISTRY ?= $(DOCKER_REPO_BASE)/charts
 
-MTO_BOOTSTRAP_CHART_DIR ?= charts/openbao-config-mto-bootstrap
-MTO_CHART_DIR           ?= charts/openbao-config-mto
+MTO_BOOTSTRAP_CHART_DIR ?= charts/mto-extension-openbao-bootstrap
+MTO_CHART_DIR           ?= charts/mto-extension-openbao
 
 # Defined here rather than under ##@ Tools because CRD_STAMP below uses it in a
 # target position, which make expands as it reads the rule — a later definition
@@ -215,20 +215,20 @@ fi
 endef
 
 .PHONY: helm-release-mto-bootstrap
-helm-release-mto-bootstrap: helm helm-login ## Lint, package and push openbao-config-mto-bootstrap.
+helm-release-mto-bootstrap: helm helm-login ## Lint, package and push mto-extension-openbao-bootstrap.
 	$(HELM) lint $(MTO_BOOTSTRAP_CHART_DIR) --strict
-	$(call check-tag-free,openbao-config-mto-bootstrap,$(MTO_BOOTSTRAP_VERSION))
+	$(call check-tag-free,mto-extension-openbao-bootstrap,$(MTO_BOOTSTRAP_VERSION))
 	@mkdir -p dist
 	$(HELM) package $(MTO_BOOTSTRAP_CHART_DIR) -d dist
-	$(HELM) push dist/openbao-config-mto-bootstrap-$(MTO_BOOTSTRAP_VERSION).tgz oci://$(HELM_REGISTRY)
+	$(HELM) push dist/mto-extension-openbao-bootstrap-$(MTO_BOOTSTRAP_VERSION).tgz oci://$(HELM_REGISTRY)
 
 .PHONY: helm-release-mto
-helm-release-mto: helm helm-login ## Lint, package and push openbao-config-mto (per-Tenant chart pulled by t-op-v2).
+helm-release-mto: helm helm-login ## Lint, package and push mto-extension-openbao (per-Tenant chart pulled by t-op-v2).
 	$(HELM) lint $(MTO_CHART_DIR) --strict --set tenant=lint-only
-	$(call check-tag-free,openbao-config-mto,$(MTO_VERSION))
+	$(call check-tag-free,mto-extension-openbao,$(MTO_VERSION))
 	@mkdir -p dist
 	$(HELM) package $(MTO_CHART_DIR) -d dist
-	$(HELM) push dist/openbao-config-mto-$(MTO_VERSION).tgz oci://$(HELM_REGISTRY)
+	$(HELM) push dist/mto-extension-openbao-$(MTO_VERSION).tgz oci://$(HELM_REGISTRY)
 
 # t-op-v2 pulls the tenant chart at the exact version openbaoConfigMto.version
 # names. Bumping Chart.yaml without the pin leaves tenants on the old chart;
@@ -360,7 +360,14 @@ TRUST_MANAGER_VERSION ?= v0.24.0
 ESO_CHART_VERSION     ?= 2.9.0
 OPENBAO_CHART_VERSION ?= 0.29.2
 
-# template-operator-v2's PUBLIC release — chart and image are anonymous pulls.
+# template-operator-v2's private dev build of main at 621a15b4 (PR #61, SA-9035),
+# not a public release. Every release up to 0.0.8 deletes as an orphan any object
+# that carries its instance-uid label, and the operator copies the CR's labels
+# onto the <tenant>-ca ConfigMap — so each tenant re-render deleted the CA the
+# trust Bundles read. When a public release carries #61, move back to
+# oci://ghcr.io/stakater/public/charts/template-operator-v2 at that version.
+# Chart and version move together: the CRDs differ from 0.0.8, so never pin
+# only the image. The chart and image are private, so this needs GHCR_TOKEN.
 #
 # The release name MUST be template-operator-v2, and it is not the name the
 # bootstrap chart's templateOperator.serviceAccountName default assumes
@@ -373,8 +380,8 @@ OPENBAO_CHART_VERSION ?= 0.29.2
 # bootstrap with templateOperator.{namespace,serviceAccountName} taken from
 # E2E_TOV2_SA rather than the defaults — the one value it cannot leave alone.
 TOV2_RELEASE       ?= template-operator-v2
-TOV2_CHART         ?= oci://ghcr.io/stakater/public/charts/template-operator-v2
-TOV2_CHART_VERSION ?= 0.0.7
+TOV2_CHART         ?= oci://ghcr.io/stakater/charts/template-operator-v2
+TOV2_CHART_VERSION ?= 0.0.9-621a15b4
 # fullname collapses to the release name because it contains the chart name.
 TOV2_FULLNAME      := $(TOV2_RELEASE)
 # The chart prefixes the ServiceAccount and the webhook with the fullname but
@@ -522,14 +529,36 @@ e2e-mto: ## Install MTO's Tenant CRD. NOT the operator — see hack/e2e/README.m
 	$(call wait-crd,tenants.tenantoperator.stakater.com)
 
 .PHONY: e2e-tov2
-e2e-tov2: helm ## Install template-operator-v2 from its public chart.
+e2e-tov2: helm ## Install template-operator-v2 (TOV2_CHART; the default is private).
 	$(KC) create namespace $(E2E_TOV2_NS) --dry-run=client -o yaml | $(KC) apply -f -
 	$(call clear-stuck-release,$(TOV2_RELEASE),$(E2E_TOV2_NS))
 	@# --reset-values: `helm upgrade` reuses the previous release's values when
 	@# given none, so a chart-version bump here would otherwise keep whatever
 	@# image a previous run had set.
+	@#
+	@# Credential handling as in e2e-operator: read with $$ from the environment,
+	@# never expanded by make. Without a token only a public TOV2_CHART can
+	@# install, and a private one stops here with the fix rather than at a bare
+	@# 403. The pull secret goes in "$$@" so the [0] is never globbed.
+	@set -e; tok="$${GHCR_TOKEN:-$$GIT_TOKEN}"; usr="$${GHCR_USERNAME:-$${GIT_USER:-stakater-user}}"; \
+	set --; \
+	if [ -n "$$tok" ]; then \
+		printf '%s' "$$tok" | $(HELM) registry login ghcr.io -u "$$usr" --password-stdin >/dev/null; \
+		$(KC) -n $(E2E_TOV2_NS) create secret docker-registry ghcr-pull \
+			--docker-server=ghcr.io --docker-username="$$usr" --docker-password="$$tok" \
+			--dry-run=client -o yaml | $(KC) apply -f - >/dev/null; \
+		set -- --set 'imagePullSecrets[0].name=ghcr-pull'; \
+	else \
+		case "$(TOV2_CHART)" in */public/*) ;; *) \
+			echo "e2e-tov2: $(TOV2_CHART) is a private package."; \
+			echo "  export GHCR_TOKEN=<token with read:packages>  (CI sets this already)"; \
+			echo "  or TOV2_CHART=oci://ghcr.io/stakater/public/charts/template-operator-v2 TOV2_CHART_VERSION=0.0.8"; \
+			echo "  (no public release carries the SA-9035 fix, so the trust-bundle step then fails)"; \
+			exit 1;; \
+		esac; \
+	fi; \
 	$(HELM) upgrade --install $(TOV2_RELEASE) $(TOV2_CHART) --version $(TOV2_CHART_VERSION) \
-		--kube-context $(E2E_CONTEXT) -n $(E2E_TOV2_NS) --reset-values
+		--kube-context $(E2E_CONTEXT) -n $(E2E_TOV2_NS) --reset-values "$$@"
 	@# BEFORE waiting for the rollout, and that order is not negotiable: an
 	@# unscoped sync-enforcement webhook deadlocks the cluster hard enough that the
 	@# rollout can never finish. The script explains the mechanism; on the
@@ -627,9 +656,9 @@ e2e-diagnostics: ## Dump cluster state into ./e2e-logs. CI uploads this on failu
 	-$(KC) get openbaonamespaces,openbaosecretengines,openbaoauthmethods,openbaokubernetesauthengineconfigs,openbaokubernetesauthroles,openbaopolicies,openbaotransitkeys,openbaopkisecretengineconfigs,openbaopkisecretengineroles -A -o yaml > e2e-logs/openbao-crs.yaml 2>&1
 	-$(KC) get secretstores,externalsecrets,issuers,certificates,bundles -A -o yaml > e2e-logs/integration-objects.yaml 2>&1
 	-$(KC) get tenants.tenantoperator.stakater.com -o yaml > e2e-logs/tenants.yaml 2>&1
-	-$(KC) get configmaps -A -l app.kubernetes.io/name=openbao-config-mto -o yaml > e2e-logs/rendered-configmaps.yaml 2>&1
+	-$(KC) get configmaps -A -l app.kubernetes.io/name=mto-extension-openbao -o yaml > e2e-logs/rendered-configmaps.yaml 2>&1
 	-$(KC) get ns --show-labels > e2e-logs/namespaces.txt 2>&1
 	-$(KC) get pods -A -o wide > e2e-logs/pods.txt 2>&1
 	-$(KC) get events -A --sort-by=.lastTimestamp > e2e-logs/events.txt 2>&1
 	-$(KC) -n $(E2E_BAO_NS) exec $(E2E_BAO_POD) -- env BAO_TOKEN=root sh -c 'bao namespace list; bao auth list; bao secrets list; bao policy list' > e2e-logs/bao.txt 2>&1
-	-$(KC) -n $(E2E_CHART_REPO_NS) exec deploy/chart-repo -- wget -qO- http://localhost:8080/index.yaml > e2e-logs/chart-repo-index.yaml 2>&1
+	-$(KC) -n $(E2E_CHART_REPO_NS) exec deploy/chart-repo -- wget -qO- http://127.0.0.1:8080/index.yaml > e2e-logs/chart-repo-index.yaml 2>&1

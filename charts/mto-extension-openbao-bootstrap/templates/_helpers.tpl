@@ -10,7 +10,7 @@ cannot silently ship without drift protection. Emits nothing when mode is
 block.
 Include in every Template this chart installs:
 
-  {{- with include "openbao-config-mto-bootstrap.templateSync" . }}
+  {{- with include "mto-extension-openbao-bootstrap.templateSync" . }}
   {{- . | nindent 2 }}
   {{- end }}
 */}}
@@ -49,7 +49,7 @@ apply it.
 
 Never compare .Values.<toggle> directly — go through the named helper.
 */}}
-{{- define "openbao-config-mto-bootstrap.boolValue" -}}
+{{- define "mto-extension-openbao-bootstrap.boolValue" -}}
 {{- $raw := .value -}}
 {{- $s := "" -}}
 {{- if kindIs "invalid" $raw -}}
@@ -63,7 +63,7 @@ Never compare .Values.<toggle> directly — go through the named helper.
 {{- $s -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.esoMode" -}}
+{{- define "mto-extension-openbao-bootstrap.esoMode" -}}
 {{- $raw := .Values.parent.eso -}}
 {{- $s := "" -}}
 {{- if kindIs "invalid" $raw -}}
@@ -77,28 +77,28 @@ Never compare .Values.<toggle> directly — go through the named helper.
 {{- $s -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.certManagerEnabled" -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.certManager.enabled" "value" .Values.parent.certManager.enabled) -}}
+{{- define "mto-extension-openbao-bootstrap.certManagerEnabled" -}}
+{{- include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "parent.certManager.enabled" "value" .Values.parent.certManager.enabled) -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.crossTenantPkiEnabled" -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "crossTenantPki.enabled" "value" .Values.crossTenantPki.enabled) -}}
+{{- define "mto-extension-openbao-bootstrap.crossTenantPkiEnabled" -}}
+{{- include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "crossTenantPki.enabled" "value" .Values.crossTenantPki.enabled) -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.platformPkiEnabled" -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "platformPki.enabled" "value" .Values.platformPki.enabled) -}}
+{{- define "mto-extension-openbao-bootstrap.platformPkiEnabled" -}}
+{{- include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "platformPki.enabled" "value" .Values.platformPki.enabled) -}}
 {{- end -}}
 
 {{/* parent.sso is nullable, and a chained deref through it nil-pointers the
      whole bootstrap render. `parent` itself is required by values.schema.json. */}}
-{{- define "openbao-config-mto-bootstrap.parentSso" -}}
+{{- define "mto-extension-openbao-bootstrap.parentSso" -}}
 {{- toYaml ((.Values.parent | default dict).sso | default dict) -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.ssoEnabled" -}}
-{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml -}}
-{{- $on := include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.enabled" "value" $sso.enabled) -}}
-{{- if eq $on "true" -}}{{- include "openbao-config-mto-bootstrap.ssoClientCheck" $sso -}}{{- end -}}
+{{- define "mto-extension-openbao-bootstrap.ssoEnabled" -}}
+{{- $sso := include "mto-extension-openbao-bootstrap.parentSso" . | fromYaml -}}
+{{- $on := include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "parent.sso.enabled" "value" $sso.enabled) -}}
+{{- if eq $on "true" -}}{{- include "mto-extension-openbao-bootstrap.ssoClientCheck" $sso -}}{{- end -}}
 {{- $on -}}
 {{- end -}}
 
@@ -109,7 +109,7 @@ client and its secret, and every SSO role binds the token's aud claim to
 audience. The schema's minLength cannot catch a null: helm drops null keys
 before it validates. Expects the parent.sso map.
 */}}
-{{- define "openbao-config-mto-bootstrap.ssoClientCheck" -}}
+{{- define "mto-extension-openbao-bootstrap.ssoClientCheck" -}}
 {{- $sso := . -}}
 {{- $mount := "the oidc mounts log in with it" -}}
 {{- $secret := "the oidc mounts read the client secret through it" -}}
@@ -128,13 +128,13 @@ neither side is on alone. With SSO also on, it needs the issuer and tenant chart
 0.21.0 or later: an older tenant chart renders no role on the mount, so nobody
 can log in, and no status says why.
 */}}
-{{- define "openbao-config-mto-bootstrap.ssoSharedSpaceEnabled" -}}
-{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml -}}
+{{- define "mto-extension-openbao-bootstrap.ssoSharedSpaceEnabled" -}}
+{{- $sso := include "mto-extension-openbao-bootstrap.parentSso" . | fromYaml -}}
 {{- if and (hasKey $sso "sharedSpace") (not (kindIs "invalid" $sso.sharedSpace)) (not (kindIs "map" $sso.sharedSpace)) -}}
 {{- fail (printf "parent.sso.sharedSpace must be a map with an `enabled` key — got %q. `sharedSpace: true` is not read as on." (toString $sso.sharedSpace)) -}}
 {{- end -}}
-{{- $on := include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.sharedSpace.enabled" "value" (dig "sharedSpace" "enabled" nil $sso)) -}}
-{{- if and (eq $on "true") (eq (include "openbao-config-mto-bootstrap.ssoEnabled" .) "true") -}}
+{{- $on := include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "parent.sso.sharedSpace.enabled" "value" (dig "sharedSpace" "enabled" nil $sso)) -}}
+{{- if and (eq $on "true") (eq (include "mto-extension-openbao-bootstrap.ssoEnabled" .) "true") -}}
 {{- if not $sso.issuerUrl -}}
 {{- fail "parent.sso.sharedSpace.enabled=true requires parent.sso.issuerUrl — the shared space's oidc mount discovers the IdP through it" -}}
 {{- end -}}
@@ -145,13 +145,13 @@ can log in, and no status says why.
 {{- fail (printf "openbaoConfigMto.version %q is not a semantic version" $ver) -}}
 {{- end -}}
 {{- if not (semverCompare ">=0.21.0-0" $ver) -}}
-{{- fail (printf "parent.sso.sharedSpace.enabled=true needs openbao-config-mto 0.21.0 or later, and openbaoConfigMto.version is %q: an older tenant chart renders no role on the shared mount, so nobody can log in and no status says why" $ver) -}}
+{{- fail (printf "parent.sso.sharedSpace.enabled=true needs mto-extension-openbao 0.21.0 or later, and openbaoConfigMto.version is %q: an older tenant chart renders no role on the shared mount, so nobody can log in and no status says why" $ver) -}}
 {{- end -}}
 {{- end -}}
 {{- $on -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.templateSync" -}}
+{{- define "mto-extension-openbao-bootstrap.templateSync" -}}
 {{- $sync := .Values.sync | default dict -}}
 {{- $mode := "revert" -}}
 {{- if hasKey $sync "mode" -}}
@@ -175,21 +175,21 @@ Safety knobs normalized to "true"/"false" via boolValue. Absent/null
 falls to each knob's safe direction (protection ON, grant retention
 OFF), mirroring the operator's zero-value handling.
 */}}
-{{- define "openbao-config-mto-bootstrap.safetyDeletionProtection" -}}
+{{- define "mto-extension-openbao-bootstrap.safetyDeletionProtection" -}}
 {{- $safety := .Values.safety | default dict -}}
 {{- /* hasKey first: sprig get returns "" (not nil) for a missing key. */ -}}
 {{- if or (not (hasKey $safety "deletionProtection")) (kindIs "invalid" (get $safety "deletionProtection")) -}}true{{- else -}}
 {{- $raw := get $safety "deletionProtection" -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "safety.deletionProtection" "value" $raw) -}}
+{{- include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "safety.deletionProtection" "value" $raw) -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "openbao-config-mto-bootstrap.safetyGrantDeletionProtection" -}}
+{{- define "mto-extension-openbao-bootstrap.safetyGrantDeletionProtection" -}}
 {{- $safety := .Values.safety | default dict -}}
 {{- /* hasKey first: sprig get returns "" (not nil) for a missing key. */ -}}
 {{- if or (not (hasKey $safety "grantDeletionProtection")) (kindIs "invalid" (get $safety "grantDeletionProtection")) -}}false{{- else -}}
 {{- $raw := get $safety "grantDeletionProtection" -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "safety.grantDeletionProtection" "value" $raw) -}}
+{{- include "mto-extension-openbao-bootstrap.boolValue" (dict "name" "safety.grantDeletionProtection" "value" $raw) -}}
 {{- end -}}
 {{- end -}}
 
@@ -197,6 +197,6 @@ OFF), mirroring the operator's zero-value handling.
 deletionPolicy for the data-bearing CRs this chart renders itself
 (the platform-PKI OpenBaoNamespace and OpenBaoSecretEngine).
 */}}
-{{- define "openbao-config-mto-bootstrap.deletionPolicy" -}}
-{{- ternary "Retain" "Delete" (eq (include "openbao-config-mto-bootstrap.safetyDeletionProtection" .) "true") -}}
+{{- define "mto-extension-openbao-bootstrap.deletionPolicy" -}}
+{{- ternary "Retain" "Delete" (eq (include "mto-extension-openbao-bootstrap.safetyDeletionProtection" .) "true") -}}
 {{- end -}}

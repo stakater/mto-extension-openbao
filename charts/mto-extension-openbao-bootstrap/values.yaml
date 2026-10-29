@@ -1,4 +1,4 @@
-# openbao-config-mto-bootstrap values.
+# mto-extension-openbao-bootstrap values.
 #
 # Cluster-level wiring for the OpenBao config / MTO integration. Installs
 # the t-op-v2 parent + child Templates, RBAC, and the token-reviewer
@@ -31,13 +31,13 @@ templateOperator:
   serviceAccountName: template-operator-template-operator-v2
   namespace: stakater-template-operator
 
-# The openbao-config-mto chart that t-op-v2 pulls from OCI per MTO Tenant
+# The mto-extension-openbao chart that t-op-v2 pulls from OCI per MTO Tenant
 # CR at render time. Bump `version` to roll the per-tenant config shape
 # without touching the operator or the bootstrap install.
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
-  name: openbao-config-mto
-  version: 0.21.0
+  name: mto-extension-openbao
+  version: 0.22.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.

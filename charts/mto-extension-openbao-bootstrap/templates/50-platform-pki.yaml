@@ -16,7 +16,7 @@ DR note: keep the platform CA's private key recoverable. In mode=intermediate
 the trust anchor is the offline root, so a lost platform CA is re-signable
 from it without invalidating tenant chains that already chain to the root.
 */}}
-{{- if eq (include "openbao-config-mto-bootstrap.platformPkiEnabled" .) "true" }}
+{{- if eq (include "mto-extension-openbao-bootstrap.platformPkiEnabled" .) "true" }}
 {{- $p := .Values.platformPki }}
 {{- /*
 mode is matched exactly against "intermediate" below, so any other value would
@@ -37,7 +37,7 @@ metadata:
   namespace: {{ .Values.operatorNamespace }}
 spec:
   name: {{ $ns }}
-  deletionPolicy: {{ include "openbao-config-mto-bootstrap.deletionPolicy" $ }}
+  deletionPolicy: {{ include "mto-extension-openbao-bootstrap.deletionPolicy" $ }}
 {{- end }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
@@ -51,7 +51,7 @@ spec:
   openbaoNamespace: {{ $ns }}/
   {{- end }}
   pki: {}
-  deletionPolicy: {{ include "openbao-config-mto-bootstrap.deletionPolicy" $ }}
+  deletionPolicy: {{ include "mto-extension-openbao-bootstrap.deletionPolicy" $ }}
 ---
 apiVersion: security.mto.stakater.com/v1alpha1
 kind: OpenBaoPKISecretEngineConfig

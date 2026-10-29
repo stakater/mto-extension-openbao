@@ -55,12 +55,16 @@ done
 # pod (busybox wget): the Service is not reachable from the host. A stale index
 # would make every child TemplateInstance render an older chart and every
 # assertion in the suite would then be about the wrong code.
-served=$(kc -n "${REPO_NS}" exec "${pod}" -- wget -qO- http://localhost:8080/index.yaml)
+#
+# 127.0.0.1, not localhost: when the pod has IPv6 loopback, busybox wget resolves
+# localhost to ::1 and does not fall back, and nginx listens on IPv4 only — so
+# the probe is refused while the pod is Ready (the kubelet probes the pod IPv4).
+served=$(kc -n "${REPO_NS}" exec "${pod}" -- wget -qO- http://127.0.0.1:8080/index.yaml)
 if ! printf '%s\n' "${served}" | grep -q "version: ${version}$"; then
   echo "chart-repo's index.yaml does not list ${name} ${version}:" >&2
   printf '%s\n' "${served}" | head -20 >&2
   exit 1
 fi
-kc -n "${REPO_NS}" exec "${pod}" -- wget -qO /dev/null "http://localhost:8080/${name}-${version}.tgz" \
+kc -n "${REPO_NS}" exec "${pod}" -- wget -qO /dev/null "http://127.0.0.1:8080/${name}-${version}.tgz" \
   || { echo "chart-repo does not serve ${name}-${version}.tgz" >&2; exit 1; }
 echo "   chart-repo serves ${name} ${version}"

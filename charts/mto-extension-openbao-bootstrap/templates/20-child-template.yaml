@@ -1,6 +1,6 @@
 # Child Templates — one per chart component. The parent emits, per MTO Tenant
 # CR, one TemplateInstance of the core Template plus one per enabled optional
-# integration. Each TI pulls the same openbao-config-mto chart from OCI and
+# integration. Each TI pulls the same mto-extension-openbao chart from OCI and
 # renders one slice of it (values.component), so a missing optional CRD fails
 # only that tenant's optional TI at server-side dry-run — the core bao wiring
 # applies regardless.
@@ -20,10 +20,10 @@
        gotemplate's TI-emission predicates exactly — toString comparisons, so a
        stringly "false" disables both sides together rather than rendering a
        Template with no TI (or worse, a TI with no Template). */ -}}
-{{- $eso := include "openbao-config-mto-bootstrap.esoMode" . }}
-{{- $certManager := include "openbao-config-mto-bootstrap.certManagerEnabled" . }}
-{{- $crossTenantPki := include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" . }}
-{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml }}
+{{- $eso := include "mto-extension-openbao-bootstrap.esoMode" . }}
+{{- $certManager := include "mto-extension-openbao-bootstrap.certManagerEnabled" . }}
+{{- $crossTenantPki := include "mto-extension-openbao-bootstrap.crossTenantPkiEnabled" . }}
+{{- $sso := include "mto-extension-openbao-bootstrap.parentSso" . | fromYaml }}
 {{- /* parent.sso and parent.pki.roles are written literally into the child
        valuesTemplate, which template-operator-v2 renders as a Go template, so a
        `{{` in any of their values would break the render of every tenant. */ -}}
@@ -57,7 +57,7 @@ spec:
         literal:
           - {{ $.Values.operatorNamespace }}
   {{- /* $ , not . — the slice range above shadows the root context. */}}
-  {{- with include "openbao-config-mto-bootstrap.templateSync" $ }}
+  {{- with include "mto-extension-openbao-bootstrap.templateSync" $ }}
   {{- . | nindent 2 }}
   {{- end }}
   parameters:
@@ -74,7 +74,7 @@ spec:
     - name: externalSecretRefreshInterval
       value: {{ $.Values.parent.externalSecretRefreshInterval | quote }}
     - name: ssoEnabled
-      value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" $ | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.ssoEnabled" $ | quote }}
     - name: ssoIssuerUrl
       value: {{ $sso.issuerUrl | default "" | quote }}
     - name: sharedTenantName
@@ -84,9 +84,9 @@ spec:
     # Deletion-policy posture, normalized to "true"/"false" strings; the
     # valuesTemplate below re-materializes them as YAML booleans.
     - name: safetyDeletionProtection
-      value: {{ include "openbao-config-mto-bootstrap.safetyDeletionProtection" $ | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.safetyDeletionProtection" $ | quote }}
     - name: safetyGrantDeletionProtection
-      value: {{ include "openbao-config-mto-bootstrap.safetyGrantDeletionProtection" $ | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.safetyGrantDeletionProtection" $ | quote }}
     # Roster of all real tenant names (CSV). Stamped per-child by the parent
     # gotemplate; the chart skips cross-tenant shares whose peer isn't listed.
     - name: knownTenants
@@ -95,7 +95,7 @@ spec:
     # chart renders its CA as a type=intermediate cross-ns-signed by this
     # platform CA; otherwise it keeps its self-signed root.
     - name: pkiHierarchyEnabled
-      value: {{ include "openbao-config-mto-bootstrap.platformPkiEnabled" $ | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.platformPkiEnabled" $ | quote }}
     - name: platformPkiMount
       value: {{ $.Values.platformPki.mountPath | quote }}
     - name: platformPkiNamespace
@@ -366,7 +366,7 @@ spec:
         {{- /* The same helper feeds the parent's ssoSharedSpace parameter, so
                the shared oidc mount and these roles are on or off together. */}}
         sharedSpace:
-          enabled: {{ include "openbao-config-mto-bootstrap.ssoSharedSpaceEnabled" $ }}
+          enabled: {{ include "mto-extension-openbao-bootstrap.ssoSharedSpaceEnabled" $ }}
         {{- /* The IdP client, the same values as the parent's shared oidc mount.
                An empty value is left out, and the tenant chart's default
                applies; with SSO on, ssoClientCheck has already failed the

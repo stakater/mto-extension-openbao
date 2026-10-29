@@ -7,7 +7,7 @@
 # Parameter defaults come from the bootstrap chart's values. The gotemplate
 # body lives in files/parent-gotemplate.tpl (sourced via .Files.Get to keep
 # the t-op-v2 action delimiters out of helm's template engine).
-{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml }}
+{{- $sso := include "mto-extension-openbao-bootstrap.parentSso" . | fromYaml }}
 ---
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: Template
@@ -20,7 +20,7 @@ spec:
       allow:
         literal:
           - {{ .Values.operatorNamespace }}
-  {{- with include "openbao-config-mto-bootstrap.templateSync" . }}
+  {{- with include "mto-extension-openbao-bootstrap.templateSync" . }}
   {{- . | nindent 2 }}
   {{- end }}
   parameters:
@@ -48,7 +48,7 @@ spec:
            the output is identical to quoting the raw value — see _helpers.tpl
            for why they are still routed this way. */}}
     - name: ssoEnabled
-      value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" . | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.ssoEnabled" . | quote }}
     - name: ssoIssuerUrl
       value: {{ $sso.issuerUrl | default "" | quote }}
     {{- /* The shared space's oidc mount and its IdP client. Read only when
@@ -56,7 +56,7 @@ spec:
            (through ssoEnabled) has failed the render on an empty client, and
            ssoSharedSpaceEnabled on an empty issuer. */}}
     - name: ssoSharedSpace
-      value: {{ include "openbao-config-mto-bootstrap.ssoSharedSpaceEnabled" . | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.ssoSharedSpaceEnabled" . | quote }}
     - name: ssoClientId
       value: {{ $sso.clientId | default "" | quote }}
     - name: ssoClientSecretName
@@ -66,15 +66,15 @@ spec:
     - name: ssoCaBundlePem
       value: {{ $sso.caBundlePem | default "" | quote }}
     - name: eso
-      value: {{ include "openbao-config-mto-bootstrap.esoMode" . | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.esoMode" . | quote }}
     - name: externalSecretRefreshInterval
       value: {{ .Values.parent.externalSecretRefreshInterval | quote }}
     - name: certManagerEnabled
-      value: {{ include "openbao-config-mto-bootstrap.certManagerEnabled" . | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.certManagerEnabled" . | quote }}
     - name: crossTenantPkiEnabled
-      value: {{ include "openbao-config-mto-bootstrap.crossTenantPkiEnabled" . | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.crossTenantPkiEnabled" . | quote }}
     - name: safetyDeletionProtection
-      value: {{ include "openbao-config-mto-bootstrap.safetyDeletionProtection" . | quote }}
+      value: {{ include "mto-extension-openbao-bootstrap.safetyDeletionProtection" . | quote }}
   # Health of the shared bao scaffolding this Template renders itself, plus every
   # child TI it emits. The shared objects are singletons behind every tenant —
   # if the kubernetes auth config is not Ready, no tenant's workload can log into
