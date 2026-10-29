@@ -310,6 +310,21 @@ spec:
       kubernetesHost: {{ `{{ .parameters.kubernetesHost }}` }}
       eso: {{ `{{ .parameters.eso }}` }}
       externalSecretRefreshInterval: {{ `{{ .parameters.externalSecretRefreshInterval }}` }}
+      {{- /* Install-wide, so rendered literally rather than threaded through a
+             parameter. Built key-by-key and emitted only when at least one is
+             set: an empty `token:` key would reach the tenant chart as a null
+             map and wipe its own ttl/maxTTL defaults for every tenant. period
+             is not plumbed on purpose — see values.yaml. */ -}}
+      {{- $ptok := dict }}
+      {{- $src := (($.Values.parent | default dict).token | default dict) }}
+      {{- range $k := (list "type" "ttl" "maxTTL") }}
+      {{- $v := get $src $k }}
+      {{- if $v }}{{- $_ := set $ptok $k ($v | toString) }}{{- end }}
+      {{- end }}
+      {{- with $ptok }}
+      token:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       operatorNamespace: {{ $.Values.operatorNamespace }}
       tokenReviewerSecretName: bao-token-reviewer
       tenantLabelKey: {{ `{{ .parameters.tenantLabelKey }}` }}
