@@ -1,0 +1,102 @@
+{{- if include "openbao.componentEnabled" (dict "component" "core" "ctx" .) }}
+{{/*
+Section 7b — SSO login to the shared space, so people can see the tenant's
+cross-tenant KV shares: the ones it sends (<env>/from-<tenant>/to-<peer>/) and
+the ones it receives (<env>/from-<peer>/to-<tenant>/). Per tier, in bao
+namespace <sharedTenant>/: an OpenBaoPolicy and an OIDC role on the shared
+space's `oidc` mount (the bootstrap's parent renders it once), both named
+sso-<tenant>-<tier> as in §7 and bound to the same IdP group.
+
+The CRs share operatorNamespace with §7's, so they carry a `.shared` suffix. No
+other policy or role CR ends in it: namespace names are DNS labels, and G16
+rejects a dotted ServiceAccount.
+
+Limits, on purpose:
+  - Rules name each peer from the tenant's own kv-export-tenant /
+    kv-import-tenant annotations (openbao.ssoSharePeers), never a wildcard: a
+    wildcard would also open shares this tenant never imported.
+  - No fallback role: here it would give any IdP user what other tenants sent.
+  - No list on <env>/ or on from-<peer>/: both show who shares with whom, and a
+    bao list cannot be filtered. People open a received share by its path.
+  - Received shares are read-only for every tier, because the sender owns them
+    (KV v2 metadata write can delete every version); audit-read lists names
+    only. Sent shares follow tierCaps, as in §7. KV only: the shared transit
+    keys are not exposed to people.
+
+Rendered only when the tenant has a share, and sso.enabled and
+sso.sharedSpace.enabled are both on.
+*/}}
+{{- if and (include "openbao.ssoEnabled" .) (include "openbao.ssoSharedSpaceEnabled" .) }}
+{{- $peers := include "openbao.ssoSharePeers" . | fromYaml }}
+{{- if or $peers.exports $peers.imports }}
+{{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
+{{- $env := .Values.env }}
+{{- $shared := .Values.sharedTenant.name }}
+{{- $labels := include "openbao.labels" . }}
+{{- range $tier := $.Values.sso.tiers }}
+{{- include "openbao.assertSsoTier" $tier }}
+{{- $caps := index $.Values.tierCaps $tier }}
+{{- if not $caps }}{{ fail (printf "sso.tiers includes %q but tierCaps has no entry for it" $tier) }}{{ end }}
+{{- $roleName := include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $tier) }}
+{{- $group := include "openbao.ssoGroup" (dict "tenant" $tenant "tier" $tier
+                                                 "mapping" $.Values.sso.tenantRoleMapping
+                                                 "defaultTemplate" $.Values.sso.tenantGroupTemplate) }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoPolicy
+metadata:
+  name: {{ $roleName }}.shared
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
+  name: {{ $roleName }}
+  openbaoNamespace: {{ $shared }}/
+  policy: |
+    # SSO tier {{ $tier }} for tenant {{ $tenant }} in the shared space.
+    {{- /* The web UI's secrets browser lists the mount root first, and no
+           rule below covers it. It shows only the env prefixes (dev/, prod/). */}}
+    path "kv/metadata" { capabilities = ["list"] }
+    {{- if $peers.exports }}
+    # Sent by {{ $tenant }}. This folder lists only {{ $tenant }}'s own peers.
+    path "kv/metadata/{{ $env }}/from-{{ $tenant }}" { capabilities = ["list"] }
+    {{- range $peer := $peers.exports }}
+    {{- $p := printf "%s/from-%s/to-%s" $env $tenant $peer }}
+    {{- if eq $tier "audit-read" }}
+    path "kv/metadata/{{ $p }}/*" { capabilities = ["list"] }
+    {{- else }}
+    path "kv/data/{{ $p }}/*"     { capabilities = {{ $caps }} }
+    path "kv/metadata/{{ $p }}/*" { capabilities = {{ $caps }} }
+    {{- end }}
+    {{- if eq $tier "admin" }}
+    path "kv/delete/{{ $p }}/*"   { capabilities = ["update"] }
+    path "kv/undelete/{{ $p }}/*" { capabilities = ["update"] }
+    path "kv/destroy/{{ $p }}/*"  { capabilities = ["update"] }
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- range $peer := $peers.imports }}
+    {{- $p := printf "%s/from-%s/to-%s" $env $peer $tenant }}
+    # Received from {{ $peer }}. Read-only: {{ $peer }} owns it.
+    {{- if eq $tier "audit-read" }}
+    path "kv/metadata/{{ $p }}/*" { capabilities = ["list"] }
+    {{- else }}
+    path "kv/data/{{ $p }}/*"     { capabilities = ["read", "list"] }
+    path "kv/metadata/{{ $p }}/*" { capabilities = ["read", "list"] }
+    {{- end }}
+    {{- end }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoJWTOIDCAuthEngineRole
+metadata:
+  name: {{ $roleName }}.shared
+  namespace: {{ $.Values.operatorNamespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  {{- include "openbao.ssoRoleSpec" (dict "ctx" $ "name" $roleName "namespace" (printf "%s/" $shared) "group" $group "policy" $roleName) | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

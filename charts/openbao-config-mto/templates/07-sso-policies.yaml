@@ -8,6 +8,9 @@ Section 7 — per (tenant, tier) SSO role + policy. For each tier in
     oidc mount, bound to groups claim "<tenant>-<tier>s" (or whatever
     sso.tenantGroupTemplate renders to).
 
+The same person's view of the tenant's cross-tenant shares, in the shared
+space, is a separate login: 07-sso-shared-space.yaml.
+
 Tier ladder (most → least privilege):
 
   admin        KV CRUD + delete/destroy; transit full ops; PKI issue +
@@ -17,7 +20,7 @@ Tier ladder (most → least privilege):
   audit-read   KV metadata list only; no data reads. Designed for
                compliance probes that need to enumerate without exposure.
 */}}
-{{- if .Values.sso.enabled }}
+{{- if include "openbao.ssoEnabled" . }}
 {{- /* Every role below is roleType=oidc, for which bao requires a non-empty
        allowed_redirect_uris. Emptied in values, `allowedRedirectUris:` would
        render as YAML null and the apiserver would reject it as "must be of
@@ -39,6 +42,7 @@ Tier ladder (most → least privilege):
        hack/chart-render-tests.sh (ssopkimount) fails if this drifts back. */ -}}
 {{- $pkiMount := include "openbao.pkiMount" . }}
 {{- range $tier := $.Values.sso.tiers }}
+{{- include "openbao.assertSsoTier" $tier }}
 {{- $caps := index $.Values.tierCaps $tier }}
 {{- if not $caps }}{{ fail (printf "sso.tiers includes %q but tierCaps has no entry for it" $tier) }}{{ end }}
 {{- $roleName := include "openbao.ssoRoleName" (dict "tenant" $tenant "tier" $tier) }}
@@ -80,7 +84,7 @@ spec:
     path "kv/undelete/{{ $env }}/*" { capabilities = ["update"] }
     path "kv/destroy/{{ $env }}/*"  { capabilities = ["update"] }
     {{- end }}
-    {{- if $.Values.transit.enabled }}
+    {{- if include "openbao.on" (dict "ctx" $ "path" "transit.enabled") }}
     # Transit — humans get tier-appropriate access to every tenant key.
     {{- if eq $tier "admin" }}
     path "{{ $.Values.transit.mountPath }}/*"            { capabilities = ["create", "read", "update", "list", "delete"] }
@@ -97,7 +101,7 @@ spec:
     path "{{ $.Values.transit.mountPath }}/keys"         { capabilities = ["list"] }
     {{- end }}
     {{- end }}
-    {{- if $.Values.pki.enabled }}
+    {{- if include "openbao.on" (dict "ctx" $ "path" "pki.enabled") }}
     # PKI — every SSO tier can read the CA bundle; editors + admins can
     # issue against any role; admins can manage roles. No tier can touch the
     # CA itself: see the note below.
@@ -131,37 +135,7 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
-  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
-  name: {{ $roleName }}
-  path: oidc
-  openbaoNamespace: {{ $tenant }}/
-  roleType: oidc
-  userClaim: email
-  groupsClaim: groups
-  oidcScopes:
-    - email
-    - profile
-    - groups
-  boundAudiences:
-    - {{ $.Values.sso.audience | quote }}
-  boundClaims:
-    groups:
-      - {{ $group | quote }}
-  tokenPolicies:
-    - {{ $roleName }}
-  allowedRedirectUris:
-    {{- range $uri := $.Values.sso.allowedRedirectUris }}
-    - {{ $uri | quote }}
-    {{- end }}
-  {{- /* SSO tokens use tighter TTLs than workload tokens — group changes
-         in the IdP aren't enforced on already-issued bao tokens until
-         expiry. Shorter ttl = less stale-grant exposure. */ -}}
-  {{- if $.Values.ssoToken.ttl }}
-  tokenTtl: {{ $.Values.ssoToken.ttl }}
-  {{- end }}
-  {{- if $.Values.ssoToken.maxTTL }}
-  tokenMaxTtl: {{ $.Values.ssoToken.maxTTL }}
-  {{- end }}
+  {{- include "openbao.ssoRoleSpec" (dict "ctx" $ "name" $roleName "namespace" (printf "%s/" $tenant) "group" $group "policy" $roleName) | nindent 2 }}
 {{- end }}
 
 {{- /* Fallback role — emitted when sso.tenantRoleMapping.fallback names
@@ -184,32 +158,8 @@ metadata:
   labels:
     {{- $labels | nindent 4 }}
 spec:
-  deletionPolicy: {{ include "openbao.grantDeletionPolicy" $ }}
-  name: {{ $fallbackRoleName }}
-  path: oidc
-  openbaoNamespace: {{ $tenant }}/
-  roleType: oidc
-  userClaim: email
-  groupsClaim: groups
-  oidcScopes:
-    - email
-    - profile
-    - groups
-  boundAudiences:
-    - {{ $.Values.sso.audience | quote }}
-  # No boundClaims — any valid OIDC token can use this role.
-  tokenPolicies:
-    - {{ $fallbackPolicyName }}
-  allowedRedirectUris:
-    {{- range $uri := $.Values.sso.allowedRedirectUris }}
-    - {{ $uri | quote }}
-    {{- end }}
-  {{- if $.Values.ssoToken.ttl }}
-  tokenTtl: {{ $.Values.ssoToken.ttl }}
-  {{- end }}
-  {{- if $.Values.ssoToken.maxTTL }}
-  tokenMaxTtl: {{ $.Values.ssoToken.maxTTL }}
-  {{- end }}
+  {{- /* No group: any valid OIDC token can use this role. */}}
+  {{- include "openbao.ssoRoleSpec" (dict "ctx" $ "name" $fallbackRoleName "namespace" (printf "%s/" $tenant) "group" "" "unbound" true "policy" $fallbackPolicyName) | nindent 2 }}
 {{- end }}
 {{- end }}
 {{- end }}

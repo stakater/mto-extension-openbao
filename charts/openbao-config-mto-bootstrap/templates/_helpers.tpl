@@ -97,7 +97,58 @@ Never compare .Values.<toggle> directly — go through the named helper.
 
 {{- define "openbao-config-mto-bootstrap.ssoEnabled" -}}
 {{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml -}}
-{{- include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.enabled" "value" $sso.enabled) -}}
+{{- $on := include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.enabled" "value" $sso.enabled) -}}
+{{- if eq $on "true" -}}{{- include "openbao-config-mto-bootstrap.ssoClientCheck" $sso -}}{{- end -}}
+{{- $on -}}
+{{- end -}}
+
+{{/*
+Fails the render when SSO is on and clientId, clientSecretRef.name,
+clientSecretRef.key or audience is empty or null. The oidc mounts need the
+client and its secret, and every SSO role binds the token's aud claim to
+audience. The schema's minLength cannot catch a null: helm drops null keys
+before it validates. Expects the parent.sso map.
+*/}}
+{{- define "openbao-config-mto-bootstrap.ssoClientCheck" -}}
+{{- $sso := . -}}
+{{- $mount := "the oidc mounts log in with it" -}}
+{{- $secret := "the oidc mounts read the client secret through it" -}}
+{{- range $v := list (list "clientId" $sso.clientId $mount) (list "clientSecretRef.name" (dig "clientSecretRef" "name" "" $sso) $secret) (list "clientSecretRef.key" (dig "clientSecretRef" "key" "" $sso) $secret) (list "audience" $sso.audience "every SSO role binds the token's aud claim to it") -}}
+{{- if not (index $v 1) -}}
+{{- fail (printf "parent.sso.enabled=true requires parent.sso.%s — %s" (index $v 0) (index $v 2)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+parent.sso.sharedSpace.enabled, normalized to "true"/"false". The parent renders
+the shared space's oidc mount from it, and the child Templates pass it to the
+tenant chart, which renders the roles on that mount; one helper for both, so
+neither side is on alone. With SSO also on, it needs the issuer and tenant chart
+0.21.0 or later: an older tenant chart renders no role on the mount, so nobody
+can log in, and no status says why.
+*/}}
+{{- define "openbao-config-mto-bootstrap.ssoSharedSpaceEnabled" -}}
+{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml -}}
+{{- if and (hasKey $sso "sharedSpace") (not (kindIs "invalid" $sso.sharedSpace)) (not (kindIs "map" $sso.sharedSpace)) -}}
+{{- fail (printf "parent.sso.sharedSpace must be a map with an `enabled` key — got %q. `sharedSpace: true` is not read as on." (toString $sso.sharedSpace)) -}}
+{{- end -}}
+{{- $on := include "openbao-config-mto-bootstrap.boolValue" (dict "name" "parent.sso.sharedSpace.enabled" "value" (dig "sharedSpace" "enabled" nil $sso)) -}}
+{{- if and (eq $on "true") (eq (include "openbao-config-mto-bootstrap.ssoEnabled" .) "true") -}}
+{{- if not $sso.issuerUrl -}}
+{{- fail "parent.sso.sharedSpace.enabled=true requires parent.sso.issuerUrl — the shared space's oidc mount discovers the IdP through it" -}}
+{{- end -}}
+{{- $ver := toString ((.Values.openbaoConfigMto | default dict).version | default "") -}}
+{{- /* Anchored at both ends: sprig's semverCompare fails the render with its
+       own raw error on anything else (0.19.0abc), not with this message. */ -}}
+{{- if not (regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$" $ver) -}}
+{{- fail (printf "openbaoConfigMto.version %q is not a semantic version" $ver) -}}
+{{- end -}}
+{{- if not (semverCompare ">=0.21.0-0" $ver) -}}
+{{- fail (printf "parent.sso.sharedSpace.enabled=true needs openbao-config-mto 0.21.0 or later, and openbaoConfigMto.version is %q: an older tenant chart renders no role on the shared mount, so nobody can log in and no status says why" $ver) -}}
+{{- end -}}
+{{- end -}}
+{{- $on -}}
 {{- end -}}
 
 {{- define "openbao-config-mto-bootstrap.templateSync" -}}

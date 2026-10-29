@@ -7,6 +7,7 @@
 {{- $shared := .parameters.sharedTenantName }}
 {{- $ssoEnabled := .parameters.ssoEnabled }}
 {{- $ssoIssuerUrl := .parameters.ssoIssuerUrl }}
+{{- $ssoSharedSpace := .parameters.ssoSharedSpace }}
 {{- $eso := .parameters.eso }}
 {{- $esoRefresh := .parameters.externalSecretRefreshInterval }}
 {{- $certManager := .parameters.certManagerEnabled }}
@@ -80,6 +81,30 @@ spec:
   kubernetesHost: {{ $kubeHost }}
   tokenReviewerJwtRef: { name: {{ $tokenReviewerSecret }} }
   kubernetesCaCertRef: { name: {{ $tokenReviewerSecret }}, key: ca.crt }
+{{- /* People's login to the shared space: one oidc mount for every tenant, on
+       the same IdP client as the tenant mounts. Each tenant's chart adds its
+       own roles to it (07-sso-shared-space.yaml). The bootstrap chart fails its
+       render when the issuer or the client is empty, so none is empty here. */ -}}
+{{- if and (eq $ssoEnabled "true") (eq $ssoSharedSpace "true") }}
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoAuthMethod
+metadata: { name: {{ $shared }}-oidc, namespace: {{ $opNs }} }
+spec: { path: oidc, type: oidc, openbaoNamespace: {{ $shared }}/, deletionPolicy: {{ $dataPolicy }} }
+---
+apiVersion: security.mto.stakater.com/v1alpha1
+kind: OpenBaoJWTOIDCAuthEngineConfig
+metadata: { name: {{ $shared }}-oidc-config, namespace: {{ $opNs }} }
+spec:
+  path: oidc
+  openbaoNamespace: {{ $shared }}/
+  oidcDiscoveryUrl: {{ $ssoIssuerUrl | quote }}
+  {{- if .parameters.ssoCaBundlePem }}
+  oidcDiscoveryCaPem: {{ .parameters.ssoCaBundlePem | toJson }}
+  {{- end }}
+  oidcClientId: {{ .parameters.ssoClientId | quote }}
+  oidcClientSecretRef: { name: {{ .parameters.ssoClientSecretName | quote }}, key: {{ .parameters.ssoClientSecretKey | quote }} }
+{{- end }}
 {{- range $t := .parameters.tenants }}
 {{- $name := $t.metadata.name }}
 {{- /* Skip a tenant with no labelled namespace. The child TI resolves

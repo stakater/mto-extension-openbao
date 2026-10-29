@@ -16,7 +16,7 @@ to reach the path with the SA's projected token.
 
 Gated by transit.enabled.
 */}}
-{{- if .Values.transit.enabled }}
+{{- if include "openbao.on" (dict "ctx" . "path" "transit.enabled") }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $shared := .Values.sharedTenant.name }}

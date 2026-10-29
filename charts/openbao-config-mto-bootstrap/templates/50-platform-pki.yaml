@@ -1,8 +1,10 @@
 {{/*
 Platform PKI — the cluster-wide CA that signs every tenant intermediate.
 Rendered once per cluster (this bootstrap chart installs once). Gated by
-.Values.platformPki.enabled; when off, nothing is emitted and tenants keep
-their self-signed roots.
+platformPki.enabled through the platformPkiEnabled helper — the same reading the
+child Templates get as pkiHierarchyEnabled, so a quoted "false" cannot emit the
+platform CA here while every tenant is told it is off. When off, nothing is
+emitted and tenants keep their self-signed roots.
 
 mode=root         → an online self-signed platform root (dev / simple).
 mode=intermediate → the platform CA is itself an intermediate signed by an
@@ -14,7 +16,7 @@ DR note: keep the platform CA's private key recoverable. In mode=intermediate
 the trust anchor is the offline root, so a lost platform CA is re-signable
 from it without invalidating tenant chains that already chain to the root.
 */}}
-{{- if .Values.platformPki.enabled }}
+{{- if eq (include "openbao-config-mto-bootstrap.platformPkiEnabled" .) "true" }}
 {{- $p := .Values.platformPki }}
 {{- /*
 mode is matched exactly against "intermediate" below, so any other value would

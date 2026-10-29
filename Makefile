@@ -142,12 +142,16 @@ clean-crds: ## Drop the fetched CRDs so the next crd-validate re-pulls them.
 TENANT_COMPONENTS ?= all core eso certManager trust
 CRD_MIN_ALL       ?= 5
 CRD_MIN_BOOTSTRAP ?= 3
+# The parent gotemplate's own CRs: the shared namespace, its kv and transit
+# engines, its kubernetes mount + config and, with the shared login on, its oidc
+# mount + config.
+CRD_MIN_PARENT    ?= 7
 
 .PHONY: crd-validate
 crd-validate: helm crds-fetch ## Validate every rendered OpenBao* CR against the operator's published CRDs.
 	@set -e; \
 	echo "Validating against operator chart $(OPERATOR_CHART_VERSION)"; \
-	out=$$(mktemp); err=$$(mktemp); trap 'rm -f $$out $$err' EXIT; \
+	out=$$(mktemp); err=$$(mktemp); shim=$$(mktemp -d); trap 'rm -rf $$out $$err $$shim' EXIT; \
 	render() { \
 		if ! "$$@" > $$out 2>$$err; then \
 			echo "RENDER FAILED"; head -3 $$err; exit 1; \
@@ -170,7 +174,14 @@ crd-validate: helm crds-fetch ## Validate every rendered OpenBao* CR against the
 	render $(HELM) template crdcheck $(MTO_BOOTSTRAP_CHART_DIR) -n crdcheck \
 		--set-string platformPki.mode=intermediate \
 		--set-string platformPki.externalSignSecret=platform-pki-signed; \
-	go run ./hack/crd-validate -min $(CRD_MIN_BOOTSTRAP) $(CRD_DIR) $$out
+	go run ./hack/crd-validate -min $(CRD_MIN_BOOTSTRAP) $(CRD_DIR) $$out; \
+	printf -- '-- parent gotemplate (sso + shared login on) '; \
+	mkdir -p $$shim/templates $$shim/files; \
+	cp $(MTO_BOOTSTRAP_CHART_DIR)/files/parent-gotemplate.tpl $$shim/files/; \
+	printf 'apiVersion: v2\nname: shim\nversion: 0.0.1\n' > $$shim/Chart.yaml; \
+	printf '{{ tpl ($$.Files.Get "files/parent-gotemplate.tpl") (dict "parameters" .Values.parameters) }}\n' > $$shim/templates/render.yaml; \
+	render $(HELM) template shim $$shim -f hack/render-fixtures/parent-params.yaml; \
+	go run ./hack/crd-validate -min $(CRD_MIN_PARENT) $(CRD_DIR) $$out
 
 .PHONY: helm-login
 helm-login: helm ## Log in to the OCI chart registry.

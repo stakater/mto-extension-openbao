@@ -16,7 +16,7 @@ Emits one PrometheusRule per child TI render with three alerts:
 Requires prometheus-operator's PrometheusRule CRD installed in the
 cluster. Gated by monitoring.enabled.
 */}}
-{{- if .Values.monitoring.enabled }}
+{{- if include "openbao.on" (dict "ctx" . "path" "monitoring.enabled") }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $labels := include "openbao.labels" . }}
 ---

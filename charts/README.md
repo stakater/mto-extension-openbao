@@ -184,6 +184,53 @@ ESO objects carry the `.eso` render's label instead
 the per-workload sync status (`externalSecretSync`) shows on that render's
 `TemplateInstance` status, not on the core one.
 
+### Upgrading
+
+To openbao-config-mto 0.21.0 and openbao-config-mto-bootstrap 0.17.0:
+
+- **Check the tenant names first.** A tenant now fails its render when its name
+  is the shared space's (`parent.sharedTenantName`, default `shared`), or the
+  platform CA's namespace while `platformPki.enabled` is on
+  (`platformPki.openbaoNamespace` without the `/`, default `platform`). Such a
+  tenant's objects have the same names as the shared space's or the platform
+  CA's. After the upgrade, its `TemplateInstance` fails, and its objects are no
+  longer updated. Before the upgrade, run this with your own two names. It must
+  print nothing:
+
+  ```bash
+  kubectl get tenants.tenantoperator.stakater.com -o name | sed 's|.*/||' \
+    | grep -x -e shared -e platform
+  ```
+
+  If it prints a name, that tenant needs another name. Before the first install
+  of the bootstrap chart, you can change `parent.sharedTenantName` or
+  `platformPki.openbaoNamespace` instead.
+
+- **The bootstrap chart reads a quoted `platformPki.enabled: "false"` as off.**
+  Earlier versions rendered the platform CA for this value (its
+  `OpenBaoNamespace`, `OpenBaoSecretEngine` and `OpenBaoPKISecretEngineConfig`),
+  but told the tenants that it is off, so no tenant used it. The upgrade
+  removes these three objects. With the default `safety.deletionProtection:
+  true`, they carry `deletionPolicy: Retain`, and OpenBao keeps the platform
+  namespace and its PKI mount.
+
+- **A standalone render reads a quoted `"false"` as off.** This applies only to
+  the tenant chart rendered without the bootstrap chart, which passes these
+  switches as booleans. Earlier versions read the string `"false"` as on. If
+  your values or `--set-string` flags give one of these switches the string
+  `"false"`, it was on, and the upgrade turns it off:
+
+  - `transit.enabled`, `pki.enabled`, `pki.certManager.enabled`,
+    `pki.crossTenant.enabled`, `sso.enabled`, `networkPolicy.enabled`,
+    `monitoring.enabled`: the feature's objects are removed. OpenBao revokes
+    the grants among them, unless `safety.grantDeletionProtection` is on.
+  - `pki.hierarchy.enabled`: the tenant CA changes from the intermediate at
+    `pki.hierarchy.mountPath` to a self-signed root at `pki.mountPath`.
+  - `sso.dex.perTenantClient`: the OIDC mount uses `sso.dex.clientId` and
+    `sso.dex.clientSecretRef.name` as they are, without the `<tenant>-` prefix.
+
+  To keep a switch on, set it to `true` before the upgrade.
+
 ---
 
 ## Key ideas
@@ -193,7 +240,7 @@ A few words are used throughout this guide:
 - **Tenant** — a team or unit, defined by an MTO `Tenant`. Each tenant gets its own OpenBao namespace (e.g. `team-a/`).
 - **Namespace** — a Kubernetes namespace owned by a tenant (e.g. `team-a-api`).
 - **Tier** — how much access a workload gets: `viewer`, `editor`, `admin`, or `audit-read`. You set it with an annotation.
-- **The shared space** — one extra OpenBao namespace (called `shared/` by default) where cross-tenant data lives. The bootstrap chart creates it once.
+- **The shared space** — one extra OpenBao namespace (called `shared/` by default) where cross-tenant data lives. The bootstrap chart creates it once. No tenant may have its name: the tenant chart fails that tenant's render, because its namespace and objects would be the shared space's. The same applies to the platform CA's namespace (`platform/` by default) while `platformPki.enabled` is on.
 - **Environment (`env`)** — a label in every secret path (default `dev`). It lets one OpenBao serve several environments.
 
 Throughout this guide the examples use two tenants — **`team-a`** and **`team-b`** — each with a namespace like `team-a-api`.
@@ -367,7 +414,7 @@ kvPath: kv/data/dev/team-a-api/web/
 requestedSecrets: "postgres"
 ```
 
-One entry per app, keyed by app name. `serviceAccount`, `tier` and `engines` are always present; `kvPath` and `requestedSecrets` appear when `kv` is on, `transitKey` when transit is on — a PKI-only app has just the first three. `requestedSecrets` lists the leaves the app's Deployments currently *request* via `kv-secret.*` annotations; a request is listed even while its Deployment has a reported error, so treat it as intent, not as proof an ExternalSecret rendered. The `_namespace` entry carries the shared-folder path (when the namespace has a kv app) and the namespace transit key (when it has a transit app); a namespace with neither — PKI-only, say — has no `_namespace` entry at all. An app whose annotations are invalid appears under `<serviceaccount>.error`, pointing at its error ConfigMap. The `_format` key versions this layout (`v1`); the field names and these presence rules are covered by the stability promise above.
+One entry per app, keyed by app name. `serviceAccount`, `tier` and `engines` are always present; `kvPath` and `requestedSecrets` appear when `kv` is on, `transitKey` when transit is on — a PKI-only app has just the first three. `requestedSecrets` lists the leaves the app's Deployments currently *request* via `kv-secret.*` annotations; a request is listed even while its Deployment has a reported error, so treat it as intent, not as proof an ExternalSecret rendered. The `_namespace` entry carries the shared-folder path (when the namespace has a kv app) and the namespace transit key (when it has a transit app); a namespace with neither — PKI-only, say — has no `_namespace` entry at all. An app whose annotations are invalid appears under `<serviceaccount>.error`, pointing at its error ConfigMap. While the shared-space login is on and the tenant has a cross-tenant share, a `_sharedSpace` entry holds web UI links to those shares (see [See your tenant's shares in the web UI](#see-your-tenants-shares-in-the-web-ui)). The `_format` key versions this layout (`v1`); the field names and these presence rules are covered by the stability promise above.
 
 Paths in `bao-apps` are API data paths. In the OpenBao web UI, open the `kv` mount and browse `<env>/<namespace>/<app>/` — the `/data/` segment is an API artifact.
 
@@ -573,7 +620,15 @@ This creates a read-only policy + role (`share-team-b-<ns>-<sa>-in-team-a`) in t
 bao.stakater.com/kv-import.partner-key: team-a/creds   # → Secret via the share-in SecretStore
 ```
 
-The two sides are independent: `team-a` exposing to `team-b` grants nothing until `team-b` also imports from `team-a`. Remove either side to cut the link.
+The two sides are independent: `team-a` exposing to `team-b` grants nothing until `team-b` also imports from `team-a`. Removing the import revokes `team-b`'s read. Removing the export only stops new writes: what `team-a` already wrote stays in the shared space, and `team-b` can still read it, older versions included. To withdraw a value, destroy it with all its versions first, then remove the export:
+
+```bash
+bao kv metadata delete -namespace=shared -mount=kv dev/from-team-a/to-team-b/creds
+```
+
+A plain `bao kv delete` is not enough: it marks only the latest version deleted, and `team-b` still reads the older ones with `?version=N`. The command needs a bao admin, or a `team-a` admin through the shared-space login below. Both revocation sentences assume the default `safety.grantDeletionProtection: false`; see [Deletion policy](#deletion-policy-safety-guardrails) for what stays behind with `true`.
+
+**Who else can read it.** By default, only the workloads named above. The shared space can also get a login for people (`parent.sso.sharedSpace.enabled`, off by default). With it on, every viewer, editor and admin of `team-b` can read what `team-a` sent to `team-b`, not only the importing app — and those of `team-a` can read what `team-a` sent; `audit-read` lists names only. People see only the peers their own tenant's `kv-export-tenant` / `kv-import-tenant` annotations name. See [the shared-space login](#see-your-tenants-shares-in-the-web-ui).
 
 > **Needs:** the bootstrap chart (creates the shared space) and MTO. ESO only for the Deployment delivery form.
 > **Note:** if the peer tenant isn't in the roster yet, the share is skipped quietly and starts working on its own once that tenant is created.
@@ -904,7 +959,7 @@ spec:
 **What it is.** People can log into OpenBao with your company's single sign-on, instead of using a token. Their access is decided by the groups they belong to in the identity provider (IdP).
 
 **Turn it on & what you need.** Off by default. Set `sso.enabled: true` and point `sso.dex.issuerUrl` at your IdP.
-> **Needs:** an OIDC identity provider (such as Dex) and a Kubernetes Secret holding the client secret. People also need the `bao` CLI to log in.
+> **Needs:** an OIDC identity provider (such as Dex) and a Kubernetes Secret holding the client secret. People log in with the `bao` CLI, or with the web UI once its callback is allowed (see **Redirect URIs** below).
 
 ### How access maps
 
@@ -932,7 +987,23 @@ For each tier in `sso.tiers`, the chart creates a login role bound to an IdP gro
 
 **Redirect URIs.** OpenBao rejects an OIDC role with an empty `allowed_redirect_uris`, so the chart fails the render when SSO is on and the list is empty rather than emitting a role nobody can log in through. The default is the `bao` CLI's loopback listener (`http://localhost:8250/oidc/callback`); set `parent.sso.allowedRedirectUris` in the bootstrap chart to add a browser console callback.
 
-SSO tokens are short-lived (default 15 minutes, 1 hour max), because group changes in the IdP don't apply to tokens already handed out.
+For the web UI, one entry serves every namespace — each tenant's and the shared space:
+
+```yaml
+parent:
+  sso:
+    allowedRedirectUris:
+      - "http://localhost:8250/oidc/callback"
+      - "https://openbao.example.com/ui/vault/auth/oidc/oidc/callback"
+```
+
+The UI does send the namespace (`…/oidc/callback?namespace=team-a`), but OpenBao takes it out of the URL and carries it in the OIDC `state` before it checks the list (`namespace_in_state`, on by default), so the IdP also sees only the bare URL. Allow that same URL on the IdP client.
+
+**The IdP client.** Every OIDC mount — each tenant's, and the shared space's when its login is on — uses one client, set once in the bootstrap chart: `parent.sso.clientId`, `parent.sso.clientSecretRef` (a Secret in the operator namespace), `parent.sso.caBundlePem` and `parent.sso.audience`. Every role checks `audience` against the token's `aud` claim, which Dex and Keycloak set to the client ID, so change the two together. With SSO on, the render fails if `clientId`, `clientSecretRef.name`, `clientSecretRef.key` or `audience` is null or empty.
+
+> **Upgrade note — `helm upgrade --reuse-values` with SSO on stops.** `--reuse-values` replaces the new chart's defaults with the old chart's, so the four client values above are missing and the render fails with `parent.sso.enabled=true requires parent.sso.clientId`. Use `--reset-then-reuse-values` (Helm 3.14+), which keeps your values on top of the new defaults, or set the four values yourself.
+
+SSO tokens are short-lived (default 15 minutes, renewable up to 1 hour), because a group change in the IdP applies only at the next login: a person removed from a group keeps the old access until the token expires.
 
 ### Logging in
 
@@ -942,7 +1013,88 @@ bao login -method=oidc -namespace=team-a role=sso-team-a-admin
 
 ### Optional: a fallback role
 
-Set `sso.tenantRoleMapping.fallback` to a tier name to also create `sso-<tenant>-fallback`. That role has no group requirement — anyone with a valid login from the IdP gets that tier. The default `deny` creates no fallback role.
+A standalone render of the tenant chart (no bootstrap chart) can set `sso.tenantRoleMapping.fallback` to a tier name to also create `sso-<tenant>-fallback`. That role has no group requirement — anyone with a valid login from the IdP gets that tier. The default `deny` creates no fallback role. The bootstrap chart does not pass `sso.tenantRoleMapping` through, so under it the fallback role never exists.
+
+### See your tenant's shares in the web UI
+
+Shares between tenants live in the shared space (`shared/`), not in the tenant's own namespace, so a login to `team-a` does not show them. The shared space has its own login for people. It is off by default; turn it on in the bootstrap chart:
+
+```yaml
+parent:
+  sso:
+    enabled: true
+    issuerUrl: https://keycloak.example.com/realms/platform
+    allowedRedirectUris:
+      - "http://localhost:8250/oidc/callback"
+      - "https://openbao.example.com/ui/vault/auth/oidc/oidc/callback"
+    sharedSpace:
+      enabled: true
+```
+
+This adds one OIDC mount to the shared space, on the same IdP client as the tenant mounts (see [The IdP client](#how-access-maps) above). Each tenant then gets one role per tier there, with the **same name and the same IdP group** as its tenant role. The bootstrap chart fails the render if `issuerUrl`, `clientId`, `clientSecretRef.name`, `clientSecretRef.key` or `audience` is empty, or if `openbaoConfigMto.version` names a tenant chart older than 0.21.0 (one that renders no shared-space role).
+
+**Log in.** In the web UI: set **Namespace** to `shared`, **Method** to OIDC, and **Role** to your tier's role, for example `sso-team-a-viewer`. With the CLI:
+
+```bash
+bao login -method=oidc -namespace=shared role=sso-team-a-viewer
+```
+
+**Open a share by its link.** A person cannot browse `dev/`: that list would show which tenants share with which, and an OpenBao list cannot be filtered. Every `bao-apps` ConfigMap of the tenant has a `_sharedSpace` entry with the login link, the tenant's role names, and one link per partner tenant:
+
+```console
+$ kubectl get cm bao-apps -n team-a-worker -o jsonpath='{.data._sharedSpace}'
+namespace: shared
+login: "https://openbao.example.com/ui/vault/auth?namespace=shared&with=oidc"
+roles: "sso-team-a-admin, sso-team-a-editor, sso-team-a-viewer, sso-team-a-audit-read"
+received:
+  team-b: "https://openbao.example.com/ui/vault/secrets/kv/list/dev/from-team-b/to-team-a/?namespace=shared"
+sent:
+  team-b: "https://openbao.example.com/ui/vault/secrets/kv/list/dev/from-team-a/to-team-b/?namespace=shared"
+```
+
+The address is the UI callback in `sso.allowedRedirectUris` without its path. Without a UI callback there, the links start at `/ui/`. The entry exists while the shared-space login is on and the tenant has a share, and it follows the share annotations. The folders, by path:
+
+| You want | Path | Web UI address |
+|---|---|---|
+| What `team-b` sent to `team-a` | `dev/from-team-b/to-team-a/` | `https://openbao.example.com/ui/vault/secrets/kv/list/dev/from-team-b/to-team-a/?namespace=shared` |
+| What `team-a` sends (lists its peers) | `dev/from-team-a/` | `https://openbao.example.com/ui/vault/secrets/kv/list/dev/from-team-a/?namespace=shared` |
+
+**What each tier can do here:**
+
+| Tier | Shares the tenant sends | Shares the tenant receives |
+|---|---|---|
+| `admin` | read, create, update, delete | read |
+| `editor` | read, create, update | read |
+| `viewer` | read | read |
+| `audit-read` | list names | list names |
+
+A received share is read-only for every tier: the sending tenant owns it.
+
+**Who sees what.** A role names only the peers that the tenant's own `kv-export-tenant` and `kv-import-tenant` annotations name — the same peers its workloads can reach. A share that another tenant sends, but that no app of this tenant imports, stays hidden. A tenant with no share gets no role in the shared space.
+
+**Taking access away.** With the default `safety.grantDeletionProtection: false`, OpenBao follows within one re-render of the tenant, and live tokens lose access on their next request after that:
+
+- Removing one of several share annotations rewrites the tier policies without that peer.
+- Removing the tenant's last share, or turning `parent.sso.sharedSpace.enabled` off, deletes its roles and policies in the shared space.
+
+Turning the login off leaves the empty `oidc` mount in the shared space under the default `safety.deletionProtection: true`, because a mount is data (`Retain`); with `false` the mount is removed too. Either way no role is left, so nobody can log in through it.
+
+With `safety.grantDeletionProtection: true`, the rewrite of a remaining policy still applies. But every grant whose CR is deleted is kept in OpenBao, and its login keeps working. A bao admin must delete it in the shared space:
+
+```bash
+# a person's login and policy, per tier (admin, editor, viewer, audit-read)
+bao delete        -namespace=shared auth/oidc/role/sso-<tenant>-<tier>
+bao policy delete -namespace=shared sso-<tenant>-<tier>
+# a workload's share grant, after its kv-import-tenant / kv-export-tenant is removed
+bao delete        -namespace=shared auth/kubernetes/role/share-<tenant>-<ns>-<sa>-in-<peer>
+bao policy delete -namespace=shared share-<tenant>-<ns>-<sa>-in-<peer>   # -out-<peer> for an export
+```
+
+**Limits.**
+
+- **No fallback role in the shared space.** The tenant's fallback role (above) lets any IdP user into that tenant's own data. Under the bootstrap chart it never exists — `sso.tenantRoleMapping` is not passed through, so the tenant chart's packaged `deny` holds — and only a standalone render or a repackaged chart turns it on. In the shared space it would also open what *other* tenants sent, and they agreed to share with the tenant, not with every IdP user.
+- **KV only.** The shared transit keys are not exposed to people.
+- **Every viewer, editor and admin of the receiving tenant reads every received share** (`audit-read` lists names). A share goes to a tenant, not to one person. If a value must reach only one app, do not send it across tenants.
 
 ---
 
@@ -953,7 +1105,7 @@ OpenBao supports several login methods. **These charts set up two:**
 | Method | Set up by the charts? | Used for |
 |---|---|---|
 | Kubernetes | Yes, always | Workloads log in with their ServiceAccount token |
-| OIDC | Yes, when SSO is on | People log in through the IdP |
+| OIDC | Yes, when SSO is on | People log in through the IdP — in their tenant's namespace, and in the shared space when `parent.sso.sharedSpace.enabled` is on |
 | JWT | No | — |
 | cert | No | — |
 
@@ -972,7 +1124,7 @@ kubectl -n openbao-config-operator-system get templateinstances.templates.v2.sta
 
 Note the fully-qualified resource name — `kubectl get ti` resolves to the older `templateinstances.tenantoperator.stakater.com`.
 
-The map has two halves. The `shared*` fields cover the singletons the parent renders itself — the shared bao namespace, its KV and transit engines, the kubernetes auth mount and that mount's config. Nothing else reports on these, and they sit behind every tenant: if `sharedAuthConfigReady` is not `True`, no workload in any tenant can log into bao. The `ti*` fields cover one child `TemplateInstance` per tenant per slice, and which one is `False` says who fixes it:
+The map has two halves. The `shared*` fields cover the singletons the parent renders itself — the shared bao namespace, its KV and transit engines, the kubernetes auth mount and that mount's config, and, with the shared-space login on, its OIDC mount and config. Nothing else reports on these, and they sit behind every tenant: if `sharedAuthConfigReady` is not `True`, no workload in any tenant can log into bao; if `sharedOidcConfigReady` is not `True`, no person can log in to the shared space. The `ti*` fields cover one child `TemplateInstance` per tenant per slice, and which one is `False` says who fixes it:
 
 | Field | `False` means |
 |---|---|
@@ -1100,6 +1252,14 @@ Consequences worth knowing:
   and login roles are removed (access is revoked). The data is recoverable by
   re-creating the Tenant (identical CRs adopt the retained objects) — or
   removable by a bao admin.
+- **A new Tenant with an old name gets the old tenant's data.** That is the
+  recovery path above, and it does not check who the new tenant is. It
+  includes the tenant's cross-tenant KV shares, which stay in the shared
+  space: what it sent (`from-<tenant>/`) and what other tenants sent to it
+  (`from-<peer>/to-<tenant>/`). The new tenant's apps read them when they
+  import or export again; with the shared-space SSO login on, its people do
+  too. Before giving an old tenant name to other people, delete the old data
+  (below).
 - **A values edit that moves a mount path keeps the old mount.**
   The rename is treated as retain-and-recreate; the old mount (for PKI: the CA
   and its private key) stays in bao.
@@ -1117,6 +1277,48 @@ kubectl delete tenant <tenant>   # CRs are reaped; the bao namespace and data ar
 # then, with a bao-admin token — this cascades through everything inside:
 bao namespace delete <tenant>
 ```
+
+That does not reach the tenant's cross-tenant KV shares: they live in the
+shared space. Delete what it sent and what it received (`dev` is the env):
+
+```bash
+t=<tenant>
+ls_keys() { # ls_keys <folder>: its keys, one per line; nothing when it has no keys (bao prints {}); other errors are printed
+  local out
+  if out="$(bao kv list -namespace=shared -mount=kv -format=json "$1" 2>&1)"; then jq -r '.[]' <<<"$out"
+  elif [ "$out" != "{}" ]; then echo "ERROR listing $1: $out" >&2; return 1
+  fi
+}
+n=0
+purge() { # purge <folder>: every secret below it, with all its versions
+  local k
+  while IFS= read -r k; do
+    case "$k" in
+      "") ;;
+      */) purge "$1$k" ;;
+      *)  bao kv metadata delete -namespace=shared -mount=kv "$1$k" >/dev/null && n=$((n + 1)) ;;
+    esac
+  done <<<"$(ls_keys "$1")"
+}
+walk() { # walk <command>: run it on what the tenant sent, and on what each writer sent to it
+  local w
+  while IFS= read -r w; do
+    case "$w" in
+      "") ;;
+      "from-$t/") "$1" "dev/$w" ;;
+      *) "$1" "dev/${w}to-$t/" ;;
+    esac
+  done <<<"$(ls_keys dev/)"
+}
+walk purge
+echo "deleted $n secrets"   # 0 for a mistyped t= as well — check the name
+# check: any line printed after this is left over, or an ERROR
+walk ls_keys
+```
+
+The shared transit keys of the tenant (`from-<tenant>-to-<peer>-<env>` and
+`from-<peer>-to-<tenant>-<env>`) also stay; a transit key can be deleted only
+after `deletion_allowed` is set on it.
 
 The `spec.deletionPolicy: Delete` flip on an individual CR is the supported
 teardown path only where sync enforcement is off (`sync.mode: off`) or for

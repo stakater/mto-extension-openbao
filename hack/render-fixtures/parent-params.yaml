@@ -1,0 +1,40 @@
+# Parameters for rendering files/parent-gotemplate.tpl outside template-operator-v2
+# (make crd-validate). Every switch that adds an OpenBao CR is on, so the shared
+# space's CRs — the kubernetes and the oidc mounts with their configs — reach
+# the schema check. The PEM renders spec.oidcDiscoveryCaPem.
+parameters:
+  env: dev
+  operatorNamespace: openbao-config-operator-system
+  tokenReviewerSecretName: bao-token-reviewer
+  kubernetesHost: https://kubernetes.default.svc
+  childTemplateName: openbao-config-mto
+  tenantLabelKey: stakater.com/tenant
+  sharedTenantName: shared
+  ssoEnabled: "true"
+  ssoIssuerUrl: https://dex.example.com
+  ssoSharedSpace: "true"
+  ssoClientId: openbao
+  ssoClientSecretName: bao-oidc-client-secret
+  ssoClientSecretKey: client-secret
+  ssoCaBundlePem: |
+    -----BEGIN CERTIFICATE-----
+    MIIBFIXTUREONLYNOTAREALCERTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    -----END CERTIFICATE-----
+  eso: enabled
+  externalSecretRefreshInterval: "1h"
+  certManagerEnabled: "true"
+  crossTenantPkiEnabled: "true"
+  safetyDeletionProtection: "true"
+  tenants:
+    - metadata:
+        name: team-a
+      spec:
+        namespaces:
+          withTenantPrefix: [dev]
+  # The parent gates each tenant on namespaces that carry tenantLabelKey, so
+  # team-a needs one here or the render emits no child TemplateInstance.
+  tenantNamespaces:
+    - metadata:
+        name: team-a-dev
+        labels:
+          stakater.com/tenant: team-a

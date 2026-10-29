@@ -37,7 +37,7 @@ templateOperator:
 openbaoConfigMto:
   registry: oci://ghcr.io/stakater/charts
   name: openbao-config-mto
-  version: 0.20.0
+  version: 0.21.0
   releaseName: openbao-config-mto
   # Optional: name of a Secret (in the operator ns) holding OCI registry
   # credentials. Required when pulling the chart from a private registry.
@@ -148,12 +148,36 @@ parent:
   sso:
     enabled: false
     issuerUrl: ""
+    # The IdP client for every OpenBao oidc mount: each tenant's, and the shared
+    # space's when sharedSpace is on. With SSO on, clientId,
+    # clientSecretRef.name, clientSecretRef.key and audience must be set.
+    # clientSecretRef names a Secret in operatorNamespace. caBundlePem is the
+    # PEM of the CA behind the IdP's TLS certificate; empty uses the system
+    # roots. Every role binds `audience` to the token's aud claim, which Dex and
+    # Keycloak set to the client ID, so change the two together. No value under
+    # parent.sso may contain "{{".
+    clientId: openbao
+    clientSecretRef:
+      name: bao-oidc-client-secret
+      key: client-secret
+    caBundlePem: ""
+    audience: openbao
     # OIDC redirect URIs (tenant chart value sso.allowedRedirectUris). bao
     # rejects an oidc role with an empty list, so the tenant chart fails the
     # render when sso.enabled and this resolves empty. Left empty here means the
     # tenant chart's default (http://localhost:8250/oidc/callback, the bao CLI's
     # loopback listener) — set the real console callback for browser logins.
+    # One web UI entry, https://<bao>/ui/vault/auth/oidc/oidc/callback, serves
+    # every namespace, the shared space included (charts/README.md → Redirect URIs).
     allowedRedirectUris: []
+    # Lets people log in to the shared space, where cross-tenant KV shares live,
+    # and see their tenant's shares in the web UI. Off by default: when on, the
+    # viewers, editors and admins of a receiving tenant can read what other
+    # tenants sent it, not only the importing app (audit-read lists names).
+    # Needs `enabled`, `issuerUrl` and the client values above, and
+    # openbaoConfigMto.version 0.21.0 or later.
+    sharedSpace:
+      enabled: false
 
 # Drift protection for everything the Templates render (t-op-v2 Template
 # spec.sync), applied to both the parent and child Templates. Requires

@@ -16,7 +16,7 @@ Reader side lives in 04-sa-transit-share-in.yaml.
 
 Gated by transit.enabled (shares meaningless without the engine).
 */}}
-{{- if .Values.transit.enabled }}
+{{- if include "openbao.on" (dict "ctx" . "path" "transit.enabled") }}
 {{- $tenant := required ".Values.tenant must be set by the parent" .Values.tenant }}
 {{- $env := .Values.env }}
 {{- $shared := .Values.sharedTenant.name }}

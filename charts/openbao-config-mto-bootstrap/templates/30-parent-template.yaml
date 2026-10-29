@@ -7,6 +7,7 @@
 # Parameter defaults come from the bootstrap chart's values. The gotemplate
 # body lives in files/parent-gotemplate.tpl (sourced via .Files.Get to keep
 # the t-op-v2 action delimiters out of helm's template engine).
+{{- $sso := include "openbao-config-mto-bootstrap.parentSso" . | fromYaml }}
 ---
 apiVersion: templates.v2.stakater.com/v2alpha1
 kind: Template
@@ -49,7 +50,21 @@ spec:
     - name: ssoEnabled
       value: {{ include "openbao-config-mto-bootstrap.ssoEnabled" . | quote }}
     - name: ssoIssuerUrl
-      value: {{ (include "openbao-config-mto-bootstrap.parentSso" . | fromYaml).issuerUrl | default "" | quote }}
+      value: {{ $sso.issuerUrl | default "" | quote }}
+    {{- /* The shared space's oidc mount and its IdP client. Read only when
+           ssoSharedSpace and ssoEnabled are both "true". By then ssoClientCheck
+           (through ssoEnabled) has failed the render on an empty client, and
+           ssoSharedSpaceEnabled on an empty issuer. */}}
+    - name: ssoSharedSpace
+      value: {{ include "openbao-config-mto-bootstrap.ssoSharedSpaceEnabled" . | quote }}
+    - name: ssoClientId
+      value: {{ $sso.clientId | default "" | quote }}
+    - name: ssoClientSecretName
+      value: {{ dig "clientSecretRef" "name" "" $sso | quote }}
+    - name: ssoClientSecretKey
+      value: {{ dig "clientSecretRef" "key" "" $sso | quote }}
+    - name: ssoCaBundlePem
+      value: {{ $sso.caBundlePem | default "" | quote }}
     - name: eso
       value: {{ include "openbao-config-mto-bootstrap.esoMode" . | quote }}
     - name: externalSecretRefreshInterval
@@ -112,6 +127,18 @@ spec:
       fields:
         - { name: sharedAuthConfigReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
         - { name: sharedAuthConfigReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
+    # The shared space's oidc config, present only with parent.sso.sharedSpace on
+    # (the mount itself reports under sharedAuthMethod). Not Ready means no
+    # person of any tenant can log in to the shared space.
+    - name: sharedOidcConfig
+      fromAll:
+        apiVersion: security.mto.stakater.com/v1alpha1
+        kind: OpenBaoJWTOIDCAuthEngineConfig
+        namespace: {{ .Values.operatorNamespace }}
+      keyTemplate: "{.metadata.name}"
+      fields:
+        - { name: sharedOidcConfigReady,  jsonPath: "{.status.conditions[?(@.type=='Ready')].status}" }
+        - { name: sharedOidcConfigReason, jsonPath: "{.status.conditions[?(@.type=='Ready')].reason}" }
     # tiRendered / tiNsAllowed / tiParamsValid separate failure classes a bare
     # tiReady=False cannot: each needs a different fix.
     - name: tenants

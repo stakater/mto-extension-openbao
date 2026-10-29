@@ -101,17 +101,26 @@
 #                    hierarchy mode. An omitted field is not a null field, so
 #                    nullfields (31) passes on an unconstrained CA, and the
 #                    operator treats a present CA as final: empty is permanent.
-#  36. parentplumb — the bootstrap passes the install-wide tenant knobs down
-#                    its child valuesTemplate, and an unset knob is OMITTED
-#                    rather than emitted empty. t-op-v2 owns rendered fields via
-#                    SSA, so anything not plumbed is unreachable per tenant, and
-#                    an empty key would override the tenant chart's own default.
+#  36. parentplumb — the install-wide tenant knobs (pki.roles,
+#                    sso.allowedRedirectUris) reach the child valuesTemplate as
+#                    parseable values the tenant chart accepts; unset, they are
+#                    omitted; a nulled parent.pki/parent.sso does not crash.
+#                    t-op-v2 owns rendered fields via SSA, so anything not
+#                    plumbed is unreachable per tenant, and an empty key would
+#                    override the tenant chart's own default.
+#  37. tokentype  — every OpenBaoKubernetesAuthRole carries an explicit
+#                    tokenType, the value is enumerated, and batch is refused
+#                    alongside token.period. bao ACCEPTS numUses/period on a
+#                    batch token and silently ignores both (a use-limit=1 batch
+#                    token serves unlimited reads), so a periodic grant that is
+#                    not periodic would otherwise ship green. Checked with
+#                    values.schema.json removed, because the schema is
+#                    skippable and is not applied on every SDK render path.
 #  38. ssorootlist — every SSO tier policy can LIST the kv mount root. A
 #                    prefix glob (kv/metadata/<env>/*) never covers the prefix
 #                    itself, so without an explicit rule the web UI's secrets
 #                    browser is refused on its first request and shows an empty
 #                    tree for every tier — the human path the tiers exist for.
-#
 #  39. nsgate     — the parent gates each tenant on namespaces carrying
 #                    tenantLabelKey, not on the Tenant spec list. MTO attaches a
 #                    namespace to a tenant two supported ways — listed in the
@@ -122,16 +131,60 @@
 #                    gate exists to prevent. knownTenants uses the same count, so
 #                    a peer never holds a share grant for a tenant that renders
 #                    nothing.
-#
-#  37. tokentype  — every OpenBaoKubernetesAuthRole carries an explicit
-#                    tokenType, the value is enumerated, and batch is refused
-#                    alongside token.period. bao ACCEPTS numUses/period on a
-#                    batch token and silently ignores both (a use-limit=1 batch
-#                    token serves unlimited reads), so a periodic grant that is
-#                    not periodic would otherwise ship green. Checked with
-#                    values.schema.json removed, because the schema is
-#                    skippable and is not applied on every SDK render path.
-#
+#  40. ssoshared  — the shared-space SSO grants (07-sso-shared-space.yaml) name
+#                    exactly the peers the workloads' share-out / share-in
+#                    grants name, in the right direction (values-full sends to
+#                    team-b and receives from team-c), never a wildcard; every
+#                    path has one of four allowed shapes; per-tier caps on sent
+#                    and received shares, received read-only; no unbound
+#                    (fallback) role in the shared space; nothing renders with
+#                    the toggle off, SSO off or quoted "false", or for a tenant
+#                    with no valid share; the shared roles carry the tenant
+#                    roles' callbacks.
+#  41. ssotiers   — an unknown sso.tiers name is rejected by the schema alone
+#                    and by the template fail() alone, with the shared login on
+#                    and off: role names are sso-<tenant>-<tier>, so a custom
+#                    tier collides across tenants — in §7's CRs and IdP groups
+#                    already, and in the shared space's bao objects too.
+#  42. sharedtoggle — the guards on sso.enabled and sso.sharedSpace in both charts,
+#                    and on the IdP client. Where a value has both a schema rule and a helper
+#                    guard, each is tested without the other (schema with the
+#                    templates stripped, helper with the schema removed). The
+#                    helper-only guards — null client values with the shared
+#                    login on and off, the issuer, "{{" anywhere in parent.sso
+#                    or parent.pki.roles, the tenant chart version — are tested
+#                    through the real chart.
+#  43. sharedmount — the parent gotemplate renders the shared oidc mount only
+#                    when SSO and the shared login are both on, from the values
+#                    the bootstrap passes (a multi-line CA PEM included); the
+#                    tenant chart gets the same client; mount, config and roles
+#                    agree on path and namespace; the parent reports its health.
+#  44. paramsync  — every parameter a gotemplate reads is passed by its
+#                    Template (and by both shim fixtures); every valueless
+#                    parameter is passed by every TI of that Template (the parent
+#                    TI, and each child TI with the shim defaults and with an
+#                    issuer set); every parameter a child TI gets is declared.
+#                    t-op-v2 renders with missingkey=error and a missing
+#                    valueless parameter as empty; helm's tpl renders both as
+#                    empty, so no other check sees a renamed or dropped one.
+#  45. strictbools — each boolean switch of the tenant chart renders the same for
+#                    a quoted "true"/"false" as for the YAML boolean, renders
+#                    differently for true and false, and rejects garbage without
+#                    the schema.
+#  46. rolespec   — openbao.ssoRoleSpec fails closed: an empty group without
+#                    "unbound" fails the render; only "unbound" renders a role
+#                    with no group.
+#  47. sharedname — a tenant named like the shared space, or like the platform
+#                    CA's namespace while the hierarchy is on, fails its render;
+#                    the same name renders once the other namespace is renamed.
+#  48. platformgate — the bootstrap renders the platform CA exactly when it
+#                    tells the child Templates the hierarchy is on, for the YAML
+#                    booleans and the quoted strings alike.
+#  49. selftest   — the shared helpers (err_line, expect_fail, must_*, check,
+#                    report, yqe, yq_count) on known inputs; it runs first.
+#  50. sharedlinks — each bao-apps ConfigMap links exactly the shared-space
+#                    folders the tenant's SSO policy opens, with the UI address
+#                    when a UI callback is set, and no entry with the login off.
 #
 # The emission test renders files/parent-gotemplate.tpl through helm's tpl —
 # an approximation of t-op-v2's text/template+Sprig engine that is exact for
@@ -142,7 +195,7 @@
 #     -n openbao-config-operator-system -f hack/render-fixtures/values-full.yaml \
 #     | yq ea -P '[.] | sort_by(.apiVersion + "|" + .kind + "|" + (.metadata.namespace // "") + "|" + .metadata.name) | .[] | sort_keys(..) | splitDoc' \
 #     > hack/render-fixtures/golden-all.yaml
-set -euo pipefail
+set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART="$REPO_ROOT/charts/openbao-config-mto"
@@ -156,15 +209,24 @@ SLICES="core eso certManager trust"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# A command that fails where no check expects it stops the harness (set -e), and
+# this trap names the line, so a crash is never a silent stop. -E makes the trap
+# fire inside functions too. It prints only in the main shell, to stderr: inside
+# a $(...) the line would land in the captured value. Do not assign with
+# `local x="$(…)"`: local hides the status.
+trap 'if [ "$BASH_SUBSHELL" -eq 0 ]; then echo "FAIL  harness — stopped by a failing command at line $LINENO: $BASH_COMMAND" >&2; fi' ERR
 
 fail=0
 # Skips are printed, never silent — a vanishing check reads as a passing one.
 note_skip() { echo "SKIP  $1${2:+ — $2}"; }
+NL=$'\n'
 check() { # check <name> <ok:0|1> [detail]
   if [ "$2" -eq 0 ]; then
     echo "PASS  $1"
   else
-    echo "FAIL  $1${3:+ — $3}"
+    # A detail made of several "[…]" entries prints one entry per line.
+    local d="${3:-}"; d="${d# }"
+    echo "FAIL  $1${d:+ — ${d//\] \[/]$NL      [}}"
     fail=1
   fi
 }
@@ -184,16 +246,128 @@ identities() { # identities <normalized-file>
   "$YQ" ea '[.apiVersion + "|" + .kind + "|" + (.metadata.namespace // "") + "|" + .metadata.name] | .[]' "$1" | sort
 }
 
+# Reads whose result feeds a comparison go through yqe, which never fails: under
+# pipefail a failing yq inside a substitution would stop the harness and skip
+# every later check. A broken input shows up as "yq-failed: <yq's first error
+# line>" in the value, which then mismatches and fails the check by name.
+yqe() {
+  local out
+  if out="$("$YQ" e -N "$@" 2>"$WORK/yqe.err")"; then
+    if [ -n "$out" ]; then printf '%s\n' "$out"; fi
+  else
+    echo "yq-failed: $(err_line "$WORK/yqe.err")"
+  fi
+}
+yq_count() { # yq_count <expr> <file> -> number of matches, or yq-failed: …
+  local out
+  if ! out="$("$YQ" e -N "$1" "$2" 2>"$WORK/yqe.err")"; then echo "yq-failed: $(err_line "$WORK/yqe.err")"; return; fi
+  grep -c . <<<"$out" || true
+}
+# Every render of the parent-gotemplate shim (built at check 7) goes through
+# here: to a file, stderr apart, exit status kept for the caller to test.
+shim_render() { # shim_render <name> [helm args...] -> $WORK/<name>.yaml, stderr in $WORK/<name>.err
+  local name="$1"; shift
+  "$HELM" template shim "$WORK/shim" "$@" > "$WORK/$name.yaml" 2> "$WORK/$name.err"
+}
+# For a guard test: prints nothing when the render fails with <message>, and
+# otherwise says what happened. The render's exit status decides, not the grep
+# alone: a render that succeeds is "rendered instead of failing", and one that
+# fails for another reason shows its full error line.
+expect_fail() { # expect_fail <message> <helm template args...>
+  local msg="$1"; shift
+  if "$HELM" template x "$@" > /dev/null 2> "$WORK/expect.err"; then
+    echo "rendered instead of failing"
+  elif ! grep -qF "$msg" "$WORK/expect.err"; then
+    echo "failed without the expected message: $(err_line "$WORK/expect.err")"
+  fi
+}
+# The line to show for a failed command. helm can print warnings before its
+# error, so the first "Error" line wins, and a schema failure adds its first
+# "- <field>: …" line, where the field is named. An infrastructure error (a
+# missing binary, an unreadable file) has no "Error" prefix: line 1 is shown.
+err_line() { # err_line <file>
+  if [ ! -s "$1" ]; then echo "(no output)"; return; fi
+  local e f
+  if e="$(grep -m1 '^Error' "$1")"; then
+    if f="$(grep -m1 '^- ' "$1")"; then e="$e $f"; fi
+    printf '%s\n' "$e"
+  else
+    head -1 "$1"
+  fi
+}
+# Guard tests that append to one $detail per check; `report <name>` then passes
+# the check when $detail is empty. Each check starts with detail="".
+must_fail() { # must_fail <label> <message> <helm args...> — the render fails with that message
+  local label="$1" msg="$2"; shift 2
+  local d; d="$(expect_fail "$msg" "$@")"
+  [ -z "$d" ] || detail="$detail [$label: $d]"
+}
+must_reject() { # must_reject <label> <helm args...> — the render fails, for any reason (schema-only copies)
+  local label="$1"; shift
+  if "$HELM" template x "$@" >/dev/null 2>&1; then detail="$detail [$label was accepted]"; fi
+}
+must_render() { # must_render <label> <helm args...>
+  local label="$1"; shift
+  "$HELM" template x "$@" > /dev/null 2> "$WORK/must.err" || detail="$detail [$label failed: $(err_line "$WORK/must.err")]"
+}
+report() { # report <check name>
+  [ -z "$detail" ] && check "$1" 0 || check "$1" 1 "$detail"
+}
+# A helper called inside $(...) runs without set -e — bash does not pass errexit
+# into a command substitution — so only its last command's status reaches the
+# caller. Each helper here is one command or one pipeline, or it handles an
+# earlier failure itself (`|| { echo …; return; }`) and reports it in its output.
+
+# 49. selftest — the shared helpers on known inputs. A helper that always
+# reports success would turn every check that uses it green.
+detail=""
+st_expect() { # st_expect <label> <want> <got>
+  [ "$3" = "$2" ] || detail="$detail [$1: got '$3', want '$2']"
+}
+printf 'WARNING: a warning\nError: values do not meet the schema:\nchart:\n- sso.enabled: Must validate\n' > "$WORK/st-schema.err"
+st_expect "err_line, schema error" "Error: values do not meet the schema: - sso.enabled: Must validate" "$(err_line "$WORK/st-schema.err")"
+printf 'go: cannot find main module\nsecond line\n' > "$WORK/st-infra.err"
+st_expect "err_line, no Error line" "go: cannot find main module" "$(err_line "$WORK/st-infra.err")"
+: > "$WORK/st-empty.err"
+st_expect "err_line, empty file" "(no output)" "$(err_line "$WORK/st-empty.err")"
+ST_OK=("$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml")
+ST_BAD=("${ST_OK[@]}" --set component=bogus)
+st_expect "expect_fail, expected message" "" "$(expect_fail 'unknown component "bogus"' "${ST_BAD[@]}")"
+st_expect "expect_fail, render passes" "rendered instead of failing" "$(expect_fail x "${ST_OK[@]}")"
+st_got="$(expect_fail 'no such message' "${ST_BAD[@]}")"
+case "$st_got" in "failed without the expected message: Error: "*'unknown component "bogus"'*) ;; *) detail="$detail [expect_fail, another message: got '$st_got']" ;; esac
+st_expect "must_fail, expected message" "" "$(detail=""; must_fail l 'unknown component "bogus"' "${ST_BAD[@]}"; printf '%s' "$detail")"
+st_expect "must_fail, render passes" " [l: rendered instead of failing]" "$(detail=""; must_fail l x "${ST_OK[@]}"; printf '%s' "$detail")"
+st_expect "must_reject, render passes" " [l was accepted]" "$(detail=""; must_reject l "${ST_OK[@]}"; printf '%s' "$detail")"
+st_expect "must_reject, render fails" "" "$(detail=""; must_reject l "${ST_BAD[@]}"; printf '%s' "$detail")"
+st_expect "must_render, render passes" "" "$(detail=""; must_render l "${ST_OK[@]}"; printf '%s' "$detail")"
+st_got="$(detail=""; must_render l "${ST_BAD[@]}"; printf '%s' "$detail")"
+case "$st_got" in " [l failed: Error: "*'unknown component "bogus"'*"]") ;; *) detail="$detail [must_render, render fails: got '$st_got']" ;; esac
+st_expect "check, two entries" "FAIL  x — [a]${NL}      [b]" "$(check x 1 " [a] [b]")"
+st_expect "report, empty detail" "PASS  x" "$(detail=""; report x)"
+st_expect "report, one entry" "FAIL  x — [a]" "$(detail=" [a]"; report x)"
+printf 'a: [\n' > "$WORK/st-broken.yaml"
+case "$(yqe '.a' "$WORK/st-broken.yaml")" in yq-failed:*) ;; *) detail="$detail [yqe did not report a broken file]" ;; esac
+case "$(yq_count '.a' "$WORK/st-broken.yaml")" in yq-failed:*) ;; *) detail="$detail [yq_count did not report a broken file]" ;; esac
+report selftest
+
 for c in all $SLICES; do
-  render "$c" "$FIXTURES/values-full.yaml" | normalize > "$WORK/$c.yaml"
+  if ! render "$c" "$FIXTURES/values-full.yaml" > "$WORK/$c.raw" 2> "$WORK/$c.err"; then
+    check "render:$c" 1 "values-full does not render, so no other check can run: $(err_line "$WORK/$c.err")"
+    exit 1
+  fi
+  normalize < "$WORK/$c.raw" > "$WORK/$c.yaml"
   identities "$WORK/$c.yaml" > "$WORK/$c.ids"
 done
 
 # 1. golden
-normalize < "$FIXTURES/golden-all.yaml" > "$WORK/golden.yaml"
-diff -u "$WORK/golden.yaml" "$WORK/all.yaml" > "$WORK/golden.diff" \
-  && check golden 0 \
-  || check golden 1 "component=all drifted from golden-all.yaml (see header for regeneration); first lines: $(head -4 "$WORK/golden.diff" | tr '\n' ' ')"
+if ! normalize < "$FIXTURES/golden-all.yaml" > "$WORK/golden.yaml" 2> "$WORK/golden.err"; then
+  check golden 1 "golden-all.yaml does not parse: $(err_line "$WORK/golden.err")"
+elif diff -u "$WORK/golden.yaml" "$WORK/all.yaml" > "$WORK/golden.diff"; then
+  check golden 0
+else
+  check golden 1 "component=all drifted from golden-all.yaml (see header for regeneration); first lines: $(head -4 "$WORK/golden.diff" | tr '\n' ' ')"
+fi
 
 # 2. disjoint
 overlap=""
@@ -276,6 +450,11 @@ parameters:
   sharedTenantName: shared
   ssoEnabled: "false"
   ssoIssuerUrl: ""
+  ssoSharedSpace: "false"
+  ssoClientId: openbao
+  ssoClientSecretName: bao-oidc-client-secret
+  ssoClientSecretKey: client-secret
+  ssoCaBundlePem: ""
   eso: enabled
   externalSecretRefreshInterval: "1h"
   certManagerEnabled: "false"
@@ -307,12 +486,14 @@ parameters:
           stakater.com/tenant: other-tenant
 EOF
 
-emit() { # emit <eso> <certManager> <crossTenantPki> -> "name->templateRef" lines, sorted
-  "$HELM" template shim "$WORK/shim" \
-    --set "parameters.eso=$1" \
+emit() { # emit <eso> <certManager> <crossTenantPki> -> "name->templateRef" lines, sorted, or render-failed
+  # Rendered to a file first: piped, a broken gotemplate would stop the harness
+  # here under pipefail, with no FAIL line and no later check. A render with no
+  # TemplateInstance gives an empty list, which fails the comparison by name.
+  shim_render emit --set "parameters.eso=$1" \
     --set-string "parameters.certManagerEnabled=$2" \
-    --set-string "parameters.crossTenantPkiEnabled=$3" \
-    | "$YQ" 'select(.kind == "TemplateInstance") | .metadata.name + "->" + .spec.templateRef.name' - | grep -v '^---$' | sort
+    --set-string "parameters.crossTenantPkiEnabled=$3" || { echo render-failed; return; }
+  yqe 'select(.kind == "TemplateInstance") | .metadata.name + "->" + .spec.templateRef.name' "$WORK/emit.yaml" | sort
 }
 
 emission_case() { # emission_case <name> <eso> <cm> <ct> <expected...>
@@ -350,10 +531,15 @@ emission_case all-off disabled false false \
 # mis-plumbed parameter — fails toward Retain, because the shared namespace
 # holds every tenant's shared KV/transit data. A kind missing the field
 # would surface as a "null" in the unique-value set and fail the check.
-shared_policy() { # <safetyParam> -> comma-joined unique deletionPolicy values
-  "$HELM" template shim "$WORK/shim" --set-string "parameters.safetyDeletionProtection=$1" \
-    | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine" or .kind == "OpenBaoAuthMethod") | .spec.deletionPolicy' - \
-    | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//'
+# Rendered with SSO and the shared login on, so the shared oidc mount — also a
+# data-bearing OpenBaoAuthMethod — is in the set; the count pins that it is.
+SP_ON=(--set-string parameters.ssoEnabled=true --set-string parameters.ssoSharedSpace=true --set-string parameters.ssoIssuerUrl=https://dex.example.com)
+SP_SEL='select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine" or .kind == "OpenBaoAuthMethod")'
+shared_policy() { # <safetyParam> -> comma-joined unique deletionPolicy values, or render-failed
+  # Rendered to a file first: in a pipe, a failed render stops the harness under
+  # pipefail with no FAIL line.
+  shim_render sp "${SP_ON[@]}" --set-string "parameters.safetyDeletionProtection=$1" || { echo render-failed; return; }
+  yqe "$SP_SEL | .spec.deletionPolicy" "$WORK/sp.yaml" | sort -u | tr '\n' ',' | sed 's/,$//'
 }
 sp_ok=0; sp_detail=""
 for pair in "true:Retain" "false:Delete" "garbage:Retain"; do
@@ -361,6 +547,12 @@ for pair in "true:Retain" "false:Delete" "garbage:Retain"; do
   got="$(shared_policy "$param")"
   [ "$got" = "$want" ] || { sp_ok=1; sp_detail="$sp_detail [$param->$got want=$want]"; }
 done
+if shim_render sp "${SP_ON[@]}"; then
+  sp_n="$(yq_count "$SP_SEL | .kind" "$WORK/sp.yaml")"
+else
+  sp_n=render-failed
+fi
+[ "$sp_n" = 5 ] || { sp_ok=1; sp_detail="$sp_detail [$sp_n data-bearing CRs, want 5: namespace, kv, transit, kubernetes and oidc mounts]"; }
 [ "$sp_ok" -eq 0 ] && check sharedpolicy 0 || check sharedpolicy 1 "$sp_detail"
 
 # 19. tenantguard — the tenant chart's safety helpers survive a schema-less
@@ -380,7 +572,7 @@ printf 'safety: null\n' > "$WORK/tg-null.yaml"
 tg_null="$("$HELM" template x "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" \
   -f "$WORK/tg-null.yaml" 2>/dev/null \
   | "$YQ" ea -N 'select(.kind == "OpenBaoSecretEngine" or .kind == "OpenBaoNamespace" or .kind == "OpenBaoAuthMethod") | .spec.deletionPolicy' - \
-  | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+  | sort -u | tr '\n' ',' | sed 's/,$//')" || tg_null=render-failed
 [ "$tg_null" = "Retain" ] || { tg_ok=1; tg_detail="$tg_detail [null-block data policy=$tg_null want=Retain]"; }
 [ "$tg_ok" -eq 0 ] && check tenantguard 0 || check tenantguard 1 "$tg_detail"
 
@@ -389,9 +581,9 @@ tg_null="$("$HELM" template x "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/val
 # Guards the ternary wiring in 50-platform-pki.yaml, which no other case
 # renders.
 pp_ok=0; pp_detail=""
-pp_def="$("$HELM" template boot "$BOOTSTRAP" 2>/dev/null | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine") | .spec.deletionPolicy' - | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+pp_def="$("$HELM" template boot "$BOOTSTRAP" 2>/dev/null | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine") | .spec.deletionPolicy' - | sort -u | tr '\n' ',' | sed 's/,$//')" || pp_def=render-failed
 [ "$pp_def" = "Retain" ] || { pp_ok=1; pp_detail="$pp_detail [default=$pp_def want=Retain]"; }
-pp_off="$("$HELM" template boot "$BOOTSTRAP" --set safety.deletionProtection=false 2>/dev/null | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine") | .spec.deletionPolicy' - | grep -v '^---$' | sort -u | tr '\n' ',' | sed 's/,$//')"
+pp_off="$("$HELM" template boot "$BOOTSTRAP" --set safety.deletionProtection=false 2>/dev/null | "$YQ" ea -N 'select(.kind == "OpenBaoNamespace" or .kind == "OpenBaoSecretEngine") | .spec.deletionPolicy' - | sort -u | tr '\n' ',' | sed 's/,$//')" || pp_off=render-failed
 [ "$pp_off" = "Delete" ] || { pp_ok=1; pp_detail="$pp_detail [flipped=$pp_off want=Delete]"; }
 [ "$pp_ok" -eq 0 ] && check platformpki 0 || check platformpki 1 "$pp_detail"
 
@@ -404,7 +596,7 @@ if render_out="$("$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/val
 else
   grep -q "label values cap at 63" <<<"$render_out" \
     && check namebudget-over 0 \
-    || check namebudget-over 1 "failed without the budget message: $(echo "$render_out" | head -2 | tr '\n' ' ')"
+    || check namebudget-over 1 "failed without the budget message: $(head -2 <<<"$render_out" | tr '\n' ' ')"
 fi
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set-string "tenant=$LONG_TENANT" --set component=core > /dev/null 2>&1 \
   && check namebudget-core-ok 0 \
@@ -420,13 +612,13 @@ tset() { # tset <eso> <certManager> <crossTenantPki> -> sorted Template names
     --set-string "parent.eso=$1" \
     --set-string "parent.certManager.enabled=$2" \
     --set-string "crossTenantPki.enabled=$3" \
-    | "$YQ" 'select(.kind == "Template") | .metadata.name' - | grep -v '^---$' | sort
+    | "$YQ" 'select(.kind == "Template") | .metadata.name' - | { grep -v '^---$' || true; } | sort
 }
 
 templateset_case() { # templateset_case <name> <eso> <cm> <ct> <expected...>
   local name="$1" eso="$2" cm="$3" ct="$4"; shift 4
   local got expected refs missing
-  got="$(tset "$eso" "$cm" "$ct")"
+  got="$(tset "$eso" "$cm" "$ct")" || got=render-failed
   expected="$(printf '%s\n' "$@" openbao-config-mto-parent | sort)"
   if [ "$got" != "$expected" ]; then
     check "templateset:$name" 1 "Templates were [$(echo "$got" | tr '\n' ' ')], want [$(echo "$expected" | tr '\n' ' ')]"
@@ -490,7 +682,7 @@ TEARDOWN_GRANTS="$(
 grants_case() { # grants_case <test> <name> <eso> <cm> <ct> <present|absent> <atomlist>
   local test="$1" name="$2" eso="$3" cm="$4" ct="$5" mode="$6" list="$7"
   local got wrong="" n=0
-  got="$(rbac_rules "$eso" "$cm" "$ct")"
+  got="$(rbac_rules "$eso" "$cm" "$ct")" || got=render-failed
   while IFS= read -r g; do
     [ -z "$g" ] && continue
     n=$((n + 1))
@@ -547,7 +739,7 @@ EXPECTED_ROLE_RULES="$(
 split_case() { # split_case <name> <operatorNamespace> <release-ns> [helm value args...]
   local name="$1" opns="$2" rns="$3"; shift 3
   local render got wrong=""
-  render="$("$HELM" template boot "$BOOTSTRAP" -n "$rns" "$@")"
+  render="$("$HELM" template boot "$BOOTSTRAP" -n "$rns" "$@")" || { render=""; wrong="$wrong [bootstrap render failed]"; }
 
   got="$(printf '%s\n' "$render" \
     | "$YQ" "select(.kind == \"ClusterRole\" and .metadata.name == \"openbao-config-mto-manager\") | $RBAC_ATOMS_Q" - \
@@ -560,13 +752,13 @@ split_case() { # split_case <name> <operatorNamespace> <release-ns> [helm value 
   # binding's own namespace) and grants nothing.
   got="$(printf '%s\n' "$render" \
     | opns="$opns" "$YQ" "select(.kind == \"Role\" and .metadata.name == \"openbao-config-mto-manager\" and .metadata.namespace == env(opns)) | $RBAC_ATOMS_Q" - \
-    | sort -u)"
+    | sort -u)" || got=yq-failed
   [ "$got" = "$EXPECTED_ROLE_RULES" ] \
     || wrong="$wrong [role in $opns: got ($(printf '%s' "$got" | tr '\n' ';'))]"
 
   got="$(printf '%s\n' "$render" \
     | opns="$opns" "$YQ" 'select(.kind == "RoleBinding" and .metadata.name == "openbao-config-mto-manager" and .metadata.namespace == env(opns))
-             | .roleRef.kind + "/" + .roleRef.name + " <- " + .subjects[0].kind + ":" + .subjects[0].namespace + "/" + .subjects[0].name' -)"
+             | .roleRef.kind + "/" + .roleRef.name + " <- " + .subjects[0].kind + ":" + .subjects[0].namespace + "/" + .subjects[0].name' -)" || got=yq-failed
   [ "$got" = "Role/openbao-config-mto-manager <- ServiceAccount:stakater-template-operator/template-operator-template-operator-v2" ] \
     || wrong="$wrong [rolebinding in $opns: got ($got)]"
 
@@ -607,17 +799,17 @@ fi
 # render targets themselves — with operatorNamespace overridden away from the
 # release namespace so the release namespace cannot stand in.
 premise_crs="$("$HELM" template "$RELEASE" "$CHART" -n zz-release-ns -f "$FIXTURES/values-full.yaml" --set-string operatorNamespace=zz-operator-ns \
-  | "$YQ" ea '[select(.apiVersion == "security.mto.stakater.com/v1alpha1") | .metadata.namespace] | unique | join(",")' -)"
+  | "$YQ" ea '[select(.apiVersion == "security.mto.stakater.com/v1alpha1") | .metadata.namespace] | unique | join(",")' -)" || premise_crs=render-failed
 premise_cr_count="$("$HELM" template "$RELEASE" "$CHART" -n zz-release-ns -f "$FIXTURES/values-full.yaml" --set-string operatorNamespace=zz-operator-ns \
-  | "$YQ" ea '[select(.apiVersion == "security.mto.stakater.com/v1alpha1")] | length' -)"
+  | "$YQ" ea '[select(.apiVersion == "security.mto.stakater.com/v1alpha1")] | length' -)" || premise_cr_count=0
 [ "$premise_crs" = "zz-operator-ns" ] && [ "$premise_cr_count" -ge 5 ] \
   && check "rbacpremise:tenant-chart" 0 \
   || check "rbacpremise:tenant-chart" 1 "OpenBao CR namespaces [$premise_crs] (count $premise_cr_count), want only zz-operator-ns"
 
 premise_tpl="$("$HELM" template boot "$BOOTSTRAP" -n zz-release-ns --set-string operatorNamespace=zz-operator-ns \
-  | "$YQ" ea '[select(.kind == "Template") | .spec.targetNamespaces.explicit.allow.literal[]] | unique | join(",")' -)"
+  | "$YQ" ea '[select(.kind == "Template") | .spec.targetNamespaces.explicit.allow.literal[]] | unique | join(",")' -)" || premise_tpl=render-failed
 premise_tpl_count="$("$HELM" template boot "$BOOTSTRAP" -n zz-release-ns --set-string operatorNamespace=zz-operator-ns \
-  | "$YQ" ea '[select(.kind == "Template")] | length' -)"
+  | "$YQ" ea '[select(.kind == "Template")] | length' -)" || premise_tpl_count=0
 [ "$premise_tpl" = "zz-operator-ns" ] && [ "$premise_tpl_count" -ge 2 ] \
   && check "rbacpremise:template-targets" 0 \
   || check "rbacpremise:template-targets" 1 "Template targetNamespaces [$premise_tpl] (count $premise_tpl_count), want only zz-operator-ns"
@@ -633,6 +825,7 @@ for kv in \
   "crossTenantPki.enabled=yes" "crossTenantPki.enabled=TRUE" \
   "parent.eso=enabledd" "parent.eso=true" "parent.eso=Enabled" \
   "safety.deletionProtection=yes" "safety.grantDeletionProtection=1" \
+  "parent.sso.sharedSpace.enabled=yes" \
   "sync.mode=on"; do
   if boot_render --set-string "$kv" >/dev/null 2>&1; then
     typo_ok=1; typo_detail="$typo_detail [accepted:$kv]"
@@ -654,18 +847,26 @@ norm_ok=0; norm_detail=""
 # Every toggle gets a DISTINCT value on purpose. With two switches both set to
 # "true", swapping which helper feeds which parameter is undetectable — the
 # first version of this check passed with the wiring crossed.
-norm_out="$(boot_render --set-string parent.certManager.enabled=true \
-                        --set-string crossTenantPki.enabled=false \
-                        --set-string parent.eso=enabled \
-                        --set-string parent.sso.enabled=false \
-                        --set-string safety.deletionProtection=false \
-                        --set-string safety.grantDeletionProtection=true \
-                        --set-string platformPki.enabled=true)"
-for pair in "certManagerEnabled:true" "crossTenantPkiEnabled:false" "eso:enabled" "ssoEnabled:false" "pkiHierarchyEnabled:true" "safetyDeletionProtection:false" "safetyGrantDeletionProtection:true"; do
-  pname="${pair%%:*}"; want="${pair##*:}"
-  got="$(printf '%s\n' "$norm_out" | "$YQ" ea -N "select(.kind == \"Template\") | .spec.parameters[] | select(.name == \"$pname\") | .value" - | sort -u | tr '\n' ',' | sed 's/,$//')"
-  [ "$got" = "$want" ] || { norm_ok=1; norm_detail="$norm_detail [$pname=$got want=$want]"; }
-done
+# Rendered on its own line and parsed with the status kept: inside the
+# substitutions below, a failed render or yq would stop the harness under
+# pipefail with no FAIL line, and skip every later check.
+if "$HELM" template boot "$BOOTSTRAP" \
+     --set-string parent.certManager.enabled=true \
+     --set-string crossTenantPki.enabled=false \
+     --set-string parent.eso=enabled \
+     --set-string parent.sso.enabled=false \
+     --set-string parent.sso.sharedSpace.enabled=true \
+     --set-string safety.deletionProtection=false \
+     --set-string safety.grantDeletionProtection=true \
+     --set-string platformPki.enabled=true > "$WORK/norm.yaml" 2> "$WORK/norm.err"; then
+  for pair in "certManagerEnabled:true" "crossTenantPkiEnabled:false" "eso:enabled" "ssoEnabled:false" "ssoSharedSpace:true" "pkiHierarchyEnabled:true" "safetyDeletionProtection:false" "safetyGrantDeletionProtection:true"; do
+    pname="${pair%%:*}"; want="${pair##*:}"
+    got="$(yqe "select(.kind == \"Template\") | .spec.parameters[] | select(.name == \"$pname\") | .value" "$WORK/norm.yaml" | sort -u | tr '\n' ',' | sed 's/,$//')"
+    [ "$got" = "$want" ] || { norm_ok=1; norm_detail="$norm_detail [$pname=$got want=$want]"; }
+  done
+else
+  norm_ok=1; norm_detail=" [render failed: $(err_line "$WORK/norm.err")]"
+fi
 [ "$norm_ok" -eq 0 ] && check togglenorm 0 || check togglenorm 1 "$norm_detail"
 
 # 14. toggleschema — the schema rejects a typo on its own, with no template
@@ -676,7 +877,7 @@ mkdir -p "$WORK/boot-noguard/templates"
 cp "$BOOTSTRAP/Chart.yaml" "$BOOTSTRAP/values.yaml" "$BOOTSTRAP/values.schema.json" "$WORK/boot-noguard/"
 printf '# intentionally empty\n' > "$WORK/boot-noguard/templates/noop.yaml"
 schema_ok=0; schema_detail=""
-for kv in "parent.certManager.enabled=yes" "crossTenantPki.enabled=True" "parent.eso=enabledd" "safety.deletionProtection=yes"; do
+for kv in "parent.certManager.enabled=yes" "crossTenantPki.enabled=True" "parent.eso=enabledd" "safety.deletionProtection=yes" "parent.sso.sharedSpace.enabled=on"; do
   if "$HELM" template boot "$WORK/boot-noguard" --set-string "$kv" >/dev/null 2>&1; then
     schema_ok=1; schema_detail="$schema_detail [schema accepted:$kv]"
   fi
@@ -693,7 +894,7 @@ helper_err="$("$HELM" template boot "$WORK/boot-noschema" --set-string parent.ce
 if grep -q 'parent.certManager.enabled must be a boolean' <<<"$helper_err"; then
   check togglehelper 0
 else
-  check togglehelper 1 "schema-less render did not hit the _helpers.tpl guard: $(printf '%s' "$helper_err" | head -2 | tr '\n' ' ' | cut -c1-100)"
+  check togglehelper 1 "schema-less render did not hit the _helpers.tpl guard: $(head -2 <<<"$helper_err" | tr '\n' ' ')"
 fi
 
 # 15. pkimode — platformPki.mode is matched exactly against "intermediate", so
@@ -735,9 +936,17 @@ done
 # safety.deletionProtection, grant kinds follow safety.grantDeletionProtection.
 # The DEFAULT posture (data Retain, grants Delete) is pinned by the golden;
 # this guards the flipped wiring, which the golden never exercises.
-flip_out="$("$HELM" template openbao-config-mto "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
-  --set safety.deletionProtection=false --set safety.grantDeletionProtection=true)"
 flip_ok=0; flip_detail=""
+# A failed render must fail here: the two reads below look for a WRONG policy,
+# and an empty render has none, so it would pass. The kind count is the
+# positive control for the same reason.
+if flip_out="$("$HELM" template openbao-config-mto "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
+  --set safety.deletionProtection=false --set safety.grantDeletionProtection=true 2> "$WORK/flip.err")"; then
+  flip_kinds="$(printf '%s\n' "$flip_out" | { grep -cE '^kind: OpenBao(SecretEngine|Policy)$' || true; })"
+  [ "$flip_kinds" -ge 2 ] || { flip_ok=1; flip_detail="$flip_detail [the flipped render has $flip_kinds SecretEngine/Policy objects — nothing to check]"; }
+else
+  flip_ok=1; flip_detail="$flip_detail [flipped render failed: $(err_line "$WORK/flip.err")]"; flip_out=""
+fi
 flip_data="$(printf '%s\n' "$flip_out" | "$YQ" ea -N 'select(.kind == "OpenBaoSecretEngine" or .kind == "OpenBaoNamespace" or .kind == "OpenBaoAuthMethod") | .spec.deletionPolicy' - | sort -u | grep -v '^Delete$' || true)"
 # The selector lists every grant kind, including ones neither chart renders
 # yet (cert/JWT roles, groups, aliases, identity-token roles) — deliberate,
@@ -751,7 +960,7 @@ flip_grant="$(printf '%s\n' "$flip_out" | "$YQ" ea -N 'select(.kind == "OpenBaoP
 # values-full.yaml has team-a-dev/app-a subscribing to team-a-tools. Its policy
 # must not carry a write/delete verb on from-team-a-tools; its OWN from-team-a-dev
 # prefix must keep them, which is what stops this passing vacuously.
-subread_policy="$("$YQ" ea 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-a") | .spec.policy' "$WORK/core.yaml")"
+subread_policy="$("$YQ" ea 'select(.kind == "OpenBaoPolicy" and .metadata.name == "team-a-team-a-dev-app-a") | .spec.policy' "$WORK/core.yaml")" || subread_policy=yq-failed
 sub_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-tools/' || true)"
 own_line="$(printf '%s\n' "$subread_policy" | grep 'kv/metadata/dev/_shared/from-team-a-dev/' | grep -c 'create' || true)"
 if [ -z "$sub_line" ]; then
@@ -780,15 +989,26 @@ fi
 # the exceptions; caSerial has no condition to read the CA serial from.
 SCALAR_OK="caSerial"
 outputs_ok=0; outputs_detail=""
-"$HELM" template boot "$BOOTSTRAP" \
-  --set-string parent.eso=enabled \
-  --set-string parent.certManager.enabled=true \
-  --set-string crossTenantPki.enabled=true \
-  | "$YQ" ea 'select(.kind == "Template")' - > "$WORK/boot-templates.yaml"
+# Rendered to a file with the status kept, and the Templates counted: a failed
+# render, or one with no Template, would run the loop below zero times — the
+# pass path.
+if "$HELM" template boot "$BOOTSTRAP" \
+     --set-string parent.eso=enabled \
+     --set-string parent.certManager.enabled=true \
+     --set-string crossTenantPki.enabled=true > "$WORK/boot-all.yaml" 2> "$WORK/boot-all.err"; then
+  "$YQ" ea 'select(.kind == "Template")' "$WORK/boot-all.yaml" > "$WORK/boot-templates.yaml" 2> "$WORK/boot-templates.err" \
+    || outputs_detail="$outputs_detail [yq failed on the bootstrap render: $(err_line "$WORK/boot-templates.err")]"
+else
+  outputs_detail="$outputs_detail [bootstrap render failed: $(err_line "$WORK/boot-all.err")]"
+  : > "$WORK/boot-templates.yaml"
+fi
+ntpl="$(yq_count 'select(.kind == "Template") | .metadata.name' "$WORK/boot-templates.yaml")"
+[ "$ntpl" = 5 ] || outputs_detail="$outputs_detail [$ntpl Templates in the all-on bootstrap render, want 5: the parent and four child slices]"
 
-for tname in $("$YQ" ea -N 'select(.kind == "Template") | .metadata.name' "$WORK/boot-templates.yaml"); do
+for tname in $(yqe 'select(.kind == "Template") | .metadata.name' "$WORK/boot-templates.yaml"); do
   sel="select(.kind == \"Template\" and .metadata.name == \"$tname\")"
-  nentries="$("$YQ" ea "$sel | (.spec.outputs // []) | length" "$WORK/boot-templates.yaml")"
+  nentries="$("$YQ" ea "$sel | (.spec.outputs // []) | length" "$WORK/boot-templates.yaml" 2>/dev/null)" \
+    || { outputs_detail="$outputs_detail [$tname: yq failed reading its outputs]"; continue; }
   # Zero entries is a failure, not a skip: status.outputs is the only working
   # hook for per-kind TI health, so a Template that stops emitting them loses
   # that signal silently.
@@ -798,7 +1018,8 @@ for tname in $("$YQ" ea -N 'select(.kind == "Template") | .metadata.name' "$WORK
   fi
   [ "$nentries" -le 50 ] || outputs_detail="$outputs_detail [$tname $nentries outputs > 50]"
 
-  names="$("$YQ" ea "$sel | [.spec.outputs[].fields[].name] | .[]" "$WORK/boot-templates.yaml")"
+  names="$("$YQ" ea "$sel | [.spec.outputs[].fields[].name] | .[]" "$WORK/boot-templates.yaml" 2>/dev/null)" \
+    || { outputs_detail="$outputs_detail [$tname: yq failed reading its field names]"; continue; }
   dupes="$(printf '%s\n' "$names" | sort | uniq -d | tr '\n' ' ')"
   [ -z "$dupes" ] || outputs_detail="$outputs_detail [$tname duplicate field name(s): $dupes]"
 
@@ -809,10 +1030,11 @@ for tname in $("$YQ" ea -N 'select(.kind == "Template") | .metadata.name' "$WORK
   # Per-entry field cap, keyTemplate on our own CRs, and the jsonPath shape.
   for i in $(seq 0 $((nentries - 1))); do
     e="$sel | .spec.outputs[$i]"
-    nf="$("$YQ" ea "$e | .fields | length" "$WORK/boot-templates.yaml")"
+    nf="$("$YQ" ea "$e | .fields | length" "$WORK/boot-templates.yaml" 2>/dev/null)" \
+      || { outputs_detail="$outputs_detail [$tname outputs[$i]: yq failed]"; continue; }
     [ "$nf" -le 50 ] || outputs_detail="$outputs_detail [$tname outputs[$i] $nf fields > 50]"
-    grp="$("$YQ" ea "$e | (.fromAll.apiVersion // .from.apiVersion)" "$WORK/boot-templates.yaml")"
-    kt="$("$YQ" ea "$e | .keyTemplate // \"\"" "$WORK/boot-templates.yaml")"
+    grp="$("$YQ" ea "$e | (.fromAll.apiVersion // .from.apiVersion)" "$WORK/boot-templates.yaml" 2>/dev/null)" || grp=yq-failed
+    kt="$("$YQ" ea "$e | .keyTemplate // \"\"" "$WORK/boot-templates.yaml" 2>/dev/null)" || kt=yq-failed
     if [ "${grp%%/*}" = "security.mto.stakater.com" ] && \
        [ "$("$YQ" ea "$e | has(\"fromAll\")" "$WORK/boot-templates.yaml")" = "true" ] && [ -z "$kt" ]; then
       outputs_detail="$outputs_detail [$tname outputs[$i] fromAll on our CRs without keyTemplate]"
@@ -871,7 +1093,7 @@ rolename_bad="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy" or .kind == "OpenBa
 # stays in bao forever because OpenBaoTransitKey is orphan-by-design.
 granted="$("$YQ" ea -N 'select(.kind == "OpenBaoPolicy") | .spec.policy' "$WORK/all.yaml" \
   | { grep -oE 'transit/encrypt/[a-z0-9-]+' || true; } | sed 's|transit/encrypt/||' | sort -u)"
-created="$("$YQ" ea -N 'select(.kind == "OpenBaoTransitKey") | .spec.name' "$WORK/all.yaml" | sort -u)"
+created="$("$YQ" ea -N 'select(.kind == "OpenBaoTransitKey") | .spec.name' "$WORK/all.yaml" | sort -u)" || created=yq-failed
 missing="$(comm -23 <(printf '%s\n' "$granted") <(printf '%s\n' "$created") | tr '\n' ' ')"
 unused="$(comm -13 <(printf '%s\n' "$granted") <(printf '%s\n' "$created") | tr '\n' ' ')"
 if [ -n "$missing" ]; then
@@ -892,9 +1114,9 @@ fi
   && guards_rendered=0 || guards_rendered=1
 guards_detail=""
 if [ "$guards_rendered" -ne 0 ]; then
-  guards_detail="render failed outright — a per-SA mistake must not fail the tenant: $(head -1 "$WORK/guards.err")"
+  guards_detail="render failed outright — a per-SA mistake must not fail the tenant: $(err_line "$WORK/guards.err")"
 else
-  broken="g-tier-only g-no-tier g-bad-tier g-empty-caps g-injection g-wildcard g-reserved g-claimed g-claimer g-orphan-share default g-foreign-ns g-unknown-key g-bad-bool"
+  broken="g-tier-only g-no-tier g-bad-tier g-empty-caps g-injection g-wildcard g-reserved g-claimed g-claimer g-orphan-share g-share-err default g-foreign-ns g-unknown-key g-bad-bool"
   for sa in $broken; do
     n="$("$YQ" ea -N "select(.kind == \"ConfigMap\" and .metadata.name == \"bao-config-$sa.error\") | .metadata.name" "$WORK/guards.yaml" | { grep -c . || true; })"
     [ "$n" -eq 1 ] || guards_detail="$guards_detail [no error ConfigMap for $sa]"
@@ -953,16 +1175,26 @@ fi
 # transit key would mean two apps sharing crypto material.
 uniqueids_detail=""
 for c in all $SLICES; do
-  render "$c" "$FIXTURES/values-full.yaml" > "$WORK/uid-$c.yaml" 2>/dev/null || continue
-  dupes="$("$YQ" e -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-$c.yaml" \
-    | { grep -v '^null' || true; } | sort | uniq -d | tr '\n' ' ')"
+  if ! render "$c" "$FIXTURES/values-full.yaml" > "$WORK/uid-$c.yaml" 2> "$WORK/uid-$c.err"; then
+    uniqueids_detail="$uniqueids_detail [$c: render failed, so it was not checked: $(err_line "$WORK/uid-$c.err")]"; continue
+  fi
+  ids="$(yqe '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-$c.yaml")"
+  # a failed read is one line, never a duplicate: test it before uniq -d drops it
+  case "$ids" in yq-failed*) uniqueids_detail="$uniqueids_detail [$c: $ids]"; continue ;; esac
+  dupes="$({ grep -v '^null' <<<"$ids" || true; } | sort | uniq -d | tr '\n' ' ')"
   [ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [$c: $dupes]"
 done
 # the guards fixture too — it renders the error-ConfigMap paths
-render all "$FIXTURES/values-guards.yaml" > "$WORK/uid-guards.yaml" 2>/dev/null
-dupes="$("$YQ" e -N '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-guards.yaml" \
-  | { grep -v '^null' || true; } | sort | uniq -d | tr '\n' ' ')"
-[ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [guards: $dupes]"
+if render all "$FIXTURES/values-guards.yaml" > "$WORK/uid-guards.yaml" 2> "$WORK/uid-guards.err"; then
+  ids="$(yqe '[.apiVersion, .kind, (.metadata.namespace // "-"), .metadata.name] | join("|")' "$WORK/uid-guards.yaml")"
+  case "$ids" in
+    yq-failed*) uniqueids_detail="$uniqueids_detail [guards: $ids]" ;;
+    *) dupes="$({ grep -v '^null' <<<"$ids" || true; } | sort | uniq -d | tr '\n' ' ')"
+       [ -z "$dupes" ] || uniqueids_detail="$uniqueids_detail [guards: $dupes]" ;;
+  esac
+else
+  uniqueids_detail="$uniqueids_detail [guards: render failed, so it was not checked: $(err_line "$WORK/uid-guards.err")]"
+fi
 [ -z "$uniqueids_detail" ] && check uniqueids 0 || check uniqueids 1 "duplicate object identity within a slice:$uniqueids_detail"
 
 # 25. grantmatch — an ExternalSecret must never be rendered for a path the
@@ -1004,23 +1236,23 @@ fi
 # app->path directory — renders from CORE only, keyed by resolved app name, and
 # carries the secrets: leaves a seeder needs.
 cohesion_detail=""
-oldkey_msg="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-d-oldkey.deploy-error") | .data.ERROR' "$WORK/uid-guards.yaml")"
+oldkey_msg="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-d-oldkey.deploy-error") | .data.ERROR' "$WORK/uid-guards.yaml")" || oldkey_msg=yq-failed
 grep -q "was renamed to bao.stakater.com/kv-secret.db" <<<"$oldkey_msg" || cohesion_detail="$cohesion_detail [old spelling not told its new name]"
-dotted="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-g.dotted.error") | .data.ERROR' "$WORK/uid-guards.yaml")"
+dotted="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-config-g.dotted.error") | .data.ERROR' "$WORK/uid-guards.yaml")" || dotted=yq-failed
 grep -q "Rename the ServiceAccount" <<<"$dotted" || cohesion_detail="$cohesion_detail [dotted ServiceAccount name not rejected by G16]"
-apps_core="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-dev") | .data.payments' "$WORK/uid-all.yaml")"
+apps_core="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-dev") | .data.payments' "$WORK/uid-all.yaml")" || apps_core=yq-failed
 grep -q "kvPath: kv/data/dev/team-a-dev/payments/" <<<"$apps_core" || cohesion_detail="$cohesion_detail [bao-apps payments entry missing its kvPath]"
 grep -q 'requestedSecrets: "app-config, db-creds"' <<<"$apps_core" || cohesion_detail="$cohesion_detail [bao-apps payments entry missing its requestedSecrets leaves]"
 apps_eso="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps") | .metadata.name' "$WORK/uid-eso.yaml" | { grep -c . || true; })"
 [ "$apps_eso" -eq 0 ] || cohesion_detail="$cohesion_detail [bao-apps leaked into the eso slice]"
 # an errored SA still appears in the index, as a pointer to its error ConfigMap
-apps_err="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-dev") | .data["g-tier-only.error"]' "$WORK/uid-guards.yaml")"
+apps_err="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-dev") | .data["g-tier-only.error"]' "$WORK/uid-guards.yaml")" || apps_err=yq-failed
 grep -q "bao-config-g-tier-only.error" <<<"$apps_err" || cohesion_detail="$cohesion_detail [errored SA has no pointer entry in bao-apps]"
 # two Deployments sharing one SA and asking for the same leaf -> the leaf listed
 # ONCE; the clash pair's leaves (one, two) still appear — both are genuinely
 # requested and path-valid, the clash is about the Secret NAME and is reported
 # on the Deployments themselves
-apps_dedupe="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-prod") | .data.good-sa' "$WORK/uid-guards.yaml")"
+apps_dedupe="$("$YQ" ea -N 'select(.kind == "ConfigMap" and .metadata.name == "bao-apps" and .metadata.namespace == "team-a-prod") | .data.good-sa' "$WORK/uid-guards.yaml")" || apps_dedupe=yq-failed
 grep -q '^requestedSecrets: "one, postgres, two"$' <<<"$apps_dedupe" || cohesion_detail="$cohesion_detail [requestedSecrets leaves wrong — want deduped sorted 'one, postgres, two']"
 [ -z "$cohesion_detail" ] && check cohesion 0 || check cohesion 1 "$cohesion_detail"
 
@@ -1120,7 +1352,7 @@ if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml"
   --set serviceAccounts=null --set deployments=null > "$WORK/null.yaml" 2>"$WORK/null.err"; then
   check nullinputs 0
 else
-  check nullinputs 1 "null serviceAccounts/deployments crashed the render: $(head -1 "$WORK/null.err")"
+  check nullinputs 1 "null serviceAccounts/deployments crashed the render: $(err_line "$WORK/null.err")"
 fi
 
 # 31. nullfields — a successful render is not the assertion. With no workload
@@ -1167,12 +1399,12 @@ for nf in "null-inputs:$WORK/null.yaml" "no-workloads:$WORK/noworkloads.yaml"; d
     # permittedDnsDomains — the second empty-list site.
     "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
       --set component=all > "$nf_file" 2>"$WORK/noworkloads.err" \
-      || { nf_detail="$nf_detail [$nf_label: render failed: $(head -1 "$WORK/noworkloads.err")]"; continue; }
+      || { nf_detail="$nf_detail [$nf_label: render failed: $(err_line "$WORK/noworkloads.err")]"; continue; }
   fi
   # Own line, then check the status: $(...) would discard a yq failure and the
   # empty result would read as "no null fields".
   nf_out="$(nullfield_paths "$nf_file")" \
-    || { nf_detail="$nf_detail [$nf_label: yq failed: $(printf '%s' "$nf_out" | head -1)]"; continue; }
+    || { nf_detail="$nf_detail [$nf_label: yq failed: $(head -1 <<<"$nf_out")]"; continue; }
   [ -n "$nf_out" ] \
     && nf_detail="$nf_detail [$nf_label: $(printf '%s' "$nf_out" | sort -u | tr '\n' ' ')]"
 done
@@ -1204,7 +1436,7 @@ for ssor_form in empty null; do
   # The guard's own sentence, not the value name: the value name alone also
   # appears in the Go template error this check used to pass on.
   grep -q 'requires at least one entry in sso.allowedRedirectUris' "$WORK/ssor.out" \
-    || { ssor_ok=1; ssor_detail="$ssor_detail [allowedRedirectUris=$ssor_form failed somewhere other than the guard: $(head -1 "$WORK/ssor.out" | cut -c1-90)]"; }
+    || { ssor_ok=1; ssor_detail="$ssor_detail [allowedRedirectUris=$ssor_form failed somewhere other than the guard: $(err_line "$WORK/ssor.out")]"; }
 done
 # The counterweight: a populated list must still render the roles. Without this
 # the guard could reject everything and still "pass" above.
@@ -1246,7 +1478,7 @@ for posture in "true:pki-int:pki" "false:pki:pki-int"; do
   spm_want="${spm_rest%%:*}"; spm_stale="${spm_rest#*:}"
   "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
     --set component=core --set "pki.hierarchy.enabled=$spm_hier" > "$WORK/spm.out" 2>&1 \
-    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier render failed: $(head -1 "$WORK/spm.out" | cut -c1-90)]"; continue; }
+    || { spm_ok=1; spm_detail="$spm_detail [hierarchy=$spm_hier render failed: $(err_line "$WORK/spm.out")]"; continue; }
   # a. the inactive mount is granted nowhere. This is the actual regression: the
   # grants named a mount that holds nothing.
   if grep -q "path \"$spm_stale/" "$WORK/spm.out"; then
@@ -1303,7 +1535,7 @@ for prn_comp in core certManager; do
     continue
   fi
   grep -q 'both render the role name' "$WORK/prn.out" \
-    || { prn_ok=1; prn_detail="$prn_detail [component=$prn_comp failed without naming the collision: $(head -1 "$WORK/prn.out" | cut -c1-90)]"; }
+    || { prn_ok=1; prn_detail="$prn_detail [component=$prn_comp failed without naming the collision: $(err_line "$WORK/prn.out")]"; }
 done
 # b. a missing nameTemplate names the entry instead of dying in a helper.
 cat > "$WORK/roles-noname.yaml" <<'YAML'
@@ -1317,7 +1549,7 @@ if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
   prn_ok=1; prn_detail="$prn_detail [a role with no nameTemplate rendered]"
 else
   grep -q 'has no nameTemplate' "$WORK/prn-nn.out" \
-    || { prn_ok=1; prn_detail="$prn_detail [missing nameTemplate failed without naming the field: $(head -1 "$WORK/prn-nn.out" | cut -c1-90)]"; }
+    || { prn_ok=1; prn_detail="$prn_detail [missing nameTemplate failed without naming the field: $(err_line "$WORK/prn-nn.out")]"; }
 fi
 # c. the schema alone, on the typos the template cannot see: an unknown key is
 # omitted from the CR, so bao keeps its own default — permissive for
@@ -1356,7 +1588,7 @@ if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
   prn_ok=1; prn_detail="$prn_detail [an RFC 1123-invalid role name rendered]"
 else
   grep -q "CRD rejects for spec.name" "$WORK/prn-bn.out" \
-    || { prn_ok=1; prn_detail="$prn_detail [invalid role name failed for another reason: $(head -1 "$WORK/prn-bn.out" | cut -c1-90)]"; }
+    || { prn_ok=1; prn_detail="$prn_detail [invalid role name failed for another reason: $(err_line "$WORK/prn-bn.out")]"; }
 fi
 # e. same for the 253-char limit.
 { printf 'pki:\n  roles:\n    - nameTemplate: "{tenant}-'; \
@@ -1369,7 +1601,7 @@ if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
   prn_ok=1; prn_detail="$prn_detail [a 253+ char role name rendered]"
 else
   grep -q 'over the 253-char' "$WORK/prn-ln.out" \
-    || { prn_ok=1; prn_detail="$prn_detail [over-long role name failed for another reason: $(head -1 "$WORK/prn-ln.out" | cut -c1-90)]"; }
+    || { prn_ok=1; prn_detail="$prn_detail [over-long role name failed for another reason: $(err_line "$WORK/prn-ln.out")]"; }
 fi
 # g. the pki.roles value constraints MIRROR the operator's CRD. A values schema
 # looser than the CRD is worse than none: the value renders clean and the
@@ -1398,7 +1630,7 @@ for prn_case in crdmismatch:ttl keybits:keyBits; do
     prn_ok=1; prn_detail="$prn_detail [$prn_key outside the operator CRD's constraint rendered — it would be rejected at apply]"
   else
     grep -q "$prn_key" "$WORK/prn-crd.out" \
-      || { prn_ok=1; prn_detail="$prn_detail [$prn_key rejection did not name the field: $(head -1 "$WORK/prn-crd.out" | cut -c1-90)]"; }
+      || { prn_ok=1; prn_detail="$prn_detail [$prn_key rejection did not name the field: $(err_line "$WORK/prn-crd.out")]"; }
   fi
 done
 # f. counterweight: two DISTINCT names still render two roles. Without this the
@@ -1428,7 +1660,7 @@ done
 "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" \
   -f "$FIXTURES/values-full.yaml" -f "$WORK/roles-dup.yaml" \
   --set component=eso > "$WORK/prn-eso.out" 2>&1 \
-  || { prn_ok=1; prn_detail="$prn_detail [a PKI-only role-catalog error failed the eso slice, taking out KV secret delivery: $(head -1 "$WORK/prn-eso.out" | cut -c1-90)]"; }
+  || { prn_ok=1; prn_detail="$prn_detail [a PKI-only role-catalog error failed the eso slice, taking out KV secret delivery: $(err_line "$WORK/prn-eso.out")]"; }
 # and the eso slice still rendered its own objects rather than going quietly empty
 grep -q '^kind:' "$WORK/prn-eso.out" \
   || { prn_ok=1; prn_detail="$prn_detail [the eso slice rendered nothing at all under a PKI typo]"; }
@@ -1457,10 +1689,10 @@ pcd_kinds() { # <manifest> -> sorted kind list
 # derivable there is the templates' literal suffix — cluster-wide by default —
 # and a final CA would keep it forever.
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-no-workloads.yaml" \
-  --set component=core > "$WORK/pcd-empty.out" 2>&1 \
-  || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads render failed: $(head -1 "$WORK/pcd-empty.out" | cut -c1-90)]"; }
+  --set component=core > "$WORK/pcd-empty.out" 2> "$WORK/pcd-empty.err" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads render failed: $(err_line "$WORK/pcd-empty.err")]"; }
 grep -q '^kind: OpenBaoPKISecretEngineConfig' "$WORK/pcd-empty.out" \
-  && { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads emitted a CA: constraints \"$(pcd_dom "$WORK/pcd-empty.out" | tr '\n' ',')\" would be frozen cluster-wide]"; }
+  && { pcd_ok=1; pcd_detail="$pcd_detail [no-workloads emitted a CA: constraints \"$(pcd_dom "$WORK/pcd-empty.out" | tr '\n' ',' || true)\" would be frozen cluster-wide]"; }
 # and the counterweight, or "emitted nothing at all" would be the pass path: the
 # mount and the role still render, so the CA is what waits, not the whole slice.
 for pcd_want in OpenBaoSecretEngine OpenBaoPKISecretEngineRole; do
@@ -1469,7 +1701,7 @@ for pcd_want in OpenBaoSecretEngine OpenBaoPKISecretEngineRole; do
 done
 # b. with namespaces, the per-namespace union, and the CA appears.
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
-  --set component=core > "$WORK/pcd-full.out" 2>&1 \
+  --set component=core > "$WORK/pcd-full.out" 2> "$WORK/pcd-full.err" \
   || { pcd_ok=1; pcd_detail="$pcd_detail [values-full render failed]"; }
 pcd_full="$(pcd_dom "$WORK/pcd-full.out")" \
   || { pcd_ok=1; pcd_detail="$pcd_detail [yq failed on the values-full render]"; }
@@ -1480,9 +1712,10 @@ grep -qx 'svc.cluster.local' <<<"$pcd_full" \
 # c. root mode is constrained too: under pki.crossTenant a peer trusts a
 # self-signed root directly, so nothing above it bounds an unconstrained one.
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
-  --set component=core --set pki.hierarchy.enabled=false > "$WORK/pcd-root.out" 2>&1 \
-  || { pcd_ok=1; pcd_detail="$pcd_detail [root-mode render failed: $(head -1 "$WORK/pcd-root.out" | cut -c1-90)]"; }
-pcd_root="$(pcd_dom "$WORK/pcd-root.out")"
+  --set component=core --set pki.hierarchy.enabled=false > "$WORK/pcd-root.out" 2> "$WORK/pcd-root.err" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [root-mode render failed: $(err_line "$WORK/pcd-root.err")]"; }
+pcd_root="$(pcd_dom "$WORK/pcd-root.out")" \
+  || { pcd_ok=1; pcd_detail="$pcd_detail [yq failed on the root-mode render]"; }
 [ -n "$pcd_root" ] \
   || { pcd_ok=1; pcd_detail="$pcd_detail [root mode rendered a CA with no permittedDnsDomains]"; }
 "$YQ" e -N 'select(.kind == "OpenBaoPKISecretEngineConfig") | .spec.type' "$WORK/pcd-root.out" \
@@ -1502,18 +1735,18 @@ if "$HELM" template "$RELEASE" "$WORK/chart-noschema-roles" -n "$NS" -f "$FIXTUR
   pcd_ok=1; pcd_detail="$pcd_detail [a catalog with no allowedDomainsTemplate rendered an unconstrained CA]"
 else
   grep -q 'no DNS name constraints' "$WORK/pcd-nd.out" \
-    || { pcd_ok=1; pcd_detail="$pcd_detail [empty domain catalog failed without explaining why: $(head -1 "$WORK/pcd-nd.out" | cut -c1-90)]"; }
+    || { pcd_ok=1; pcd_detail="$pcd_detail [empty domain catalog failed without explaining why: $(err_line "$WORK/pcd-nd.out")]"; }
 fi
 # e. an omitted pki.hierarchy renders root mode, as openbao.pkiMount reads it.
 # A chained deref on the absent block nil-pointers the whole core TI instead.
 printf 'pki:\n  hierarchy: null\n' > "$WORK/pcd-nilhier.yaml"
 if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
-  -f "$WORK/pcd-nilhier.yaml" --set component=core > "$WORK/pcd-nh.out" 2>&1; then
+  -f "$WORK/pcd-nilhier.yaml" --set component=core > "$WORK/pcd-nh.out" 2> "$WORK/pcd-nh.err"; then
   "$YQ" e -N 'select(.kind == "OpenBaoPKISecretEngineConfig") | .spec.type' "$WORK/pcd-nh.out" \
     | grep -qx root \
     || { pcd_ok=1; pcd_detail="$pcd_detail [a null pki.hierarchy did not render root mode]"; }
 else
-  pcd_ok=1; pcd_detail="$pcd_detail [a null pki.hierarchy failed the render: $(head -1 "$WORK/pcd-nh.out" | cut -c1-90)]"
+  pcd_ok=1; pcd_detail="$pcd_detail [a null pki.hierarchy failed the render: $(err_line "$WORK/pcd-nh.err")]"
 fi
 # f. §11's Bundle waits for the same window: its first source is <tenant>-ca,
 # which only the CA publishes, and its target selects this tenant's namespaces.
@@ -1548,8 +1781,8 @@ parent:
       - "https://console.example.com/oidc/callback"
 YAML
 "$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" -f "$WORK/parent-plumb.yaml" \
-  > "$WORK/pp.out" 2>&1 \
-  || { pp_ok=1; pp_detail="$pp_detail [bootstrap render failed: $(head -1 "$WORK/pp.out" | cut -c1-90)]"; }
+  > "$WORK/pp.out" 2> "$WORK/pp.err" \
+  || { pp_ok=1; pp_detail="$pp_detail [bootstrap render failed: $(err_line "$WORK/pp.err")]"; }
 # The core child Template's valuesTemplate, parsed as the YAML the tenant chart
 # will receive. The gotemplate placeholders are scalars, so this parses.
 "$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")
@@ -1568,22 +1801,559 @@ pp_get() { "$YQ" e -N "$1" "$WORK/pp-values.yaml" 2>/dev/null; }
 "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" \
   -f <("$YQ" e -N '{"pki": {"roles": .pki.roles}, "sso": {"allowedRedirectUris": .sso.allowedRedirectUris}}' "$WORK/pp-values.yaml") \
   --set component=core > "$WORK/pp-tenant.out" 2>&1 \
-  || { pp_ok=1; pp_detail="$pp_detail [tenant chart rejected the plumbed values: $(head -1 "$WORK/pp-tenant.out" | cut -c1-90)]"; }
+  || { pp_ok=1; pp_detail="$pp_detail [tenant chart rejected the plumbed values: $(err_line "$WORK/pp-tenant.out")]"; }
 grep -q 'name: pki-team-a-client' "$WORK/pp-tenant.out" \
   || { pp_ok=1; pp_detail="$pp_detail [plumbed role did not render in the tenant chart]"; }
 # Counterweight: left at its default the block is OMITTED, not emitted empty —
 # an empty pki.roles would trip the tenant chart's own guard for every tenant.
-"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" > "$WORK/pp-def.out" 2>&1 \
-  || { pp_ok=1; pp_detail="$pp_detail [default bootstrap render failed]"; }
+"$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" > "$WORK/pp-def.out" 2> "$WORK/pp-def.err" \
+  || { pp_ok=1; pp_detail="$pp_detail [default bootstrap render failed: $(err_line "$WORK/pp-def.err")]"; }
 "$YQ" e -N 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")
-            | .spec.helm.valuesTemplate' "$WORK/pp-def.out" > "$WORK/pp-defvals.yaml" 2>/dev/null
+            | .spec.helm.valuesTemplate' "$WORK/pp-def.out" > "$WORK/pp-defvals.yaml" 2>/dev/null \
+  || { pp_ok=1; pp_detail="$pp_detail [could not extract the default core valuesTemplate]"; }
 "$YQ" e -N 'has("pki") and (.pki | has("roles"))' "$WORK/pp-defvals.yaml" 2>/dev/null | grep -qx false \
   || { pp_ok=1; pp_detail="$pp_detail [an unset parent.pki.roles still emitted a roles key, which would override the tenant chart default]"; }
 # And a nulled optional block must not nil-pointer the whole bootstrap render.
 printf 'parent:\n  pki: null\n  sso: null\n' > "$WORK/pp-null.yaml"
 "$HELM" template "$RELEASE" "$BOOTSTRAP" -n "$NS" -f "$WORK/pp-null.yaml" > "$WORK/pp-null.out" 2>&1 \
-  || { pp_ok=1; pp_detail="$pp_detail [a nulled parent.pki/parent.sso failed the bootstrap render: $(head -1 "$WORK/pp-null.out" | cut -c1-90)]"; }
+  || { pp_ok=1; pp_detail="$pp_detail [a nulled parent.pki/parent.sso failed the bootstrap render: $(err_line "$WORK/pp-null.out")]"; }
 [ "$pp_ok" -eq 0 ] && check parentplumb 0 || check parentplumb 1 "$pp_detail"
+
+# 40. ssoshared — the shared-space SSO grants. values-full turns the login on; its
+# kitchen-sink SA exports to team-b and imports from "team-x, team-c". The two
+# directions name different peers, so a swapped direction is a wrong peer; team-x
+# is not in the roster, and the space before team-c needs the trim. team-d is in
+# the roster with no share at all, so a grant built from the roster instead of the
+# annotations shows up as a team-d rule.
+#
+# Every render here writes stderr to its own file: a helm warning in the YAML makes
+# yq fail, and a count taken from a failed yq is 0 — the pass value of a zero-count
+# check. yq_count (top of file) reports that as yq-failed instead, and every other
+# read goes through yqe.
+core_render() { # core_render <name> <helm args...> -> $WORK/<name>.yaml, stderr in .err
+  local name="$1"; shift
+  "$HELM" template "$RELEASE" "$CHART" -n "$NS" --set component=core "$@" > "$WORK/$name.yaml" 2> "$WORK/$name.err"
+}
+SHARED_SEL='select(.metadata.name == "*.shared") | .metadata.name'
+OIDC_SEL='select(.kind == "OpenBaoJWTOIDCAuthEngineRole" or .kind == "OpenBaoJWTOIDCAuthEngineConfig" or (.kind == "OpenBaoAuthMethod" and .spec.type == "oidc")) | .metadata.name'
+detail=""
+if core_render ssh -f "$FIXTURES/values-full.yaml"; then
+  n="$(yq_count "$SHARED_SEL" "$WORK/ssh.yaml")"
+  [ "$n" = 8 ] || detail="$detail [values-full rendered $n shared-space objects, want 8 — the zero-count checks below need this control]"
+  # a. one Policy and one role per tier, in the shared space, on its oidc mount,
+  #    bound to the tier's group and carrying the tier's policy.
+  for tier in admin editor viewer audit-read; do
+    n="sso-team-a-$tier"
+    got="$(yqe "select(.metadata.name == \"$n.shared\") | .kind + \"|\" + .spec.openbaoNamespace + \"|\" + .spec.name + \"|\" + (.spec.path // \"-\") + \"|\" + ((.spec.boundClaims.groups // [\"-\"]) | join(\",\")) + \"|\" + ((.spec.tokenPolicies // [\"-\"]) | join(\",\"))" "$WORK/ssh.yaml" | sort | tr '\n' ' ')"
+    want="OpenBaoJWTOIDCAuthEngineRole|shared/|$n|oidc|team-a-${tier}s|$n OpenBaoPolicy|shared/|$n|-|-|- "
+    [ "$got" = "$want" ] || detail="$detail [$tier: got '$got' want '$want']"
+  done
+  # b. the peers named are exactly the workloads' share peers, in the right
+  #    direction: sent to team-b, received from team-c.
+  sso_pol="$(yqe 'select(.kind == "OpenBaoPolicy" and .metadata.name == "*.shared") | .spec.policy' "$WORK/ssh.yaml")"
+  app_pol="$(yqe 'select(.kind == "OpenBaoPolicy" and .metadata.name == "share-*") | .spec.policy' "$WORK/ssh.yaml")"
+  share_peers() { # share_peers <policy text> <out|in> -> sorted peer names
+    if [ "$2" = out ]; then
+      { grep -oE 'from-team-a/to-[a-z0-9-]+' <<<"$1" || true; } | sed 's|.*/to-||'
+    else
+      { grep -oE 'from-[a-z0-9-]+/to-team-a/' <<<"$1" || true; } | sed -E 's|^from-||; s|/to-team-a/$||'
+    fi | sort -u | tr '\n' ' '
+  }
+  for pair in "out:team-b " "in:team-c "; do
+    dir="${pair%%:*}"; want="${pair#*:}"
+    s="$(share_peers "$sso_pol" "$dir")"; a="$(share_peers "$app_pol" "$dir")"
+    [ "$a" = "$want" ] || detail="$detail [workload $dir peers '$a', want '$want' — fixture drifted]"
+    [ "$s" = "$a" ] || detail="$detail [$dir peers: people '$s', workloads '$a']"
+  done
+  # c. every rule has one of four shapes. An allowlist, not a list of known-bad
+  #    spellings: the likely widenings — a list on dev/ (who shares with whom), a
+  #    peer's whole from-<peer>/ folder, a wildcard over peers, delete on a
+  #    received share — are each just a path outside these shapes. Which peers
+  #    fill them is (b)'s job; team-d and team-x must not appear at all.
+  allowed_re='^kv/metadata$|^kv/metadata/dev/from-team-a$|^kv/(data|metadata|delete|undelete|destroy)/dev/from-team-a/to-[a-z0-9-]+/\*$|^kv/(data|metadata)/dev/from-[a-z0-9-]+/to-team-a/\*$'
+  sso_paths="$({ grep -oE 'path "[^"]*"' <<<"$sso_pol" || true; } | sed -E 's/^path "//; s/"$//' | sort -u)"
+  [ -n "$sso_paths" ] || detail="$detail [no path rules extracted — the allowlist would pass vacuously]"
+  outside="$({ grep -vE "$allowed_re" <<<"$sso_paths" || true; } | tr '\n' ' ')"
+  [ -z "$outside" ] || detail="$detail [rules outside the allowed shapes: $outside]"
+  if grep -qE 'team-(d|x)' <<<"$sso_paths"; then detail="$detail [a rule for team-d or team-x, neither of which has a valid share]"; fi
+  grep -qx 'kv/metadata/dev/from-team-a' <<<"$sso_paths" || detail="$detail [no list on the tenant's own sent folder]"
+  # d. caps per tier. Received: read/list on data and metadata for viewer, editor
+  #    and admin, metadata list only for audit-read, never more. Sent: the tier's
+  #    own tierCaps, plus delete/undelete/destroy for admin only.
+  for tier in admin editor viewer audit-read; do
+    p="$(yqe "select(.kind == \"OpenBaoPolicy\" and .metadata.name == \"sso-team-a-$tier.shared\") | .spec.policy" "$WORK/ssh.yaml")"
+    caps="$(yqe ".tierCaps[\"$tier\"]" "$CHART/values.yaml")"
+    if [ "$tier" = audit-read ]; then
+      want_lines='path "kv/metadata/dev/from-team-a/to-team-b/*" { capabilities = ["list"] }
+path "kv/metadata/dev/from-team-c/to-team-a/*" { capabilities = ["list"] }'
+    else
+      want_lines="path \"kv/data/dev/from-team-a/to-team-b/*\"     { capabilities = $caps }
+path \"kv/metadata/dev/from-team-a/to-team-b/*\" { capabilities = $caps }
+path \"kv/data/dev/from-team-c/to-team-a/*\"     { capabilities = [\"read\", \"list\"] }
+path \"kv/metadata/dev/from-team-c/to-team-a/*\" { capabilities = [\"read\", \"list\"] }"
+    fi
+    while IFS= read -r l; do
+      grep -qxF "$l" <<<"$(sed 's/^ *//' <<<"$p")" || detail="$detail [$tier lacks: $l]"
+    done <<<"$want_lines"
+    rules="$(grep -c '^ *path ' <<<"$p" || true)"
+    wantn=$(( $(grep -c . <<<"$want_lines") + 2 ))   # + mount root + own sent folder
+    [ "$tier" = admin ] && wantn=$((wantn + 3))       # + delete, undelete, destroy on the sent share
+    [ "$rules" -eq "$wantn" ] || detail="$detail [$tier has $rules rules, want $wantn]"
+    if [ "$tier" = admin ]; then
+      for v in delete undelete destroy; do
+        grep -qF "path \"kv/$v/dev/from-team-a/to-team-b/*\"" <<<"$p" || detail="$detail [admin lacks $v on the sent share]"
+      done
+    elif grep -qE 'kv/(delete|undelete|destroy)/' <<<"$p"; then
+      detail="$detail [$tier may delete or destroy]"
+    fi
+  done
+else
+  detail="$detail [render failed: $(err_line "$WORK/ssh.err")]"
+fi
+# e. no unbound role in the shared space, even with the tenant's fallback on.
+#    The fallback role must still appear in the tenant namespace, or the
+#    override did not take effect and the check proves nothing.
+if core_render ssh-fb -f "$FIXTURES/values-full.yaml" --set sso.tenantRoleMapping.fallback=viewer; then
+  fb="$(yqe 'select(.kind == "OpenBaoJWTOIDCAuthEngineRole" and .spec.name == "sso-team-a-fallback") | .spec.openbaoNamespace' "$WORK/ssh-fb.yaml" | tr '\n' ' ')"
+  [ "$fb" = "team-a/ " ] || detail="$detail [fallback role namespaces '$fb', want only team-a/]"
+  n="$(yq_count 'select(.kind == "OpenBaoJWTOIDCAuthEngineRole" and .spec.openbaoNamespace == "shared/" and ((.spec.boundClaims.groups // []) | length) == 0) | .metadata.name' "$WORK/ssh-fb.yaml")"
+  [ "$n" = 0 ] || detail="$detail [roles with no group in the shared space: $n]"
+else
+  detail="$detail [fallback render failed: $(err_line "$WORK/ssh-fb.err")]"
+fi
+# f. the gates. Nothing in the shared space while the toggle is off, while SSO is
+#    off, or for a tenant with no valid share: the guards fixture has shares only
+#    on an SA with kv off (g-orphan-share), on one with a broken tier
+#    (g-share-err) and to a tenant not in the roster (imp-bad). A quoted "false"
+#    is off too, for every SSO object. values-full above is the positive control.
+gate_case() { # gate_case <label> <selector> <want> <helm args...>
+  local label="$1" sel="$2" want="$3"; shift 3
+  if core_render ssh-gate "$@"; then
+    local n; n="$(yq_count "$sel" "$WORK/ssh-gate.yaml")"
+    [ "$n" = "$want" ] || detail="$detail [$label: $n objects, want $want]"
+  else
+    detail="$detail [$label: render failed: $(err_line "$WORK/ssh-gate.err")]"
+  fi
+}
+# the selectors' positive controls: the tenant oidc mount and config, 4 tenant
+# roles and 4 shared-space roles; the 8 shared-space objects were counted above
+gate_case "OIDC selector, positive control" "$OIDC_SEL" 10 -f "$FIXTURES/values-full.yaml"
+gate_case "shared login off"       "$SHARED_SEL" 0 -f "$FIXTURES/values-full.yaml" --set sso.sharedSpace.enabled=false
+gate_case "SSO off, shared login on" "$OIDC_SEL" 0 -f "$FIXTURES/values-full.yaml" --set sso.enabled=false
+gate_case "SSO quoted \"false\""   "$OIDC_SEL" 0 -f "$FIXTURES/values-full.yaml" --set-string sso.enabled=false
+gate_case "no valid share"         "$SHARED_SEL" 0 -f "$FIXTURES/values-guards.yaml" \
+  --set sso.enabled=true --set-string sso.dex.issuerUrl=https://dex.example.com --set sso.sharedSpace.enabled=true
+gate_case "no valid share (positive control: the tenant roles)" \
+  'select(.kind == "OpenBaoJWTOIDCAuthEngineRole" and .spec.openbaoNamespace == "team-a/") | .metadata.name' 4 \
+  -f "$FIXTURES/values-guards.yaml" --set sso.enabled=true --set-string sso.dex.issuerUrl=https://dex.example.com --set sso.sharedSpace.enabled=true
+# g. the shared role carries the tenant role's callbacks, unchanged and in full:
+#    one UI entry serves both logins. Two entries, so keeping only the first shows.
+printf 'sso:\n  allowedRedirectUris:\n    - "http://localhost:8250/oidc/callback"\n    - "https://bao.example.com/ui/vault/auth/oidc/oidc/callback"\n' > "$WORK/ssh-uri-values.yaml"
+if core_render ssh-uri -f "$FIXTURES/values-full.yaml" -f "$WORK/ssh-uri-values.yaml"; then
+  want="http://localhost:8250/oidc/callback,https://bao.example.com/ui/vault/auth/oidc/oidc/callback"
+  for n in sso-team-a-viewer sso-team-a-viewer.shared; do
+    got="$(yqe "select(.kind == \"OpenBaoJWTOIDCAuthEngineRole\" and .metadata.name == \"$n\") | .spec.allowedRedirectUris | join(\",\")" "$WORK/ssh-uri.yaml")"
+    [ "$got" = "$want" ] || detail="$detail [$n redirects '$got', want '$want']"
+  done
+else
+  detail="$detail [redirect render failed: $(err_line "$WORK/ssh-uri.err")]"
+fi
+report ssoshared
+
+# 41. ssotiers — each guard on its own. a. the schema, templates stripped.
+detail=""
+mkdir -p "$WORK/tenant-schemaonly/templates"
+cp "$CHART/Chart.yaml" "$CHART/values.yaml" "$CHART/values.schema.json" "$WORK/tenant-schemaonly/"
+printf '# intentionally empty\n' > "$WORK/tenant-schemaonly/templates/noop.yaml"
+printf 'sso:\n  tiers: [admin, read]\n' > "$WORK/st-bad.yaml"
+printf 'sso:\n  tiers: [admin, admin]\n' > "$WORK/st-dup.yaml"
+for f in bad dup; do must_reject "schema, the $f tier list" "$WORK/tenant-schemaonly" -f "$WORK/st-$f.yaml"; done
+must_render "schema, the default tiers" "$WORK/tenant-schemaonly"
+# b. the template fail(), schema removed. Both template files call it, and either
+#    one's message satisfies the grep, so the shared login is also rendered OFF:
+#    then §7's call is the only one, as in an install that never turns it on.
+for ss in true false; do
+  must_fail "tier \"read\" without the schema, sharedSpace=$ss" 'sso.tiers includes "read", which is not one of' "$WORK/tenant-noschema" -n "$NS" \
+    -f "$FIXTURES/values-full.yaml" -f "$WORK/st-bad.yaml" --set "sso.sharedSpace.enabled=$ss"
+done
+report ssotiers
+
+# 42. sharedtoggle — the guards on sso.enabled, sso.sharedSpace and the IdP
+# client, each on its own: the schema with the templates stripped, the helper
+# with the schema removed. A null value reaches only the helper, because helm
+# drops null keys before the schema runs.
+detail=""
+# tenant chart: schema alone
+for v in yes on True 1; do
+  must_reject "tenant schema, sso.sharedSpace.enabled=$v" "$WORK/tenant-schemaonly" --set-string "sso.sharedSpace.enabled=$v"
+  must_reject "tenant schema, sso.enabled=$v" "$WORK/tenant-schemaonly" --set-string "sso.enabled=$v"
+done
+must_reject "tenant schema, misspelled sso.sharedSpace.enable" "$WORK/tenant-schemaonly" --set sso.sharedSpace.enable=true
+must_render "tenant schema, sso.sharedSpace.enabled=true" "$WORK/tenant-schemaonly" --set-string sso.sharedSpace.enabled=true
+must_render "tenant schema, sso.enabled=true" "$WORK/tenant-schemaonly" --set-string sso.enabled=true
+# tenant chart: helpers alone
+for v in yes on; do
+  must_fail "tenant helper, sso.sharedSpace.enabled=$v" 'sso.sharedSpace.enabled must be a boolean' "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" --set-string "sso.sharedSpace.enabled=$v"
+  must_fail "tenant helper, sso.enabled=$v" 'sso.enabled must be a boolean' "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" --set-string "sso.enabled=$v"
+done
+printf 'sso:\n  sharedSpace: true\n' > "$WORK/stg-scalar.yaml"
+must_fail "tenant helper, sso.sharedSpace: true" 'sso.sharedSpace must be a map' "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" -f "$WORK/stg-scalar.yaml"
+# bootstrap chart: schema alone (boot-noguard holds only Chart, values and schema)
+must_reject "bootstrap schema, misspelled parent.sso.sharedSpace.enable" "$WORK/boot-noguard" --set parent.sso.sharedSpace.enable=true
+must_reject "bootstrap schema, parent.sso.enabled=yes" "$WORK/boot-noguard" --set-string parent.sso.enabled=yes
+must_render "bootstrap schema, parent.sso.enabled=true" "$WORK/boot-noguard" --set-string parent.sso.enabled=true
+for key in clientId clientSecretRef.name clientSecretRef.key audience; do
+  must_reject "bootstrap schema, empty parent.sso.$key" "$WORK/boot-noguard" --set-string "parent.sso.$key="
+done
+# bootstrap chart: helpers alone, and through the real chart
+must_fail "bootstrap helper, sharedSpace.enabled=yes" 'parent.sso.sharedSpace.enabled must be a boolean' "$WORK/boot-noschema" --set-string parent.sso.sharedSpace.enabled=yes
+must_fail "bootstrap helper, parent.sso.enabled=yes" 'parent.sso.enabled must be a boolean' "$WORK/boot-noschema" --set-string parent.sso.enabled=yes
+printf 'parent:\n  sso:\n    sharedSpace: true\n' > "$WORK/stg-boot-scalar.yaml"
+must_fail "bootstrap helper, sharedSpace: true" 'parent.sso.sharedSpace must be a map' "$WORK/boot-noschema" -f "$WORK/stg-boot-scalar.yaml"
+must_fail "shared login, issuerUrl null" 'parent.sso.sharedSpace.enabled=true requires parent.sso.issuerUrl' "$BOOTSTRAP" \
+  --set parent.sso.enabled=true --set parent.sso.sharedSpace.enabled=true --set parent.sso.issuerUrl=null
+for key in clientId clientSecretRef.name clientSecretRef.key audience; do
+  for ss in false true; do
+    must_fail "SSO on, sharedSpace=$ss, $key null" "parent.sso.enabled=true requires parent.sso.$key" "$BOOTSTRAP" \
+      --set parent.sso.enabled=true --set parent.sso.issuerUrl=https://dex.example.com --set "parent.sso.sharedSpace.enabled=$ss" --set "parent.sso.$key=null"
+  done
+done
+# A "{{" anywhere in the values the child Templates write literally — with SSO on
+# or off, in any key — breaks every tenant's render under template-operator-v2.
+# Values files, not --set: --set reads {…} as a list.
+curly() { # curly <name> <yaml under parent:> <message>
+  printf 'parent:\n%b\n' "$2" > "$WORK/stg-curly-$1.yaml"   # %b: the \n in the argument are newlines
+  must_fail "{{ in $1" "$3" "$BOOTSTRAP" -f "$WORK/stg-curly-$1.yaml"
+}
+curly caBundlePem   '  sso:\n    enabled: true\n    caBundlePem: "-----BEGIN {{ CERTIFICATE-----"' 'parent.sso must not contain'
+curly clientId      '  sso:\n    enabled: true\n    clientId: "a{{b"' 'parent.sso must not contain'
+curly redirect-ssooff '  sso:\n    enabled: false\n    allowedRedirectUris: ["https://bao.example.com/{{x}}"]' 'parent.sso must not contain'
+curly secretref-key '  sso:\n    clientSecretRef: { name: s, key: k, extra: "{{x" }' 'parent.sso must not contain'
+curly pki-roles     '  pki:\n    roles:\n      - nameTemplate: "{{tenant}}-client"\n        allowedDomainsTemplate: ["a.example.com"]' 'parent.pki.roles must not contain'
+ON=(--set parent.sso.enabled=true --set parent.sso.issuerUrl=https://dex.example.com --set parent.sso.sharedSpace.enabled=true)
+must_fail "shared login, tenant chart 0.18.0" 'needs openbao-config-mto 0.21.0 or later' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.18.0
+must_fail "shared login, tenant chart not semver" 'is not a semantic version' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=latest
+must_fail "shared login, tenant chart 0.19.0abc" 'is not a semantic version' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.19.0abc
+must_fail "shared login, tenant chart 0.20.0 (no shared-space roles)" 'needs openbao-config-mto 0.21.0 or later' "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.20.0
+must_render "shared login, tenant chart 0.21.0" "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.21.0
+must_render "shared login, tenant chart 0.21.0-rc.1" "$BOOTSTRAP" "${ON[@]}" --set-string openbaoConfigMto.version=0.21.0-rc.1
+must_render "SSO off, shared login on (the version gate is inactive)" "$BOOTSTRAP" --set parent.sso.sharedSpace.enabled=true --set-string openbaoConfigMto.version=0.18.0
+report sharedtoggle
+
+# 43. sharedmount — a. the parent renders the shared oidc mount and config only
+# with both switches on.
+detail=""
+sm_count() { # sm_count <ssoEnabled> <ssoSharedSpace> -> number of shared oidc objects, render-failed or yq-failed
+  # Render on its own line, stderr apart: in a pipe, a failed render stops the
+  # whole harness under pipefail without a FAIL line that names this check.
+  shim_render sm-count --set-string "parameters.ssoEnabled=$1" --set-string "parameters.ssoSharedSpace=$2" \
+    --set-string parameters.ssoIssuerUrl=https://dex.example.com || { echo render-failed; return; }
+  yq_count 'select(.metadata.name == "shared-oidc" or .metadata.name == "shared-oidc-config") | .kind' "$WORK/sm-count.yaml"
+}
+for c in "true:true:2" "true:false:0" "false:true:0"; do
+  got="$(sm_count "${c%%:*}" "$(echo "$c" | cut -d: -f2)")"
+  [ "$got" = "${c##*:}" ] || detail="$detail [ssoEnabled:ssoSharedSpace=${c%:*} rendered $got objects, want ${c##*:}]"
+done
+# b. end to end: the bootstrap's own parent parameters, rendered through the
+#    gotemplate, give the mount the client the values name — the PEM included,
+#    which crosses a quoted parameter and a toJson on its way.
+cat > "$WORK/sm-values.yaml" <<'YAML'
+parent:
+  sso:
+    enabled: true
+    issuerUrl: https://keycloak.example.com/realms/plumb
+    clientId: bao-plumb
+    clientSecretRef: { name: plumb-secret, key: plumb-key }
+    audience: aud-plumb
+    caBundlePem: |
+      -----BEGIN CERTIFICATE-----
+      MIIBFIXTUREONLYNOTAREALCERT
+      -----END CERTIFICATE-----
+    sharedSpace: { enabled: true }
+YAML
+# Set before any branch: (d) below reads it whether or not the shim rendered,
+# and an unset variable under set -u would stop the harness with no FAIL line.
+cfg='select(.kind == "OpenBaoJWTOIDCAuthEngineConfig" and .metadata.name == "shared-oidc-config")'
+if "$HELM" template boot "$BOOTSTRAP" -n "$NS" -f "$WORK/sm-values.yaml" > "$WORK/sm-boot.yaml" 2>"$WORK/sm-boot.err"; then
+  # One document, collected with ea: helm reads only the first document of a
+  # values file, so a per-object `e` that also emits empty ones loses them all.
+  "$YQ" ea -N '[select(.kind == "Template" and .metadata.name == "openbao-config-mto-parent") | .spec.parameters[] | select(has("value"))]
+               | {"parameters": (map({"key": .name, "value": .value}) | from_entries)}' \
+    "$WORK/sm-boot.yaml" > "$WORK/sm-params.yaml" 2>/dev/null \
+    || detail="$detail [could not collect the parent parameters]"
+  if shim_render sm-shim -f "$WORK/sm-params.yaml"; then
+    got="$(yqe "$cfg | .spec.openbaoNamespace + \"|\" + .spec.oidcDiscoveryUrl + \"|\" + .spec.oidcClientId + \"|\" + .spec.oidcClientSecretRef.name + \"/\" + .spec.oidcClientSecretRef.key" "$WORK/sm-shim.yaml")"
+    [ "$got" = "shared/|https://keycloak.example.com/realms/plumb|bao-plumb|plumb-secret/plumb-key" ] \
+      || detail="$detail [shared oidc config '$got']"
+    [ "$(yqe "$cfg | .spec.oidcDiscoveryCaPem" "$WORK/sm-shim.yaml")" = "$(yqe '.parent.sso.caBundlePem' "$WORK/sm-values.yaml")" ] \
+      || detail="$detail [the CA PEM changed on its way to the shared oidc config]"
+    got="$(yqe 'select(.kind == "OpenBaoAuthMethod" and .metadata.name == "shared-oidc") | .spec.type + "|" + .spec.path + "|" + .spec.openbaoNamespace' "$WORK/sm-shim.yaml")"
+    [ "$got" = "oidc|oidc|shared/" ] || detail="$detail [shared oidc mount '$got']"
+  else
+    detail="$detail [gotemplate render failed: $(err_line "$WORK/sm-shim.err")]"
+  fi
+  # c. the same values reach the tenant chart, so the tenant mounts and the
+  #    shared one use one client, and its roles bind the same audience.
+  yqe 'select(.kind == "Template" and .metadata.name == "openbao-config-mto") | .spec.helm.valuesTemplate' \
+    "$WORK/sm-boot.yaml" > "$WORK/sm-child.yaml"
+  yqe '{"sso": {"audience": .sso.audience, "sharedSpace": .sso.sharedSpace, "dex": {"clientId": .sso.dex.clientId, "clientSecretRef": .sso.dex.clientSecretRef, "caBundlePem": .sso.dex.caBundlePem}}}' \
+    "$WORK/sm-child.yaml" > "$WORK/sm-child-sso.yaml"
+  if "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" -f "$WORK/sm-child-sso.yaml" \
+      --set component=core > "$WORK/sm-tenant.yaml" 2>"$WORK/sm-tenant.err"; then
+    tcfg='select(.kind == "OpenBaoJWTOIDCAuthEngineConfig" and .metadata.name == "team-a-oidc-config")'
+    got="$(yqe "$tcfg | .spec.oidcClientId + \"|\" + .spec.oidcClientSecretRef.name + \"/\" + .spec.oidcClientSecretRef.key" "$WORK/sm-tenant.yaml")"
+    [ "$got" = "bao-plumb|plumb-secret/plumb-key" ] || detail="$detail [tenant oidc config '$got']"
+    [ "$(yqe "$tcfg | .spec.oidcDiscoveryCaPem" "$WORK/sm-tenant.yaml")" = "$(yqe '.parent.sso.caBundlePem' "$WORK/sm-values.yaml")" ] \
+      || detail="$detail [the CA PEM changed on its way to the tenant oidc config]"
+    got="$(yqe 'select(.kind == "OpenBaoJWTOIDCAuthEngineRole" and (.metadata.name == "sso-team-a-viewer" or .metadata.name == "sso-team-a-viewer.shared")) | .spec.boundAudiences[0]' "$WORK/sm-tenant.yaml" | tr '\n' ' ')"
+    [ "$got" = "aud-plumb aud-plumb " ] || detail="$detail [role audiences '$got', want aud-plumb on both]"
+    # d. the two charts agree on where the login lives: the roles the tenant chart
+    #    writes sit on the mount path, in the namespace, that the parent creates.
+    mount="$(yqe 'select(.kind == "OpenBaoAuthMethod" and .metadata.name == "shared-oidc") | .spec.path + "|" + .spec.openbaoNamespace' "$WORK/sm-shim.yaml")"
+    config="$(yqe "$cfg | .spec.path + \"|\" + .spec.openbaoNamespace" "$WORK/sm-shim.yaml")"
+    roles="$(yqe 'select(.kind == "OpenBaoJWTOIDCAuthEngineRole" and .metadata.name == "*.shared") | .spec.path + "|" + .spec.openbaoNamespace' "$WORK/sm-tenant.yaml" | sort -u | tr '\n' ' ')"
+    # Against the literal, not against each other: three failed reads would agree.
+    [ "$mount" = "oidc|shared/" ] && [ "$config" = "oidc|shared/" ] && [ "$roles" = "oidc|shared/ " ] \
+      || detail="$detail [mount '$mount', config '$config' and roles '$roles' — each must be oidc|shared/]"
+  else
+    detail="$detail [tenant chart rejected the plumbed values: $(err_line "$WORK/sm-tenant.err")]"
+  fi
+  [ "$(yqe '.sso.sharedSpace.enabled' "$WORK/sm-child.yaml")" = true ] \
+    || detail="$detail [the child values do not carry sharedSpace.enabled=true]"
+else
+  detail="$detail [bootstrap render failed: $(err_line "$WORK/sm-boot.err")]"
+fi
+# e. left at its default, the child values carry the toggle as false, so the
+#    tenant chart's own default cannot turn the roles on behind the parent.
+[ "$(yqe '.sso.sharedSpace.enabled' "$WORK/pp-defvals.yaml")" = false ] \
+  || detail="$detail [the default child values do not carry sharedSpace.enabled=false]"
+# f. the parent reports the shared oidc config's health: without the output, a
+#    config bao refuses (no issuer reachable, say) shows nowhere.
+f="$(yqe 'select(.kind == "Template" and .metadata.name == "openbao-config-mto-parent") | .spec.outputs[] | select(.fromAll.kind == "OpenBaoJWTOIDCAuthEngineConfig") | .fields[].name' "$WORK/pp-def.out" | sort | tr '\n' ' ')"
+[ "$f" = "sharedOidcConfigReady sharedOidcConfigReason " ] || detail="$detail [parent outputs for the shared oidc config: '$f']"
+report sharedmount
+
+# 44. paramsync — the parameter wiring between the gotemplates and their
+# Templates and TIs, which no render here can see: template-operator-v2 renders
+# a gotemplate with missingkey=error, so a parameter it reads but nobody passes
+# fails that TI and no tenant gets its configuration; and a declared parameter
+# with no value that a TI does not pass renders EMPTY, with no error — drop
+# serviceAccounts from the child TIs and every tenant silently loses every
+# workload grant. helm's tpl (this shim, crd-validate) renders a missing key as
+# empty in both cases. Compared by name:
+#   a. what the parent gotemplate reads ⊆ what the parent Template passes, and
+#      what both shim fixtures pass;
+#   b. the parent Template's parameters with no value ⊆ what the parent TI passes;
+#   c. what the child valuesTemplate reads ⊆ what the child Template declares;
+#   d. every child TI the parent emits — with the shim defaults, and again with
+#      parent-params.yaml, whose issuer turns on the conditional ssoIssuerUrl —
+#      passes only declared parameters, and every one that has no value.
+# Reads are found in the .parameters.<name> form only; any other form (index
+# .parameters "x", with .parameters, $p := .parameters) fails the check, so a new
+# form cannot hide a read.
+detail=""
+names() { sort -u | { grep -v -e '^$' || true; }; }
+missing() { comm -23 <(printf '%s\n' "$1" | names) <(printf '%s\n' "$2" | names) | tr '\n' ' '; }
+param_reads() { { grep -oE '\.parameters\.[A-Za-z0-9_]+' || true; } | sed 's/^\.parameters\.//' | names; }  # stdin: template text
+other_forms() { { grep -nE '\.parameters($|[^.A-Za-z0-9_])' || true; } | cut -c1-80 | tr '\n' ' '; }     # stdin: template text
+gt_text="$(cat "$BOOTSTRAP/files/parent-gotemplate.tpl")"
+gt_reads="$(param_reads <<<"$gt_text")"
+odd="$(other_forms <<<"$gt_text")"
+[ -z "$odd" ] || detail="$detail [the parent gotemplate reads .parameters in another form: $odd]"
+[ "$(grep -c . <<<"$gt_reads")" -ge 15 ] || detail="$detail [only $(grep -c . <<<"$gt_reads") parameters read by the parent gotemplate — extraction broken?]"
+parent_tpl="$(yqe 'select(.kind == "Template" and .metadata.name == "openbao-config-mto-parent")' "$WORK/pp-def.out")"
+parent_pass="$(yqe '.spec.parameters[].name' - <<<"$parent_tpl" | names)"
+fixture_keys="$(yqe '.parameters | keys | .[]' "$FIXTURES/parent-params.yaml" | names)"
+shim_keys="$(yqe '.parameters | keys | .[]' "$WORK/shim/values.yaml" | names)"
+for pair in "the parent Template:parent_pass" "parent-params.yaml:fixture_keys" "the harness shim values:shim_keys"; do
+  var="${pair#*:}"
+  m="$(missing "$gt_reads" "${!var}")"
+  [ -z "$m" ] || detail="$detail [(a) the parent gotemplate reads, ${pair%%:*} lacks: $m]"
+done
+# b. the parent TI passes the parent Template's valueless parameters (tenants)
+parent_novalue="$(yqe '.spec.parameters[] | select(has("value") | not) | .name' - <<<"$parent_tpl" | names)"
+[ -n "$parent_novalue" ] || detail="$detail [(b) the parent Template has no valueless parameter — extraction broken? (tenants has none)]"
+parent_ti_pass="$(yqe 'select(.kind == "TemplateInstance" and .metadata.name == "openbao-config-mto-parent") | .spec.parameters[].name' "$WORK/pp-def.out" | names)"
+m="$(missing "$parent_novalue" "$parent_ti_pass")"
+[ -z "$m" ] || detail="$detail [(b) the parent Template has no value for, and the parent TI does not pass: $m]"
+# c. the child valuesTemplate reads only declared parameters
+child_tpl="$(yqe 'select(.kind == "Template" and .metadata.name == "openbao-config-mto")' "$WORK/pp-def.out")"
+child_decl="$(yqe '.spec.parameters[].name' - <<<"$child_tpl" | names)"
+child_novalue="$(yqe '.spec.parameters[] | select(has("value") | not) | .name' - <<<"$child_tpl" | names)"
+child_text="$(yqe '.spec.helm.valuesTemplate' - <<<"$child_tpl")"
+child_reads="$(param_reads <<<"$child_text")"
+odd="$(other_forms <<<"$child_text")"
+[ -z "$odd" ] || detail="$detail [(c) the child valuesTemplate reads .parameters in another form: $odd]"
+[ -n "$child_reads" ] || detail="$detail [(c) no parameter read by the child valuesTemplate — extraction broken?]"
+m="$(missing "$child_reads" "$child_decl")"
+[ -z "$m" ] || detail="$detail [(c) the child valuesTemplate reads, the child Template lacks: $m]"
+[ "$(grep -c . <<<"$child_novalue")" -ge 3 ] || detail="$detail [(d) fewer than 3 valueless child parameters (tenant, serviceAccounts, deployments) — extraction broken?]"
+# d. every child TI, in both renders
+for r in "defaults:" "parent-params.yaml:$FIXTURES/parent-params.yaml"; do
+  label="${r%%:*}"; values="${r#*:}"
+  if shim_render ps-shim ${values:+-f "$values"}; then
+    tis="$(yqe 'select(.kind == "TemplateInstance") | .metadata.name' "$WORK/ps-shim.yaml" | names)"
+    [ -n "$tis" ] || detail="$detail [(d) $label: the parent emitted no child TI]"
+    while IFS= read -r ti; do
+      [ -n "$ti" ] || continue
+      pass="$(yqe "select(.kind == \"TemplateInstance\" and .metadata.name == \"$ti\") | .spec.parameters[].name" "$WORK/ps-shim.yaml" | names)"
+      m="$(missing "$pass" "$child_decl")"
+      [ -z "$m" ] || detail="$detail [(d) $label: $ti passes undeclared: $m]"
+      m="$(missing "$child_novalue" "$pass")"
+      [ -z "$m" ] || detail="$detail [(d) $label: $ti does not pass, and the child Template has no value for: $m]"
+      if [ "$label" = parent-params.yaml ] && ! grep -qx ssoIssuerUrl <<<"$pass"; then
+        detail="$detail [(d) $label: $ti does not pass ssoIssuerUrl although an issuer is set — the conditional branch went unchecked]"
+      fi
+    done <<<"$tis"
+  else
+    detail="$detail [(d) $label: shim render failed: $(err_line "$WORK/ps-shim.err")]"
+  fi
+done
+report paramsync
+
+# 45. strictbools — every switch of the tenant chart is read strictly. The
+# schema accepts the string "false", and a non-empty string is truthy, so a
+# switch read as `{{ if .Values.x }}` turns its feature ON for a quoted "false".
+# For each switch: the quoted forms render exactly what the YAML booleans do, the
+# two values render differently (or the switch is not exercised and the
+# equality proves nothing), and garbage fails with the helper's message even
+# with the schema removed.
+detail=""
+sb_render() { # sb_render <name> <helm args...> -> normalized render in $WORK/<name>.yaml, or non-zero
+  local name="$1"; shift
+  "$HELM" template "$RELEASE" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" "$@" > "$WORK/$name.raw" 2> "$WORK/$name.err" \
+    && normalize < "$WORK/$name.raw" > "$WORK/$name.yaml" 2>> "$WORK/$name.err"
+}
+for key in transit.enabled pki.enabled pki.hierarchy.enabled pki.crossTenant.enabled pki.certManager.enabled sso.dex.perTenantClient \
+           networkPolicy.enabled monitoring.enabled sso.enabled sso.sharedSpace.enabled; do
+  ok=1
+  for v in true false; do
+    sb_render sb-bool-$v --set "$key=$v" || { ok=0; detail="$detail [$key=$v (bool) failed: $(err_line "$WORK/sb-bool-$v.err")]"; }
+    sb_render sb-str-$v --set-string "$key=$v" || { ok=0; detail="$detail [$key=\"$v\" (string) failed: $(err_line "$WORK/sb-str-$v.err")]"; }
+  done
+  [ "$ok" = 1 ] || continue
+  for v in true false; do
+    cmp -s "$WORK/sb-bool-$v.yaml" "$WORK/sb-str-$v.yaml" || detail="$detail [$key: \"$v\" renders differently from $v]"
+  done
+  cmp -s "$WORK/sb-bool-true.yaml" "$WORK/sb-bool-false.yaml" && detail="$detail [$key: true and false render the same — the fixture does not exercise it]"
+  must_fail "$key=yes, schema removed" "$key must be a boolean" "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" --set-string "$key=yes"
+done
+# openbao.on's own guard: a block above a switch that is not a map
+printf 'pki:\n  hierarchy: "on"\n' > "$WORK/sb-notmap.yaml"
+must_fail "pki.hierarchy: \"on\", schema removed" 'pki.hierarchy must be a map' "$WORK/tenant-noschema" -n "$NS" -f "$FIXTURES/values-full.yaml" -f "$WORK/sb-notmap.yaml"
+report strictbools
+
+# 46. rolespec — openbao.ssoRoleSpec fails closed. Every SSO role binds a group;
+# a role with no group exists only when the caller says "unbound" (§7's
+# fallback). An empty group from anywhere else — a future caller, a pattern
+# that renders empty — must fail the render, not open a login to every IdP user.
+# Every caller passes a group or "unbound", so no values file reaches that
+# branch, and a copy of the chart calls the helper directly.
+detail=""
+cp -R "$CHART" "$WORK/chart-rolespec"
+rs_case() { # rs_case <extra dict entries> -> renders the helper alone, stdout to $WORK/rs.yaml
+  printf 'spec:\n  {{- include "openbao.ssoRoleSpec" (dict "ctx" $ "name" "sso-x-viewer" "namespace" "x/" "policy" "sso-x-viewer" %s) | nindent 2 }}\n' "$1" \
+    > "$WORK/chart-rolespec/templates/zz-rolespec.yaml" \
+    && "$HELM" template x "$WORK/chart-rolespec" -n "$NS" -f "$FIXTURES/values-full.yaml" --show-only templates/zz-rolespec.yaml \
+      > "$WORK/rs.yaml" 2> "$WORK/rs.err"
+}
+if rs_case '"group" ""'; then
+  detail="$detail [an empty group without unbound rendered a role]"
+elif ! grep -q 'has an empty IdP group and is not marked unbound' "$WORK/rs.err"; then
+  detail="$detail [an empty group failed, but not with the helper's message: $(err_line "$WORK/rs.err")]"
+fi
+if rs_case '"group" "" "unbound" true'; then
+  [ "$(yqe '.spec | has("boundClaims")' "$WORK/rs.yaml")" = false ] || detail="$detail [an unbound role still binds a group]"
+else
+  detail="$detail [an unbound role failed: $(err_line "$WORK/rs.err")]"
+fi
+if rs_case '"group" "x-viewers"'; then
+  [ "$(yqe '.spec.boundClaims.groups[0]' "$WORK/rs.yaml")" = x-viewers ] || detail="$detail [a bound role lost its group]"
+else
+  detail="$detail [a bound role failed: $(err_line "$WORK/rs.err")]"
+fi
+report rolespec
+
+# 47. sharedname — a tenant with the shared space's name fails its own render:
+# it would share the shared space's bao namespace and its <name>-kv,
+# <name>-kubernetes and <name>-oidc CR names. The same tenant name renders once
+# the shared space is called something else, so the guard compares the two
+# names, not the tenant name alone. The platform CA's namespace follows below.
+detail=""
+must_fail "tenant=shared with the default sharedTenant.name" 'has the name of the shared space (parent.sharedTenantName in the bootstrap chart' "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set tenant=shared
+must_render "tenant=shared with sharedTenant.name=common" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set tenant=shared --set sharedTenant.name=common
+# The platform CA's namespace, the same way: refused while the hierarchy is on,
+# and the name renders when the hierarchy is off or the namespace has another name.
+must_fail "tenant=platform with the default pki.hierarchy.platformNamespace" "name of the platform CA's namespace (platformPki.openbaoNamespace in the bootstrap chart" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set tenant=platform
+for sn_case in "pki.hierarchy.enabled=false" "pki.hierarchy.platformNamespace=pki-root/"; do
+  must_render "tenant=platform with $sn_case" "$CHART" -n "$NS" -f "$FIXTURES/values-full.yaml" --set tenant=platform --set "$sn_case"
+done
+report sharedname
+
+# 48. platformgate — the platform CA renders exactly when the child Templates are
+# told the hierarchy is on: both read platformPki.enabled through one helper. A
+# raw `if` reads a quoted "false" as on: the cluster would get an online root CA
+# while every tenant is told there is none, and the tenant name guard is off.
+detail=""
+for pg_case in "--set:true:1" "--set:false:0" "--set-string:true:1" "--set-string:false:0"; do
+  IFS=: read -r pg_flag pg_v pg_want <<<"$pg_case"
+  if "$HELM" template boot "$BOOTSTRAP" -n "$NS" "$pg_flag" "platformPki.enabled=$pg_v" > "$WORK/pg.yaml" 2> "$WORK/pg.err"; then
+    pg_n="$(yq_count 'select(.kind == "OpenBaoSecretEngine" and .metadata.name == "platform-pki") | .kind' "$WORK/pg.yaml")"
+    pg_param="$(yqe 'select(.kind == "Template" and .metadata.name == "openbao-config-mto") | .spec.parameters[] | select(.name == "pkiHierarchyEnabled") | .value' "$WORK/pg.yaml")"
+    [ "$pg_n" = "$pg_want" ] || detail="$detail [$pg_flag $pg_v: $pg_n platform CA engines, want $pg_want]"
+    [ "$pg_param" = "$pg_v" ] || detail="$detail [$pg_flag $pg_v: the child Template gets pkiHierarchyEnabled=$pg_param]"
+  else
+    detail="$detail [$pg_flag $pg_v: bootstrap render failed: $(err_line "$WORK/pg.err")]"
+  fi
+done
+report platformgate
+
+# 50. sharedlinks — every bao-apps ConfigMap of the tenant links exactly the
+# shared-space folders its SSO policy opens, so a person reaches them without a
+# list. With a UI callback the links carry its address; with the login or SSO
+# off there is no entry.
+detail=""
+SL_SEL='select(.kind == "ConfigMap" and .metadata.name == "bao-apps")'
+sl_links() { # sl_links <file> -> "<ns> <received|sent> <peer> <link>" per link
+  yqe "$SL_SEL"' | select(.data._sharedSpace != null) | .metadata.namespace as $ns | (.data._sharedSpace | from_yaml) as $s
+       | ((($s.received // {}) | to_entries | .[] | $ns + " received " + .key + " " + .value),
+          (($s.sent // {}) | to_entries | .[] | $ns + " sent " + .key + " " + .value))' "$1"
+}
+if core_render sl-on -f "$FIXTURES/values-full.yaml"; then
+  sl_apps="$(yq_count "$SL_SEL | .metadata.name" "$WORK/sl-on.yaml")"
+  sl_with="$(yq_count "$SL_SEL | select(.data._sharedSpace != null) | .metadata.name" "$WORK/sl-on.yaml")"
+  [ "$sl_apps" != 0 ] && [ "$sl_with" = "$sl_apps" ] || detail="$detail [values-full: $sl_with of $sl_apps bao-apps ConfigMaps have _sharedSpace]"
+  sl_got="$(sl_links "$WORK/sl-on.yaml" | awk '{print $2 " " $3}' | sort -u | tr '\n' ',')"
+  [ "$sl_got" = "received team-c,sent team-b," ] || detail="$detail [values-full: links for '$sl_got', want received team-c and sent team-b]"
+  sl_pol="$(yqe 'select(.kind == "OpenBaoPolicy" and .metadata.name == "sso-team-a-viewer.shared") | .spec.policy' "$WORK/sl-on.yaml")"
+  while read -r _ sl_kind sl_peer sl_link; do
+    [ -n "$sl_link" ] || continue
+    sl_path="${sl_link#/ui/vault/secrets/kv/list/}"; sl_path="${sl_path%\?namespace=shared}"
+    grep -qF "path \"kv/metadata/${sl_path}*\"" <<<"$sl_pol" \
+      || detail="$detail [the $sl_kind link for $sl_peer opens $sl_path, which sso-team-a-viewer does not grant]"
+  done <<<"$(sl_links "$WORK/sl-on.yaml")"
+else
+  detail="$detail [values-full render failed: $(err_line "$WORK/sl-on.err")]"
+fi
+if core_render sl-ui -f "$FIXTURES/values-full.yaml" --set 'sso.allowedRedirectUris={http://localhost:8250/oidc/callback,https://bao.example.com/ui/vault/auth/oidc/oidc/callback}'; then
+  sl_login="$(yqe "$SL_SEL"' | .data._sharedSpace | from_yaml | .login' "$WORK/sl-ui.yaml" | sort -u)"
+  [ "$sl_login" = "https://bao.example.com/ui/vault/auth?namespace=shared&with=oidc" ] || detail="$detail [with a UI callback: login link '$sl_login']"
+  sl_first="$(sl_links "$WORK/sl-ui.yaml" | awk 'NR == 1 {print $4}')"
+  case "$sl_first" in https://bao.example.com/ui/vault/secrets/kv/list/dev/*) ;; *) detail="$detail [with a UI callback: share link '$sl_first']" ;; esac
+else
+  detail="$detail [render with a UI callback failed: $(err_line "$WORK/sl-ui.err")]"
+fi
+for sl_case in "--set sso.sharedSpace.enabled=false" "--set-string sso.sharedSpace.enabled=false" "--set-string sso.enabled=false"; do
+  # shellcheck disable=SC2086 # the case is a flag and its value
+  if core_render sl-off -f "$FIXTURES/values-full.yaml" $sl_case; then
+    [ "$(yq_count "$SL_SEL | .metadata.name" "$WORK/sl-off.yaml")" != 0 ] || detail="$detail [$sl_case: no bao-apps at all, so the absence proves nothing]"
+    [ "$(yq_count "$SL_SEL | select(.data._sharedSpace != null) | .metadata.name" "$WORK/sl-off.yaml")" = 0 ] || detail="$detail [$sl_case: a bao-apps still has _sharedSpace]"
+  else
+    detail="$detail [$sl_case: render failed: $(err_line "$WORK/sl-off.err")]"
+  fi
+done
+report sharedlinks
+
 
 templateset_case defaults  enabled  false false openbao-config-mto openbao-config-mto-eso
 templateset_case all-on    enabled  true  true  openbao-config-mto openbao-config-mto-eso openbao-config-mto-certmanager openbao-config-mto-trust
