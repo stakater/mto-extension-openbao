@@ -64,7 +64,7 @@ import (
 
 const (
 	// The release name the charts README documents.
-	releaseName = "openbao-config-mto-bootstrap"
+	releaseName = "mto-extension-openbao-bootstrap"
 	parentName  = "openbao-config-mto-parent"
 	// Every TemplateInstance the bootstrap chart's parent emits is
 	// openbao-config-mto-<tenant>[.eso|.certmanager|.trust]; the parent itself is
@@ -194,7 +194,7 @@ func kubectlBin() string { return envOr("KUBECTL", "kubectl") }
 // "chart not found" rather than helm's generic path error.
 func chartDir(t *testing.T) string {
 	t.Helper()
-	abs, err := filepath.Abs("../../charts/openbao-config-mto-bootstrap")
+	abs, err := filepath.Abs("../../charts/mto-extension-openbao-bootstrap")
 	if err != nil {
 		t.Fatal(err)
 	}

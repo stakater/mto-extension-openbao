@@ -48,7 +48,7 @@ Two of those decisions shape what the suite can and cannot say:
   the window MTO creates for every new tenant — declared namespaces, not yet
   labelled — by simply not labelling one.
 - **The tenant chart comes from the working tree, not from ghcr.io.**
-  `make e2e-chart-repo` packages `charts/openbao-config-mto` and serves it from
+  `make e2e-chart-repo` packages `charts/mto-extension-openbao` and serves it from
   an nginx pod; the bootstrap is installed with `openbaoConfigMto.registry`
   pointing there. Edit the tenant chart, re-run `make e2e-chart-repo`, re-run
   the suite. The version served is the one `Chart.yaml` names, so
