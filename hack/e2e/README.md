@@ -76,8 +76,16 @@ workload logins in the suite prove that path.
 
 ## What needs a credential
 
-Only the operator: its chart and image are private GHCR packages, so the default
-lane needs `GHCR_TOKEN` with `read:packages` — the same credential
-`make crd-validate` already needs, and both workflows set it. Everything else is
-an anonymous pull. `OPERATOR_SRC=../openbao-config-operator` replaces the pull
-with a local build and needs no credential.
+The operator and template-operator-v2. The operator's chart and image are
+private GHCR packages, so the default lane needs `GHCR_TOKEN` with
+`read:packages` — the same credential `make crd-validate` already needs, and
+both workflows set it. `OPERATOR_SRC=../openbao-config-operator` replaces that
+pull with a local build.
+
+template-operator-v2 is pinned to a private dev build of its main branch
+(`TOV2_CHART_VERSION` in the Makefile), because no public release yet carries
+SA-9035: up to 0.0.8 it treats its copyable instance-uid label as proof of
+ownership, and deletes the operator's `<tenant>-ca` ConfigMap, which carries
+the CR's labels, on every tenant re-render. That pull needs the same token.
+A public `TOV2_CHART` installs without one, and the suite then fails at the
+trust-bundle step. Everything else is an anonymous pull.

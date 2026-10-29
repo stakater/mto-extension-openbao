@@ -360,7 +360,14 @@ TRUST_MANAGER_VERSION ?= v0.24.0
 ESO_CHART_VERSION     ?= 2.9.0
 OPENBAO_CHART_VERSION ?= 0.29.2
 
-# template-operator-v2's PUBLIC release — chart and image are anonymous pulls.
+# template-operator-v2's private dev build of main at 621a15b4 (PR #61, SA-9035),
+# not a public release. Every release up to 0.0.8 deletes as an orphan any object
+# that carries its instance-uid label, and the operator copies the CR's labels
+# onto the <tenant>-ca ConfigMap — so each tenant re-render deleted the CA the
+# trust Bundles read. When a public release carries #61, move back to
+# oci://ghcr.io/stakater/public/charts/template-operator-v2 at that version.
+# Chart and version move together: the CRDs differ from 0.0.8, so never pin
+# only the image. The chart and image are private, so this needs GHCR_TOKEN.
 #
 # The release name MUST be template-operator-v2, and it is not the name the
 # bootstrap chart's templateOperator.serviceAccountName default assumes
@@ -373,8 +380,8 @@ OPENBAO_CHART_VERSION ?= 0.29.2
 # bootstrap with templateOperator.{namespace,serviceAccountName} taken from
 # E2E_TOV2_SA rather than the defaults — the one value it cannot leave alone.
 TOV2_RELEASE       ?= template-operator-v2
-TOV2_CHART         ?= oci://ghcr.io/stakater/public/charts/template-operator-v2
-TOV2_CHART_VERSION ?= 0.0.7
+TOV2_CHART         ?= oci://ghcr.io/stakater/charts/template-operator-v2
+TOV2_CHART_VERSION ?= 0.0.9-621a15b4
 # fullname collapses to the release name because it contains the chart name.
 TOV2_FULLNAME      := $(TOV2_RELEASE)
 # The chart prefixes the ServiceAccount and the webhook with the fullname but
@@ -522,14 +529,36 @@ e2e-mto: ## Install MTO's Tenant CRD. NOT the operator — see hack/e2e/README.m
 	$(call wait-crd,tenants.tenantoperator.stakater.com)
 
 .PHONY: e2e-tov2
-e2e-tov2: helm ## Install template-operator-v2 from its public chart.
+e2e-tov2: helm ## Install template-operator-v2 (TOV2_CHART; the default is private).
 	$(KC) create namespace $(E2E_TOV2_NS) --dry-run=client -o yaml | $(KC) apply -f -
 	$(call clear-stuck-release,$(TOV2_RELEASE),$(E2E_TOV2_NS))
 	@# --reset-values: `helm upgrade` reuses the previous release's values when
 	@# given none, so a chart-version bump here would otherwise keep whatever
 	@# image a previous run had set.
+	@#
+	@# Credential handling as in e2e-operator: read with $$ from the environment,
+	@# never expanded by make. Without a token only a public TOV2_CHART can
+	@# install, and a private one stops here with the fix rather than at a bare
+	@# 403. The pull secret goes in "$$@" so the [0] is never globbed.
+	@set -e; tok="$${GHCR_TOKEN:-$$GIT_TOKEN}"; usr="$${GHCR_USERNAME:-$${GIT_USER:-stakater-user}}"; \
+	set --; \
+	if [ -n "$$tok" ]; then \
+		printf '%s' "$$tok" | $(HELM) registry login ghcr.io -u "$$usr" --password-stdin >/dev/null; \
+		$(KC) -n $(E2E_TOV2_NS) create secret docker-registry ghcr-pull \
+			--docker-server=ghcr.io --docker-username="$$usr" --docker-password="$$tok" \
+			--dry-run=client -o yaml | $(KC) apply -f - >/dev/null; \
+		set -- --set 'imagePullSecrets[0].name=ghcr-pull'; \
+	else \
+		case "$(TOV2_CHART)" in */public/*) ;; *) \
+			echo "e2e-tov2: $(TOV2_CHART) is a private package."; \
+			echo "  export GHCR_TOKEN=<token with read:packages>  (CI sets this already)"; \
+			echo "  or TOV2_CHART=oci://ghcr.io/stakater/public/charts/template-operator-v2 TOV2_CHART_VERSION=0.0.8"; \
+			echo "  (no public release carries the SA-9035 fix, so the trust-bundle step then fails)"; \
+			exit 1;; \
+		esac; \
+	fi; \
 	$(HELM) upgrade --install $(TOV2_RELEASE) $(TOV2_CHART) --version $(TOV2_CHART_VERSION) \
-		--kube-context $(E2E_CONTEXT) -n $(E2E_TOV2_NS) --reset-values
+		--kube-context $(E2E_CONTEXT) -n $(E2E_TOV2_NS) --reset-values "$$@"
 	@# BEFORE waiting for the rollout, and that order is not negotiable: an
 	@# unscoped sync-enforcement webhook deadlocks the cluster hard enough that the
 	@# rollout can never finish. The script explains the mechanism; on the

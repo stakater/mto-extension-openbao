@@ -7,8 +7,9 @@ name: E2E
 # a human asks for it: on approval, by adding the label, or by dispatch.
 #
 # It needs the SAME credential `make all` needs and nothing more: the operator's
-# chart and image are private GHCR packages, so GHCR_TOKEN (read:packages) goes
-# to the run. Everything else on the cluster is an anonymous pull. A fork PR
+# chart and image are private GHCR packages, and so is the template-operator-v2
+# dev build the Makefile pins, so GHCR_TOKEN (read:packages) goes to the run.
+# Everything else on the cluster is an anonymous pull. A fork PR
 # gets no secrets and fails at the operator install — the same limitation
 # pull_request.yaml already has at crd-validate.
 on:

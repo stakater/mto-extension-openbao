@@ -17,14 +17,22 @@ cluster and whatever is already installed.
 | docker | kind runs the cluster inside it; budget ~2 GB of memory for this cluster |
 | kubectl, go, jq | on `PATH` |
 | helm | the system one if present (≥ 3.14), else downloaded into `bin/` |
-| `GHCR_TOKEN` | **read:packages** on `ghcr.io/stakater` — the operator's chart and image are private. The same credential `make crd-validate` needs |
+| `GHCR_TOKEN` | **read:packages** on `ghcr.io/stakater` — the operator's chart and image are private, and so is the template-operator-v2 dev build the suite pins (see below). The same credential `make crd-validate` needs |
 
 Everything else is an anonymous pull: cert-manager, trust-manager, External
-Secrets, OpenBao, and template-operator-v2's public release at
-`oci://ghcr.io/stakater/public/charts/template-operator-v2`.
+Secrets and OpenBao.
+
+template-operator-v2 is a dev build of its main branch,
+`oci://ghcr.io/stakater/charts/template-operator-v2` at `TOV2_CHART_VERSION`
+in the Makefile, because no public release yet carries the SA-9035 fix: up to
+0.0.8 it deletes the operator's `<tenant>-ca` ConfigMap on every tenant
+re-render. A public release installs without a token, but the trust-bundle
+step then fails:
+`TOV2_CHART=oci://ghcr.io/stakater/public/charts/template-operator-v2`.
 
 Without a token, build the operator from a sibling checkout instead — also the
-only way to test an **unreleased** operator against these charts:
+only way to test an **unreleased** operator against these charts. The
+template-operator-v2 pull still needs the token, or the public override above:
 
 ```bash
 make e2e-kind OPERATOR_SRC=../openbao-config-operator
