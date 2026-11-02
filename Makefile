@@ -65,7 +65,7 @@ helm-render-test: helm yq ## Verify the tenant chart's component slices (golden,
 # Bump OPERATOR_CHART_VERSION to adopt new CRDs. It is the one place the operator
 # version this repo validates against is written down.
 OPERATOR_CHART         ?= oci://ghcr.io/stakater/charts/openbao-config-operator
-OPERATOR_CHART_VERSION ?= 0.0.6
+OPERATOR_CHART_VERSION ?= 0.0.7
 # Pulled into bin/ (gitignored), so a stale fetch is cleared by `make clean-crds`
 # and never reviewed as a source change.
 CRD_DIR ?= $(LOCALBIN)/crds
